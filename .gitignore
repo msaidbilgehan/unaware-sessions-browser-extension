@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Vite
+*.local
+
+# IDE
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Test coverage
+coverage/
+
+# TypeScript build artifacts
+*.tsbuildinfo
+src/**/*.js
+src/**/*.d.ts
+!src/vite-env.d.ts
+scripts/**/*.js
+scripts/**/*.d.ts
+
+# CRXJS
+crx/
+
+# Claude AI
+.claude/
+
+# Extra
+resources/
+logs/
+Exports/
