@@ -146,6 +146,8 @@
     if (!currentTab?.id) return;
     try {
       await switchSession(currentTab.id, sessionId);
+      // Update local state immediately so the UI reflects the new session
+      currentTabEntry = { sessionId, origin: currentOrigin };
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Failed to switch session', 'error');
     }
