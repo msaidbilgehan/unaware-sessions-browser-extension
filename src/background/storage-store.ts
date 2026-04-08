@@ -4,6 +4,7 @@ import {
   STORAGE_STORE_NAME,
   STORAGE_STORE_DB_VERSION,
 } from '@shared/constants';
+import { estimateRecordBytes } from '@shared/utils';
 
 function buildKey(sessionId: string, origin: string): string {
   return `${sessionId}:${origin}`;
@@ -71,7 +72,7 @@ class StorageStore {
       let entryCount = 0;
       let storageBytes = 0;
       let idbCount = 0;
-      const origins: string[] = [];
+      const originSet = new Set<string>();
 
       const tx = db.transaction(STORAGE_STORE_NAME, 'readonly');
       const store = tx.objectStore(STORAGE_STORE_NAME);
@@ -87,19 +88,16 @@ class StorageStore {
               Object.keys(snapshot.localStorage).length +
               Object.keys(snapshot.sessionStorage).length;
             storageBytes +=
-              JSON.stringify(snapshot.localStorage).length +
-              JSON.stringify(snapshot.sessionStorage).length;
+              estimateRecordBytes(snapshot.localStorage) +
+              estimateRecordBytes(snapshot.sessionStorage);
             idbCount += snapshot.indexedDB?.length ?? 0;
-            const origin = key.slice(prefix.length);
-            if (!origins.includes(origin)) {
-              origins.push(origin);
-            }
+            originSet.add(key.slice(prefix.length));
           }
           cursor.continue();
         }
       };
 
-      tx.oncomplete = () => resolve({ entryCount, storageBytes, idbCount, origins });
+      tx.oncomplete = () => resolve({ entryCount, storageBytes, idbCount, origins: [...originSet] });
       tx.onerror = () => reject(new Error(`Failed to get storage stats: ${tx.error?.message}`));
     });
   }
@@ -109,7 +107,7 @@ class StorageStore {
     const suffix = `:${origin}`;
 
     return new Promise((resolve, reject) => {
-      const sessionIds: string[] = [];
+      const sessionIdSet = new Set<string>();
       const tx = db.transaction(STORAGE_STORE_NAME, 'readonly');
       const cursorRequest = tx.objectStore(STORAGE_STORE_NAME).openKeyCursor();
 
@@ -118,16 +116,13 @@ class StorageStore {
         if (cursor) {
           const key = cursor.key as string;
           if (key.endsWith(suffix)) {
-            const sessionId = key.slice(0, -suffix.length);
-            if (!sessionIds.includes(sessionId)) {
-              sessionIds.push(sessionId);
-            }
+            sessionIdSet.add(key.slice(0, -suffix.length));
           }
           cursor.continue();
         }
       };
 
-      tx.oncomplete = () => resolve(sessionIds);
+      tx.oncomplete = () => resolve([...sessionIdSet]);
       tx.onerror = () =>
         reject(new Error(`Failed to get sessions for origin: ${tx.error?.message}`));
     });

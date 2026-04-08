@@ -1,6 +1,7 @@
 <script lang="ts">
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
-  import type { SessionProfile, SessionDetails, AutoRefreshInterval } from '@shared/types';
+  import type { SessionProfile, SessionDetails } from '@shared/types';
+  import { formatRelativeTime } from '@shared/utils';
   import {
     updateSession,
     deleteSession as deleteSessionApi,
@@ -14,9 +15,6 @@
   import {
     isDomainAutoRefreshEnabled,
     setDomainAutoRefresh,
-    getAutoRefreshInterval,
-    onSettingsChange,
-    onDomainRefreshChange,
   } from '@shared/settings-store';
   import Icon from '@shared/components/Icon.svelte';
   import InlineEdit from '@shared/components/InlineEdit.svelte';
@@ -103,14 +101,14 @@
     const version = ++detailsLoadVersion;
     detailsLoading = true;
     detailsMap.clear();
-    for (const session of sessions) {
-      if (detailsLoadVersion !== version) return;
-      try {
-        const d = await getSessionDetails(session.id);
-        if (detailsLoadVersion !== version) return;
-        detailsMap.set(session.id, d);
-      } catch {
-        // Skip failed session detail fetch
+    const results = await Promise.allSettled(
+      sessions.map((s) => getSessionDetails(s.id)),
+    );
+    if (detailsLoadVersion !== version) return;
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i];
+      if (r.status === 'fulfilled') {
+        detailsMap.set(sessions[i].id, r.value);
       }
     }
     detailsLoading = false;
@@ -122,61 +120,9 @@
     }
   });
 
-  // ── Per-domain auto-refresh ───────────────────────────────────
-
-  let autoRefreshInterval = $state<AutoRefreshInterval>(getAutoRefreshInterval());
-  // Increment to force $effect re-evaluation when domain map changes
-  let domainRefreshVersion = $state(0);
-
-  $effect(() => {
-    const unsub = onSettingsChange((s) => {
-      autoRefreshInterval = s.autoRefreshInterval;
-    });
-    return unsub;
-  });
-
-  $effect(() => {
-    const unsub = onDomainRefreshChange(() => {
-      domainRefreshVersion += 1;
-    });
-    return unsub;
-  });
-
-  $effect(() => {
-    const intervalSec = autoRefreshInterval;
-    // Read version to subscribe to domain map changes
-    void domainRefreshVersion;
-    if (intervalSec === 0) return;
-
-    // Collect sessions that have at least one auto-refresh-enabled domain
-    const sessionIdsToRefresh: string[] = [];
-    for (const session of sessions) {
-      const details = detailsMap.get(session.id);
-      if (!details) continue;
-      for (const origin of details.origins) {
-        if (isDomainAutoRefreshEnabled(session.id, origin.origin)) {
-          sessionIdsToRefresh.push(session.id);
-          break;
-        }
-      }
-    }
-
-    if (sessionIdsToRefresh.length === 0) return;
-
-    const id = setInterval(async () => {
-      if (document.visibilityState !== 'visible') return;
-      for (const sessionId of sessionIdsToRefresh) {
-        try {
-          const d = await getSessionDetails(sessionId);
-          detailsMap.set(sessionId, d);
-        } catch {
-          // Skip failed refresh
-        }
-      }
-    }, intervalSec * 1000);
-
-    return () => clearInterval(id);
-  });
+  // Auto-refresh is handled by the service worker alarm (background/auto-refresh.ts).
+  // When sessions update via the storage listener in App.svelte, the $effect above
+  // reloads details automatically.
 
   async function handleToggleDomainRefresh(sessionId: string, origin: string) {
     const current = isDomainAutoRefreshEnabled(sessionId, origin);
@@ -287,7 +233,6 @@
     } else {
       collapsedDomains.add(domain);
     }
-    // SvelteSet auto-triggers reactivity on add/delete
   }
 
   function formatBytes(bytes: number): string {
@@ -301,37 +246,57 @@
   }
 </script>
 
-<section>
-  <div class="section-header">
-    <h2>Sessions ({sessions.length})</h2>
+<div class="sessions-layout">
+  <!-- Header row -->
+  <div class="sessions-header">
+    <div class="header-left">
+      <h2>Sessions</h2>
+      <span class="session-count">{sessions.length}</span>
+    </div>
     <div class="search-box">
-      <Icon name="search" size={14} />
+      <Icon name="search" size={13} />
       <input
         type="text"
         placeholder="Search sessions or domains..."
         bind:value={searchQuery}
         aria-label="Search sessions"
       />
+      {#if searchQuery}
+        <button class="clear-search" onclick={() => (searchQuery = '')} aria-label="Clear search">
+          <Icon name="x" size={11} />
+        </button>
+      {/if}
     </div>
   </div>
 
+  <!-- Content -->
   {#if detailsLoading && detailsMap.size === 0}
-    <p class="empty">Loading session data...</p>
+    <div class="loading-state">
+      <div class="skel skel-card"></div>
+      <div class="skel skel-card short"></div>
+    </div>
   {:else if filteredSessions.length === 0}
-    <p class="empty">
-      {searchQuery ? `No results for "${searchQuery}"` : 'No sessions created yet.'}
-    </p>
+    <div class="empty-state">
+      <div class="empty-icon">
+        <Icon name="layers" size={20} />
+      </div>
+      <p>
+        {searchQuery ? `No results for "${searchQuery}"` : 'No sessions created yet.'}
+      </p>
+    </div>
   {:else}
     {#each domainGroups() as group (group.domain)}
       <div class="domain-folder">
         <button class="domain-header" onclick={() => toggleDomain(group.domain)}>
-          <Icon
-            name={collapsedDomains.has(group.domain) ? 'chevron-right' : 'chevron-down'}
-            size={14}
-          />
-          <Icon name="globe" size={14} />
+          <span class="domain-chevron">
+            <Icon
+              name={collapsedDomains.has(group.domain) ? 'chevron-right' : 'chevron-down'}
+              size={13}
+            />
+          </span>
+          <Icon name={group.domain === 'Ungrouped' ? 'folder-open' : 'globe'} size={14} />
           <span class="domain-name">{group.domain}</span>
-          <span class="domain-count">{group.sessions.length} session(s)</span>
+          <span class="domain-count">{group.sessions.length}</span>
         </button>
 
         {#if !collapsedDomains.has(group.domain)}
@@ -339,10 +304,11 @@
             {#each group.sessions as { session, details } (session.id)}
               <div class="session-card" style="--card-color: {session.color}">
                 <div class="session-row">
+                  <!-- Color dot / picker -->
                   <span class="color-cell">
                     {#if colorEditId === session.id}
                       <div
-                        class="color-edit-popover"
+                        class="color-popover"
                         onclick={(e) => e.stopPropagation()}
                         onkeydown={(e) => e.stopPropagation()}
                         role="presentation"
@@ -351,19 +317,21 @@
                           selected={session.color}
                           onchange={(c) => handleColorChange(session.id, c)}
                         />
-                        <button class="close-color" onclick={() => (colorEditId = null)}
-                          ><Icon name="check" size={12} /></button
-                        >
+                        <button class="color-done" onclick={() => (colorEditId = null)} aria-label="Done">
+                          <Icon name="check" size={12} />
+                        </button>
                       </div>
                     {:else}
                       <button
-                        class="dot"
+                        class="color-dot"
                         style="background-color: {session.color}"
                         onclick={() => (colorEditId = session.id)}
                         aria-label="Change color"
                       ></button>
                     {/if}
                   </span>
+
+                  <!-- Name -->
                   <span class="name-cell">
                     {#if editingId === session.id}
                       <InlineEdit
@@ -374,23 +342,34 @@
                     {:else}
                       <!-- svelte-ignore a11y_no_static_element_interactions -->
                       <span
-                        class="name"
+                        class="session-name"
                         ondblclick={() => (editingId = session.id)}
-                        title={session.name}>{session.emoji ?? ''} {session.name}</span
-                      >
+                        title="Double-click to rename"
+                      >{session.emoji ?? ''} {session.name}</span>
                     {/if}
                   </span>
-                  <span class="meta">{new Date(session.createdAt).toLocaleDateString()}</span>
+
+                  <!-- Last refreshed / Created -->
+                  <span class="meta-cell" title={session.lastRefreshedAt ? new Date(session.lastRefreshedAt).toLocaleString() : new Date(session.createdAt).toLocaleString()}>
+                    {#if session.lastRefreshedAt}
+                      {formatRelativeTime(session.lastRefreshedAt)}
+                    {:else}
+                      {new Date(session.createdAt).toLocaleDateString()}
+                    {/if}
+                  </span>
+
+                  <!-- Actions -->
                   <span class="actions-cell">
                     <button
                       class="icon-btn"
                       onclick={() =>
                         (expandedSessionId = expandedSessionId === session.id ? null : session.id)}
                       title="View details"
+                      aria-label="Toggle session details"
                     >
                       <Icon
                         name={expandedSessionId === session.id ? 'chevron-down' : 'chevron-right'}
-                        size={14}
+                        size={13}
                       />
                     </button>
                     <button
@@ -398,34 +377,41 @@
                       onclick={() => (confirmData = { session })}
                       aria-label="Delete session"
                     >
-                      <Icon name="trash-2" size={14} />
+                      <Icon name="trash-2" size={13} />
                     </button>
                   </span>
                 </div>
 
+                <!-- Expanded details -->
                 {#if expandedSessionId === session.id && details}
                   <div class="details-panel">
                     {#if details.origins.length === 0}
                       <p class="empty-small">No saved data.</p>
                     {:else}
                       <div class="details-summary">
-                        <span>{details.origins.length} origin(s)</span>
-                        <span>{details.totalCookies} cookies</span>
-                        <span>{formatBytes(details.totalStorageBytes)}</span>
+                        <span class="summary-item">
+                          <Icon name="globe" size={11} />
+                          {details.origins.length} origin{details.origins.length === 1 ? '' : 's'}
+                        </span>
+                        <span class="summary-item">
+                          <Icon name="database" size={11} />
+                          {details.totalCookies} cookies
+                        </span>
+                        <span class="summary-item">
+                          {formatBytes(details.totalStorageBytes)}
+                        </span>
                       </div>
 
                       {#each details.origins as detail (detail.origin)}
                         <div class="origin-card">
                           <div class="origin-header">
                             <Icon name="globe" size={12} />
-                            <span class="origin-name"
-                              >{detail.origin.replace(/^https?:\/\//, '')}</span
-                            >
-                            <span class="origin-stats"
-                              >{detail.cookieCount} cookies &middot; {formatBytes(
-                                detail.cookieBytes + detail.storageBytes,
-                              )}</span
-                            >
+                            <span class="origin-name">
+                              {detail.origin.replace(/^https?:\/\//, '')}
+                            </span>
+                            <span class="origin-stats">
+                              {detail.cookieCount} cookies &middot; {formatBytes(detail.cookieBytes + detail.storageBytes)}
+                            </span>
                             <button
                               class="auto-refresh-btn"
                               class:active={isDomainAutoRefreshEnabled(session.id, detail.origin)}
@@ -434,26 +420,22 @@
                                 ? 'Disable auto-refresh'
                                 : 'Enable auto-refresh'}
                             >
-                              <Icon name="refresh-cw" size={12} />
-                              Auto-refresh
+                              <Icon name="refresh-cw" size={11} />
                             </button>
                             <button
-                              class="icon-btn danger small"
+                              class="icon-btn danger sm"
                               onclick={() =>
                                 (originConfirm = { sessionId: session.id, origin: detail.origin })}
                               title="Delete origin data"
+                              aria-label="Delete origin data"
                             >
-                              <Icon name="trash-2" size={12} />
+                              <Icon name="trash-2" size={11} />
                             </button>
                           </div>
 
                           <div class="origin-meta">
-                            {#if detail.cookieTimestamp}<span
-                                >Cookies: {formatDate(detail.cookieTimestamp)}</span
-                              >{/if}
-                            {#if detail.storageTimestamp}<span
-                                >Storage: {formatDate(detail.storageTimestamp)}</span
-                              >{/if}
+                            {#if detail.cookieTimestamp}<span>Cookies: {formatDate(detail.cookieTimestamp)}</span>{/if}
+                            {#if detail.storageTimestamp}<span>Storage: {formatDate(detail.storageTimestamp)}</span>{/if}
                           </div>
 
                           <!-- Cookies -->
@@ -461,31 +443,23 @@
                             <details class="data-section">
                               <summary>Cookies ({detail.cookies.length})</summary>
                               <table class="data-table">
-                                <thead
-                                  ><tr><th>Name</th><th>Value</th><th>Domain</th><th></th></tr
-                                  ></thead
-                                >
+                                <thead><tr><th>Name</th><th>Value</th><th>Domain</th><th></th></tr></thead>
                                 <tbody>
                                   {#each detail.cookies as cookie}
                                     <tr>
                                       <td class="cell-name" title={cookie.name}>{cookie.name}</td>
                                       <td class="cell-value">
                                         {#if editingCookie?.name === cookie.name && editingCookie?.domain === cookie.domain && editingCookie?.origin === detail.origin}
-                                          <input
-                                            class="edit-input"
-                                            type="text"
-                                            bind:value={editingCookie.value}
-                                            onkeydown={(e) =>
-                                              e.key === 'Enter' && handleSaveCookie()}
-                                          />
-                                          <button class="save-btn" onclick={handleSaveCookie}
-                                            ><Icon name="check" size={10} /></button
-                                          >
-                                          <button
-                                            class="cancel-btn"
-                                            onclick={() => (editingCookie = null)}
-                                            ><Icon name="x" size={10} /></button
-                                          >
+                                          <div class="edit-row">
+                                            <input
+                                              class="edit-input"
+                                              type="text"
+                                              bind:value={editingCookie.value}
+                                              onkeydown={(e) => e.key === 'Enter' && handleSaveCookie()}
+                                            />
+                                            <button class="save-btn" onclick={handleSaveCookie} aria-label="Save"><Icon name="check" size={10} /></button>
+                                            <button class="cancel-btn" onclick={() => (editingCookie = null)} aria-label="Cancel"><Icon name="x" size={10} /></button>
+                                          </div>
                                         {:else}
                                           <!-- svelte-ignore a11y_no_static_element_interactions -->
                                           <span
@@ -507,17 +481,13 @@
                                         {/if}
                                       </td>
                                       <td class="cell-domain">{cookie.domain}</td>
-                                      <td>
+                                      <td class="cell-action">
                                         <button
-                                          class="icon-btn danger tiny"
+                                          class="icon-btn danger xs"
                                           onclick={() =>
-                                            handleDeleteCookie(
-                                              session.id,
-                                              detail.origin,
-                                              cookie.name,
-                                              cookie.domain,
-                                            )}
+                                            handleDeleteCookie(session.id, detail.origin, cookie.name, cookie.domain)}
                                           title="Delete cookie"
+                                          aria-label="Delete cookie"
                                         >
                                           <Icon name="x" size={10} />
                                         </button>
@@ -532,9 +502,7 @@
                           <!-- localStorage -->
                           {#if Object.keys(detail.localStorage).length > 0}
                             <details class="data-section">
-                              <summary
-                                >localStorage ({Object.keys(detail.localStorage).length})</summary
-                              >
+                              <summary>localStorage ({Object.keys(detail.localStorage).length})</summary>
                               <table class="data-table">
                                 <thead><tr><th>Key</th><th>Value</th><th></th></tr></thead>
                                 <tbody>
@@ -543,50 +511,34 @@
                                       <td class="cell-name" title={key}>{key}</td>
                                       <td class="cell-value">
                                         {#if editingStorage?.key === key && editingStorage?.type === 'localStorage' && editingStorage?.origin === detail.origin}
-                                          <input
-                                            class="edit-input"
-                                            type="text"
-                                            bind:value={editingStorage.value}
-                                            onkeydown={(e) =>
-                                              e.key === 'Enter' && handleSaveStorage()}
-                                          />
-                                          <button class="save-btn" onclick={handleSaveStorage}
-                                            ><Icon name="check" size={10} /></button
-                                          >
-                                          <button
-                                            class="cancel-btn"
-                                            onclick={() => (editingStorage = null)}
-                                            ><Icon name="x" size={10} /></button
-                                          >
+                                          <div class="edit-row">
+                                            <input
+                                              class="edit-input"
+                                              type="text"
+                                              bind:value={editingStorage.value}
+                                              onkeydown={(e) => e.key === 'Enter' && handleSaveStorage()}
+                                            />
+                                            <button class="save-btn" onclick={handleSaveStorage} aria-label="Save"><Icon name="check" size={10} /></button>
+                                            <button class="cancel-btn" onclick={() => (editingStorage = null)} aria-label="Cancel"><Icon name="x" size={10} /></button>
+                                          </div>
                                         {:else}
                                           <!-- svelte-ignore a11y_no_static_element_interactions -->
                                           <span
                                             class="editable"
                                             ondblclick={() =>
-                                              (editingStorage = {
-                                                sessionId: session.id,
-                                                origin: detail.origin,
-                                                type: 'localStorage',
-                                                key,
-                                                value,
-                                              })}
+                                              (editingStorage = { sessionId: session.id, origin: detail.origin, type: 'localStorage', key, value })}
                                             title="Double-click to edit"
                                           >
                                             {value.length > 40 ? value.slice(0, 40) + '...' : value}
                                           </span>
                                         {/if}
                                       </td>
-                                      <td>
+                                      <td class="cell-action">
                                         <button
-                                          class="icon-btn danger tiny"
-                                          onclick={() =>
-                                            handleDeleteStorage(
-                                              session.id,
-                                              detail.origin,
-                                              'localStorage',
-                                              key,
-                                            )}
+                                          class="icon-btn danger xs"
+                                          onclick={() => handleDeleteStorage(session.id, detail.origin, 'localStorage', key)}
                                           title="Delete entry"
+                                          aria-label="Delete entry"
                                         >
                                           <Icon name="x" size={10} />
                                         </button>
@@ -601,10 +553,7 @@
                           <!-- sessionStorage -->
                           {#if Object.keys(detail.sessionStorage).length > 0}
                             <details class="data-section">
-                              <summary
-                                >sessionStorage ({Object.keys(detail.sessionStorage)
-                                  .length})</summary
-                              >
+                              <summary>sessionStorage ({Object.keys(detail.sessionStorage).length})</summary>
                               <table class="data-table">
                                 <thead><tr><th>Key</th><th>Value</th><th></th></tr></thead>
                                 <tbody>
@@ -613,50 +562,34 @@
                                       <td class="cell-name" title={key}>{key}</td>
                                       <td class="cell-value">
                                         {#if editingStorage?.key === key && editingStorage?.type === 'sessionStorage' && editingStorage?.origin === detail.origin}
-                                          <input
-                                            class="edit-input"
-                                            type="text"
-                                            bind:value={editingStorage.value}
-                                            onkeydown={(e) =>
-                                              e.key === 'Enter' && handleSaveStorage()}
-                                          />
-                                          <button class="save-btn" onclick={handleSaveStorage}
-                                            ><Icon name="check" size={10} /></button
-                                          >
-                                          <button
-                                            class="cancel-btn"
-                                            onclick={() => (editingStorage = null)}
-                                            ><Icon name="x" size={10} /></button
-                                          >
+                                          <div class="edit-row">
+                                            <input
+                                              class="edit-input"
+                                              type="text"
+                                              bind:value={editingStorage.value}
+                                              onkeydown={(e) => e.key === 'Enter' && handleSaveStorage()}
+                                            />
+                                            <button class="save-btn" onclick={handleSaveStorage} aria-label="Save"><Icon name="check" size={10} /></button>
+                                            <button class="cancel-btn" onclick={() => (editingStorage = null)} aria-label="Cancel"><Icon name="x" size={10} /></button>
+                                          </div>
                                         {:else}
                                           <!-- svelte-ignore a11y_no_static_element_interactions -->
                                           <span
                                             class="editable"
                                             ondblclick={() =>
-                                              (editingStorage = {
-                                                sessionId: session.id,
-                                                origin: detail.origin,
-                                                type: 'sessionStorage',
-                                                key,
-                                                value,
-                                              })}
+                                              (editingStorage = { sessionId: session.id, origin: detail.origin, type: 'sessionStorage', key, value })}
                                             title="Double-click to edit"
                                           >
                                             {value.length > 40 ? value.slice(0, 40) + '...' : value}
                                           </span>
                                         {/if}
                                       </td>
-                                      <td>
+                                      <td class="cell-action">
                                         <button
-                                          class="icon-btn danger tiny"
-                                          onclick={() =>
-                                            handleDeleteStorage(
-                                              session.id,
-                                              detail.origin,
-                                              'sessionStorage',
-                                              key,
-                                            )}
+                                          class="icon-btn danger xs"
+                                          onclick={() => handleDeleteStorage(session.id, detail.origin, 'sessionStorage', key)}
                                           title="Delete entry"
+                                          aria-label="Delete entry"
                                         >
                                           <Icon name="x" size={10} />
                                         </button>
@@ -679,7 +612,7 @@
       </div>
     {/each}
   {/if}
-</section>
+</div>
 
 {#if confirmData}
   <ConfirmDialog
@@ -704,20 +637,26 @@
 {/if}
 
 <style>
-  section {
-    background: var(--color-bg-elevated);
-    border: 1px solid var(--color-border-secondary);
-    border-radius: var(--radius-lg);
-    padding: var(--space-6);
-    box-shadow: var(--shadow-sm);
+  .sessions-layout {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
   }
-  .section-header {
+
+  /* Header */
+  .sessions-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: var(--space-4);
-    margin-bottom: var(--space-5);
   }
+
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+
   h2 {
     font-size: var(--text-lg);
     font-weight: var(--font-semibold);
@@ -725,19 +664,47 @@
     color: var(--color-text-primary);
     white-space: nowrap;
   }
+
+  .session-count {
+    font-size: var(--text-xs);
+    font-weight: var(--font-semibold);
+    color: var(--color-text-tertiary);
+    background: var(--color-bg-tertiary);
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--radius-full);
+    min-width: 20px;
+    text-align: center;
+    line-height: 16px;
+  }
+
   .search-box {
     display: flex;
     align-items: center;
     gap: var(--space-3);
-    padding: var(--space-2) var(--space-4);
-    border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-md);
+    padding: var(--space-3) var(--space-4);
+    border: 1px solid var(--color-border-secondary);
+    border-radius: var(--radius-lg);
+    background: var(--color-bg-secondary);
     flex: 1;
-    max-width: 280px;
+    max-width: 300px;
+    transition: all var(--transition-smooth);
   }
+
   .search-box:focus-within {
     border-color: var(--color-accent);
+    background: var(--color-bg-primary);
+    box-shadow: var(--shadow-glow);
   }
+
+  .search-box :global(svg:first-child) {
+    color: var(--color-text-tertiary);
+    flex-shrink: 0;
+  }
+
+  .search-box:focus-within :global(svg:first-child) {
+    color: var(--color-accent);
+  }
+
   .search-box input {
     flex: 1;
     border: none;
@@ -747,38 +714,116 @@
     background: transparent;
     color: var(--color-text-primary);
   }
+
   .search-box input::placeholder {
     color: var(--color-text-tertiary);
   }
-  .empty,
+
+  .clear-search {
+    background: none;
+    border: none;
+    color: var(--color-text-tertiary);
+    cursor: pointer;
+    padding: var(--space-1);
+    display: flex;
+    border-radius: var(--radius-sm);
+    transition: color var(--transition-fast);
+  }
+
+  .clear-search:hover {
+    color: var(--color-text-secondary);
+  }
+
+  /* Loading / Empty states */
+  .loading-state {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+  }
+
+  .skel {
+    background: linear-gradient(
+      90deg,
+      var(--color-bg-tertiary) 25%,
+      var(--color-bg-secondary) 50%,
+      var(--color-bg-tertiary) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.5s ease-in-out infinite;
+    border-radius: var(--radius-xl);
+  }
+
+  .skel-card {
+    height: 60px;
+  }
+
+  .skel-card.short {
+    width: 70%;
+  }
+
+  .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-4);
+    padding: var(--space-10);
+    color: var(--color-text-tertiary);
+  }
+
+  .empty-icon {
+    width: 44px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-xl);
+    background: var(--color-bg-tertiary);
+    opacity: 0.6;
+  }
+
+  .empty-state p,
   .empty-small {
     color: var(--color-text-tertiary);
     font-size: var(--text-sm);
     text-align: center;
-    padding: var(--space-4);
     margin: 0;
   }
 
   /* Domain folders */
   .domain-folder {
-    margin-bottom: var(--space-4);
+    background: var(--color-bg-elevated);
+    border: 1px solid var(--color-border-secondary);
+    border-radius: var(--radius-2xl);
+    overflow: hidden;
+    box-shadow: var(--shadow-xs);
   }
+
   .domain-header {
     display: flex;
     align-items: center;
     gap: var(--space-3);
     width: 100%;
-    padding: var(--space-3) var(--space-4);
-    background: var(--color-bg-tertiary);
+    padding: var(--space-4) var(--space-5);
+    background: none;
     border: none;
-    border-radius: var(--radius-md);
     cursor: pointer;
     font-family: var(--font-sans);
     transition: background var(--transition-fast);
   }
+
   .domain-header:hover {
     background: var(--color-interactive-hover);
   }
+
+  .domain-chevron {
+    color: var(--color-text-tertiary);
+    display: flex;
+  }
+
+  .domain-header :global(svg:nth-child(2)) {
+    color: var(--color-text-tertiary);
+  }
+
   .domain-name {
     font-size: var(--text-sm);
     font-weight: var(--font-semibold);
@@ -786,66 +831,96 @@
     flex: 1;
     text-align: left;
   }
+
   .domain-count {
-    font-size: var(--text-xs);
+    font-size: 10px;
+    font-weight: var(--font-semibold);
     color: var(--color-text-tertiary);
+    background: var(--color-bg-tertiary);
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--radius-full);
+    min-width: 20px;
+    text-align: center;
+    line-height: 16px;
   }
+
   .domain-sessions {
-    padding-left: var(--space-5);
-    margin-top: var(--space-2);
+    border-top: 1px solid var(--color-border-secondary);
   }
 
   /* Session cards */
   .session-card {
-    border: 1px solid var(--color-border-secondary);
-    border-left: 3px solid var(--card-color);
-    border-radius: var(--radius-md);
-    margin-bottom: var(--space-2);
-    overflow: hidden;
+    border-bottom: 1px solid var(--color-border-secondary);
   }
+
+  .session-card:last-child {
+    border-bottom: none;
+  }
+
   .session-row {
     display: grid;
-    grid-template-columns: 32px 1fr 80px 70px;
+    grid-template-columns: 36px 1fr 85px 70px;
     align-items: center;
-    padding: var(--space-3) var(--space-4);
+    padding: var(--space-4) var(--space-5);
     gap: var(--space-3);
+    transition: background var(--transition-fast);
   }
+
+  .session-row:hover {
+    background: var(--color-interactive-hover);
+  }
+
   .color-cell {
     position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
-  .dot {
-    width: 12px;
-    height: 12px;
+
+  .color-dot {
+    width: 14px;
+    height: 14px;
     border-radius: var(--radius-full);
     border: none;
     cursor: pointer;
     padding: 0;
+    transition: transform var(--transition-fast);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--card-color) 15%, transparent);
   }
-  .color-edit-popover {
+
+  .color-dot:hover {
+    transform: scale(1.2);
+  }
+
+  .color-popover {
     position: absolute;
     top: -8px;
-    left: 24px;
+    left: 28px;
     z-index: 10;
     background: var(--color-bg-elevated);
     border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-xl);
     padding: var(--space-4);
     box-shadow: var(--shadow-lg);
     display: flex;
     align-items: center;
     gap: var(--space-3);
   }
-  .close-color {
+
+  .color-done {
     background: none;
     border: none;
     color: var(--color-success);
     cursor: pointer;
     padding: var(--space-1);
+    display: flex;
   }
+
   .name-cell {
     min-width: 0;
   }
-  .name {
+
+  .session-name {
     font-size: var(--text-sm);
     font-weight: var(--font-medium);
     color: var(--color-text-primary);
@@ -855,140 +930,190 @@
     display: block;
     cursor: default;
   }
-  .meta {
+
+  .meta-cell {
     font-size: var(--text-xs);
     color: var(--color-text-tertiary);
   }
+
   .actions-cell {
     display: flex;
     gap: var(--space-1);
     justify-content: flex-end;
   }
+
   .icon-btn {
     background: none;
     border: none;
     color: var(--color-text-tertiary);
     cursor: pointer;
-    padding: var(--space-1);
-    border-radius: var(--radius-sm);
+    padding: var(--space-2);
+    border-radius: var(--radius-md);
     display: flex;
     transition: all var(--transition-fast);
   }
+
   .icon-btn:hover {
     color: var(--color-text-secondary);
     background: var(--color-interactive-hover);
   }
+
   .icon-btn.danger:hover {
     color: var(--color-error);
     background: var(--color-error-soft);
   }
-  .icon-btn.small {
+
+  .icon-btn.sm {
     padding: var(--space-1);
   }
+
+  .icon-btn.xs {
+    padding: 0;
+  }
+
   .auto-refresh-btn {
     display: inline-flex;
     align-items: center;
-    gap: var(--space-2);
+    justify-content: center;
+    width: 26px;
+    height: 26px;
     background: none;
     border: 1px solid var(--color-border-secondary);
-    border-radius: var(--radius-sm);
-    padding: var(--space-1) var(--space-3);
-    font-size: var(--text-xs);
-    font-family: var(--font-sans);
+    border-radius: var(--radius-md);
     color: var(--color-text-tertiary);
     cursor: pointer;
     transition: all var(--transition-fast);
   }
+
   .auto-refresh-btn:hover {
     color: var(--color-text-secondary);
     background: var(--color-interactive-hover);
   }
+
   .auto-refresh-btn.active {
     color: var(--color-accent);
     border-color: var(--color-accent);
     background: var(--color-accent-soft);
   }
-  .icon-btn.tiny {
-    padding: 0;
-  }
 
   /* Details panel */
   .details-panel {
     border-top: 1px solid var(--color-border-secondary);
-    padding: var(--space-4);
+    padding: var(--space-5);
     background: var(--color-bg-secondary);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
   }
+
   .details-summary {
     display: flex;
-    gap: var(--space-4);
+    gap: var(--space-5);
     font-size: var(--text-xs);
     color: var(--color-text-tertiary);
-    margin-bottom: var(--space-3);
+  }
+
+  .summary-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
   }
 
   /* Origin cards */
   .origin-card {
     background: var(--color-bg-elevated);
     border: 1px solid var(--color-border-secondary);
-    border-radius: var(--radius-md);
-    padding: var(--space-3);
-    margin-bottom: var(--space-2);
+    border-radius: var(--radius-xl);
+    padding: var(--space-4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
   }
+
   .origin-header {
     display: flex;
     align-items: center;
     gap: var(--space-3);
   }
+
+  .origin-header > :global(svg:first-child) {
+    color: var(--color-text-tertiary);
+    flex-shrink: 0;
+  }
+
   .origin-name {
     font-size: var(--text-sm);
     font-weight: var(--font-medium);
     color: var(--color-text-primary);
     flex: 1;
   }
+
   .origin-stats {
     font-size: var(--text-xs);
     color: var(--color-text-tertiary);
   }
+
   .origin-meta {
     display: flex;
     gap: var(--space-4);
     font-size: var(--text-xs);
     color: var(--color-text-tertiary);
-    margin-top: var(--space-2);
     padding-left: var(--space-7);
   }
 
   /* Data sections */
   .data-section {
-    margin-top: var(--space-3);
-    padding-left: var(--space-4);
+    margin-top: var(--space-2);
   }
+
   .data-section summary {
     font-size: var(--text-xs);
     font-weight: var(--font-semibold);
     color: var(--color-text-secondary);
     cursor: pointer;
     margin-bottom: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+    transition: background var(--transition-fast);
   }
+
+  .data-section summary:hover {
+    background: var(--color-interactive-hover);
+  }
+
   .data-table {
     width: 100%;
     border-collapse: collapse;
     font-size: var(--text-xs);
     table-layout: fixed;
   }
+
   .data-table th {
     text-align: left;
     font-weight: var(--font-semibold);
     color: var(--color-text-tertiary);
-    padding: var(--space-1) var(--space-2);
+    padding: var(--space-2) var(--space-3);
     border-bottom: 1px solid var(--color-border-secondary);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
   }
+
   .data-table td {
-    padding: var(--space-1) var(--space-2);
+    padding: var(--space-2) var(--space-3);
     color: var(--color-text-secondary);
     border-bottom: 1px solid var(--color-border-secondary);
     vertical-align: middle;
   }
+
+  .data-table tr:last-child td {
+    border-bottom: none;
+  }
+
+  .data-table tr:hover td {
+    background: var(--color-interactive-hover);
+  }
+
   .cell-name {
     width: 28%;
     overflow: hidden;
@@ -996,11 +1121,13 @@
     white-space: nowrap;
     font-weight: var(--font-medium);
   }
+
   .cell-value {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+
   .cell-domain {
     width: 18%;
     overflow: hidden;
@@ -1008,17 +1135,30 @@
     white-space: nowrap;
   }
 
+  .cell-action {
+    width: 28px;
+    text-align: center;
+  }
+
   /* Inline editing */
   .editable {
     cursor: pointer;
     color: var(--color-text-secondary);
+    transition: color var(--transition-fast);
   }
+
   .editable:hover {
     color: var(--color-accent);
-    text-decoration: underline;
   }
+
+  .edit-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+  }
+
   .edit-input {
-    width: 100%;
+    flex: 1;
     padding: var(--space-1) var(--space-2);
     border: 1px solid var(--color-accent);
     border-radius: var(--radius-sm);
@@ -1028,6 +1168,7 @@
     color: var(--color-text-primary);
     outline: none;
   }
+
   .save-btn,
   .cancel-btn {
     background: none;
@@ -1036,11 +1177,22 @@
     padding: var(--space-1);
     display: inline-flex;
     align-items: center;
+    border-radius: var(--radius-sm);
   }
+
   .save-btn {
     color: var(--color-success);
   }
+
+  .save-btn:hover {
+    background: var(--color-success-soft);
+  }
+
   .cancel-btn {
     color: var(--color-text-tertiary);
+  }
+
+  .cancel-btn:hover {
+    background: var(--color-interactive-hover);
   }
 </style>

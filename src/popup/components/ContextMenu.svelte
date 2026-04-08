@@ -51,7 +51,10 @@
   bind:this={menuRef}
   role="menu"
 >
-  {#each items as item}
+  {#each items as item, i}
+    {#if i > 0 && item.danger}
+      <div class="separator"></div>
+    {/if}
     <button
       class="menu-item"
       class:danger={item.danger}
@@ -59,7 +62,9 @@
       role="menuitem"
     >
       {#if item.icon}
-        <Icon name={item.icon} size={14} />
+        <span class="menu-icon">
+          <Icon name={item.icon} size={13} />
+        </span>
       {/if}
       <span>{item.label}</span>
     </button>
@@ -71,22 +76,29 @@
     position: fixed;
     background: var(--color-bg-elevated);
     border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-xl);
     padding: var(--space-2);
-    min-width: 140px;
+    min-width: 150px;
     box-shadow: var(--shadow-lg);
     z-index: 900;
+    animation: slideUp 0.12s ease-out;
+  }
+
+  .separator {
+    height: 1px;
+    background: var(--color-border-secondary);
+    margin: var(--space-2) var(--space-3);
   }
 
   .menu-item {
     display: flex;
     align-items: center;
-    gap: var(--space-4);
+    gap: var(--space-3);
     width: 100%;
     padding: var(--space-3) var(--space-4);
     border: none;
     background: none;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-md);
     font-size: var(--text-sm);
     font-family: var(--font-sans);
     color: var(--color-text-primary);
@@ -99,7 +111,20 @@
     background: var(--color-interactive-hover);
   }
 
+  .menu-icon {
+    display: flex;
+    color: var(--color-text-tertiary);
+  }
+
+  .menu-item:hover .menu-icon {
+    color: var(--color-text-secondary);
+  }
+
   .menu-item.danger {
+    color: var(--color-error);
+  }
+
+  .menu-item.danger .menu-icon {
     color: var(--color-error);
   }
 

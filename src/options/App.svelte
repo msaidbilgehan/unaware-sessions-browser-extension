@@ -1,7 +1,7 @@
 <script lang="ts">
-  import type { SessionProfile, AutoRefreshInterval } from '@shared/types';
+  import type { SessionProfile } from '@shared/types';
   import { listSessions } from '@shared/api';
-  import { getAutoRefreshInterval, onSettingsChange } from '@shared/settings-store';
+  import { STORAGE_KEYS } from '@shared/constants';
   import TabBar from './components/TabBar.svelte';
   import SessionsTab from './components/SessionsTab.svelte';
   import ImportExportTab from './components/ImportExportTab.svelte';
@@ -14,12 +14,13 @@
   let activeTab = $state('sessions');
 
   const tabs = [
-    { id: 'sessions', label: 'Sessions' },
-    { id: 'settings', label: 'Settings' },
-    { id: 'import-export', label: 'Import / Export' },
-    { id: 'about', label: 'About' },
+    { id: 'sessions', label: 'Sessions', icon: 'layers' },
+    { id: 'settings', label: 'Settings', icon: 'settings' },
+    { id: 'import-export', label: 'Data', icon: 'arrow-right-left' },
+    { id: 'about', label: 'About', icon: 'info' },
   ];
 
+  // Full initial load with loading spinner — called once on mount
   async function loadSessions() {
     loading = true;
     try {
@@ -31,80 +32,136 @@
     }
   }
 
+  // Silent update — no loading spinner, Svelte re-renders only changed parts
+  async function updateSessionsQuietly() {
+    try {
+      sessions = await listSessions();
+    } catch {
+      // Silently ignore
+    }
+  }
+
   $effect(() => {
     loadSessions();
   });
 
-  // Auto-refresh
-  let autoRefreshInterval = $state<AutoRefreshInterval>(getAutoRefreshInterval());
-
+  // Silently update when storage changes externally (e.g., auto-refresh, popup actions)
   $effect(() => {
-    const unsub = onSettingsChange((s) => {
-      autoRefreshInterval = s.autoRefreshInterval;
-    });
-    return unsub;
-  });
-
-  $effect(() => {
-    const intervalSec = autoRefreshInterval;
-    if (intervalSec === 0) return;
-
-    const id = setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        loadSessions();
+    function handleStorageChange(
+      changes: Record<string, chrome.storage.StorageChange>,
+      area: string,
+    ) {
+      if (area !== 'local') return;
+      if (STORAGE_KEYS.SESSIONS in changes || STORAGE_KEYS.SESSION_ORDER in changes) {
+        updateSessionsQuietly();
       }
-    }, intervalSec * 1000);
-
-    return () => clearInterval(id);
+    }
+    chrome.storage.onChanged.addListener(handleStorageChange);
+    return () => chrome.storage.onChanged.removeListener(handleStorageChange);
   });
+
+  // Auto-refresh is handled by the service worker alarm (background/auto-refresh.ts).
+  // The storage listener above picks up changes and updates the UI quietly.
 </script>
 
 <main>
   <div class="page-header">
-    <AppLogo size={32} />
-    <h1>Unaware Sessions — Settings</h1>
+    <div class="header-content">
+      <AppLogo size={28} />
+      <div class="header-text">
+        <h1>Unaware Sessions</h1>
+        <p class="subtitle">Manage your browsing sessions and extension preferences</p>
+      </div>
+    </div>
   </div>
 
   <TabBar {tabs} {activeTab} onchange={(t) => (activeTab = t)} />
 
-  {#if loading}
-    <p class="loading">Loading...</p>
-  {:else if activeTab === 'sessions'}
-    <SessionsTab {sessions} onupdate={loadSessions} />
-  {:else if activeTab === 'settings'}
-    <SettingsTab />
-  {:else if activeTab === 'import-export'}
-    <ImportExportTab {sessions} onupdate={loadSessions} />
-  {:else if activeTab === 'about'}
-    <AboutTab {sessions} onupdate={loadSessions} />
-  {/if}
+  <div class="tab-content">
+    {#if loading}
+      <div class="loading">
+        <div class="loading-spinner"></div>
+        <p>Loading sessions...</p>
+      </div>
+    {:else if activeTab === 'sessions'}
+      <SessionsTab {sessions} onupdate={loadSessions} />
+    {:else if activeTab === 'settings'}
+      <SettingsTab />
+    {:else if activeTab === 'import-export'}
+      <ImportExportTab {sessions} onupdate={loadSessions} />
+    {:else if activeTab === 'about'}
+      <AboutTab {sessions} onupdate={loadSessions} />
+    {/if}
+  </div>
 </main>
 
 <style>
   main {
-    max-width: 640px;
+    max-width: 780px;
     margin: 0 auto;
-    padding: var(--space-7);
+    padding: var(--space-8) var(--space-7);
   }
 
   .page-header {
-    display: flex;
-    align-items: center;
-    gap: var(--space-5);
     margin-bottom: var(--space-7);
   }
 
+  .header-content {
+    display: flex;
+    align-items: center;
+    gap: var(--space-5);
+  }
+
+  .header-text {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
   h1 {
-    font-size: var(--text-xl);
+    font-size: var(--text-2xl);
     font-weight: var(--font-bold);
     margin: 0;
     color: var(--color-text-primary);
     line-height: var(--leading-tight);
+    letter-spacing: -0.02em;
+  }
+
+  .subtitle {
+    margin: 0;
+    font-size: var(--text-md);
+    color: var(--color-text-tertiary);
+    line-height: var(--leading-snug);
+  }
+
+  .tab-content {
+    min-height: 200px;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-6);
   }
 
   .loading {
-    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-4);
+    padding: var(--space-10);
+  }
+
+  .loading-spinner {
+    width: 24px;
+    height: 24px;
+    border: 2px solid var(--color-border-primary);
+    border-top-color: var(--color-accent);
+    border-radius: var(--radius-full);
+    animation: spin 0.7s linear infinite;
+  }
+
+  .loading p {
     color: var(--color-text-tertiary);
-    padding: var(--space-7);
+    font-size: var(--text-sm);
+    margin: 0;
   }
 </style>

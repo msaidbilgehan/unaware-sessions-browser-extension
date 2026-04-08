@@ -6,6 +6,7 @@ import {
   listSessions,
   updateSession,
   duplicateSession,
+  touchSessionRefresh,
 } from './session-manager';
 import {
   getTabEntry,
@@ -27,6 +28,8 @@ import { cookieStore } from './cookie-store';
 import { storageStore } from './storage-store';
 import { STORAGE_KEYS } from '@shared/constants';
 import { setLocal } from '@shared/storage';
+import { estimateCookieBytes, estimateRecordBytes } from '@shared/utils';
+import { refreshAllActiveSessions } from './auto-refresh';
 
 type MessageHandler = (
   message: Message,
@@ -67,7 +70,12 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
 
   [MessageType.SWITCH_SESSION]: async (msg) => {
     if (msg.type !== MessageType.SWITCH_SESSION) return { success: false };
+    const outgoing = getTabEntry(msg.tabId);
     await switchSession(msg.tabId, msg.targetSessionId);
+    if (outgoing) {
+      await touchSessionRefresh(outgoing.sessionId);
+    }
+    await touchSessionRefresh(msg.targetSessionId);
     return { success: true };
   },
 
@@ -93,8 +101,10 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
 
   [MessageType.GET_SESSIONS_FOR_ORIGIN]: async (msg) => {
     if (msg.type !== MessageType.GET_SESSIONS_FOR_ORIGIN) return { success: false };
-    const cookieSessionIds = await cookieStore.getSessionIdsForOrigin(msg.origin);
-    const storageSessionIds = await storageStore.getSessionIdsForOrigin(msg.origin);
+    const [cookieSessionIds, storageSessionIds] = await Promise.all([
+      cookieStore.getSessionIdsForOrigin(msg.origin),
+      storageStore.getSessionIdsForOrigin(msg.origin),
+    ]);
     const merged = [...new Set([...cookieSessionIds, ...storageSessionIds])];
     return { success: true, data: merged };
   },
@@ -111,8 +121,10 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
   [MessageType.GET_SESSION_STATS]: async (msg) => {
     if (msg.type !== MessageType.GET_SESSION_STATS) return { success: false };
     const tabs = getTabsForSession(msg.sessionId);
-    const cookieStats = await cookieStore.getStatsForSession(msg.sessionId);
-    const storageStats = await storageStore.getStatsForSession(msg.sessionId);
+    const [cookieStats, storageStats] = await Promise.all([
+      cookieStore.getStatsForSession(msg.sessionId),
+      storageStore.getStatsForSession(msg.sessionId),
+    ]);
     const allOrigins = [...new Set([...cookieStats.origins, ...storageStats.origins])];
     return {
       success: true,
@@ -152,6 +164,7 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
     const origin = new URL(tab.url).origin;
     await saveAllCookiesForSession(entry.sessionId, origin);
     await saveTabStorage(msg.tabId, entry.sessionId, origin);
+    await touchSessionRefresh(entry.sessionId);
     return { success: true };
   },
 
@@ -185,8 +198,10 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
 
   [MessageType.GET_SESSION_DETAILS]: async (msg) => {
     if (msg.type !== MessageType.GET_SESSION_DETAILS) return { success: false };
-    const cookieSnapshots = await cookieStore.getAllSnapshotsForSession(msg.sessionId);
-    const storageSnapshots = await storageStore.getAllSnapshotsForSession(msg.sessionId);
+    const [cookieSnapshots, storageSnapshots] = await Promise.all([
+      cookieStore.getAllSnapshotsForSession(msg.sessionId),
+      storageStore.getAllSnapshotsForSession(msg.sessionId),
+    ]);
 
     const originMap = new Map<
       string,
@@ -211,14 +226,14 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
 
     for (const [origin, { cookieSnap, storageSnap }] of originMap) {
       const cookieCount = cookieSnap?.cookies.length ?? 0;
-      const cookieBytes = cookieSnap ? JSON.stringify(cookieSnap.cookies).length : 0;
+      const cookieBytes = cookieSnap ? estimateCookieBytes(cookieSnap.cookies) : 0;
       const storageEntries = storageSnap
         ? Object.keys(storageSnap.localStorage).length +
           Object.keys(storageSnap.sessionStorage).length
         : 0;
       const storageBytes = storageSnap
-        ? JSON.stringify(storageSnap.localStorage).length +
-          JSON.stringify(storageSnap.sessionStorage).length
+        ? estimateRecordBytes(storageSnap.localStorage) +
+          estimateRecordBytes(storageSnap.sessionStorage)
         : 0;
       const idbDatabases = storageSnap?.indexedDB?.length ?? 0;
 
@@ -303,6 +318,11 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
     snapshot[msg.storageType] = rest;
     await storageStore.save(snapshot);
     return { success: true };
+  },
+
+  [MessageType.REFRESH_ACTIVE_SESSIONS]: async () => {
+    const refreshedCount = await refreshAllActiveSessions();
+    return { success: true, data: { refreshedCount } };
   },
 
   [MessageType.PING]: async () => {

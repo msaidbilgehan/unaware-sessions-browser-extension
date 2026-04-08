@@ -167,11 +167,16 @@ export async function detectSessionForOrigin(origin: string): Promise<string | n
   const sessionIds = await cookieStore.getSessionIdsForOrigin(origin);
   if (sessionIds.length === 0) return null;
 
+  // Load all snapshots in parallel instead of sequential N+1 queries
+  const snapshots = await Promise.all(
+    sessionIds.map((sid) => cookieStore.load(sid, origin)),
+  );
+
   let bestSessionId: string | null = null;
   let bestScore = 0;
 
-  for (const sessionId of sessionIds) {
-    const snapshot = await cookieStore.load(sessionId, origin);
+  for (let i = 0; i < sessionIds.length; i++) {
+    const snapshot = snapshots[i];
     if (!snapshot || snapshot.cookies.length === 0) continue;
 
     // Filter snapshot to only cookies relevant to this domain
@@ -197,7 +202,7 @@ export async function detectSessionForOrigin(origin: string): Promise<string | n
 
     if (score > bestScore && matches > 0) {
       bestScore = score;
-      bestSessionId = sessionId;
+      bestSessionId = sessionIds[i];
     }
   }
 
@@ -246,10 +251,12 @@ export async function switchSession(tabId: number, targetSessionId: string): Pro
   const domain = extractDomain(origin);
   const currentEntry = getTabEntry(tabId);
 
-  // 1. Save current session's data before switching
+  // 1. Save current session's data before switching (parallel — independent I/O)
   if (currentEntry) {
-    await saveAllCookiesForSession(currentEntry.sessionId, origin);
-    await saveTabStorage(tabId, currentEntry.sessionId, origin);
+    await Promise.all([
+      saveAllCookiesForSession(currentEntry.sessionId, origin),
+      saveTabStorage(tabId, currentEntry.sessionId, origin),
+    ]);
   }
 
   // 2. Clear cookies for this origin
@@ -312,11 +319,11 @@ export async function switchSession(tabId: number, targetSessionId: string): Pro
     }
   }
 
-  // 5. Update tab-session mapping
-  await assignTab(tabId, targetSessionId, origin);
-
-  // 6. Update DNR rules
-  await updateRulesForTab(tabId, targetSessionId, origin);
+  // 5. Update tab-session mapping + DNR rules (parallel — independent)
+  await Promise.all([
+    assignTab(tabId, targetSessionId, origin),
+    updateRulesForTab(tabId, targetSessionId, origin),
+  ]);
 
   // 7. Queue storage restore for when the content script loads on the new page
   pendingRestores.set(tabId, { sessionId: targetSessionId, origin });

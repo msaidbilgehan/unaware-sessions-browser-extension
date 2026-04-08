@@ -137,3 +137,13 @@ async function removeSessionFromOrder(sessionId: string): Promise<void> {
   const filtered = order.filter((id) => id !== sessionId);
   await setLocal(STORAGE_KEYS.SESSION_ORDER, filtered);
 }
+
+export async function touchSessionRefresh(sessionId: string): Promise<void> {
+  await ensureHydrated();
+  const existing = sessions.get(sessionId);
+  if (!existing) return;
+
+  const updated: SessionProfile = { ...existing, lastRefreshedAt: now() };
+  sessions.set(sessionId, updated);
+  await persistSessions();
+}

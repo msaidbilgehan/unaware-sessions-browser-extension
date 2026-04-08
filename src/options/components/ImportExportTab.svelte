@@ -83,62 +83,129 @@
   }
 </script>
 
-<section>
-  <h2>Import / Export</h2>
+<div class="data-layout">
+  <!-- Export Section -->
+  <section class="card">
+    <div class="card-header">
+      <div class="card-icon export">
+        <Icon name="download" size={16} />
+      </div>
+      <div>
+        <h2>Export Sessions</h2>
+        <p class="description">
+          Download all session profiles as a JSON file. Cookie and storage data is not included.
+        </p>
+      </div>
+    </div>
 
-  <DragDropZone onfiles={handleFileDrop} />
-
-  <div class="actions-row">
-    <button class="btn" onclick={handleExport} disabled={sessions.length === 0}>
+    <button class="btn primary" onclick={handleExport} disabled={sessions.length === 0}>
       <Icon name="download" size={14} />
-      Export Sessions (JSON)
+      Export {sessions.length} Session{sessions.length === 1 ? '' : 's'}
     </button>
+  </section>
+
+  <!-- Import Section -->
+  <section class="card">
+    <div class="card-header">
+      <div class="card-icon import">
+        <Icon name="upload" size={16} />
+      </div>
+      <div>
+        <h2>Import Sessions</h2>
+        <p class="description">
+          Import session profiles from a previously exported JSON file.
+        </p>
+      </div>
+    </div>
+
+    <DragDropZone onfiles={handleFileDrop} />
+
     <button class="btn" onclick={handleImportClick}>
       <Icon name="upload" size={14} />
-      Import Sessions (JSON)
+      Choose File
     </button>
-  </div>
 
-  {#if importError}
-    <p class="error">{importError}</p>
-  {/if}
-  {#if importSuccess}
-    <p class="success">{importSuccess}</p>
-  {/if}
+    {#if importError}
+      <div class="message error">
+        <Icon name="alert-triangle" size={13} />
+        <p>{importError}</p>
+      </div>
+    {/if}
+    {#if importSuccess}
+      <div class="message success">
+        <Icon name="check" size={13} />
+        <p>{importSuccess}</p>
+      </div>
+    {/if}
 
-  {#if importedProfiles}
-    <ImportDiff
-      existing={sessions}
-      imported={importedProfiles}
-      onconfirm={handleConfirmImport}
-      oncancel={() => (importedProfiles = null)}
-    />
-  {/if}
-</section>
+    {#if importedProfiles}
+      <ImportDiff
+        existing={sessions}
+        imported={importedProfiles}
+        onconfirm={handleConfirmImport}
+        oncancel={() => (importedProfiles = null)}
+      />
+    {/if}
+  </section>
+</div>
 
 <style>
-  section {
+  .data-layout {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-6);
+  }
+
+  .card {
     background: var(--color-bg-elevated);
     border: 1px solid var(--color-border-secondary);
-    border-radius: var(--radius-lg);
-    padding: var(--space-6);
-    box-shadow: var(--shadow-sm);
+    border-radius: var(--radius-2xl);
+    padding: var(--space-7);
+    box-shadow: var(--shadow-xs);
     display: flex;
     flex-direction: column;
     gap: var(--space-5);
   }
 
+  .card-header {
+    display: flex;
+    gap: var(--space-4);
+    align-items: flex-start;
+  }
+
+  .card-icon {
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-lg);
+    flex-shrink: 0;
+  }
+
+  .card-icon.export {
+    background: var(--color-accent-soft);
+    color: var(--color-accent);
+  }
+
+  .card-icon.import {
+    background: var(--color-success-soft);
+    color: var(--color-success);
+  }
+
   h2 {
-    font-size: var(--text-lg);
+    font-size: var(--text-md);
     font-weight: var(--font-semibold);
     margin: 0;
     color: var(--color-text-primary);
+    line-height: var(--leading-tight);
   }
 
-  .actions-row {
-    display: flex;
-    gap: var(--space-4);
-    flex-wrap: wrap;
+  .description {
+    font-size: var(--text-sm);
+    color: var(--color-text-tertiary);
+    margin: var(--space-1) 0 0;
+    line-height: var(--leading-relaxed);
   }
 
   .btn {
@@ -146,34 +213,59 @@
     align-items: center;
     gap: var(--space-3);
     padding: var(--space-4) var(--space-6);
-    background: var(--color-bg-tertiary);
+    background: var(--color-bg-primary);
     border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-md);
-    font-size: var(--text-base);
+    border-radius: var(--radius-lg);
+    font-size: var(--text-sm);
     font-family: var(--font-sans);
+    font-weight: var(--font-medium);
     cursor: pointer;
     color: var(--color-text-primary);
-    transition: all var(--transition-fast);
+    transition: all var(--transition-smooth);
+    width: fit-content;
   }
 
   .btn:hover:not(:disabled) {
     background: var(--color-interactive-hover);
+    box-shadow: var(--shadow-xs);
   }
 
   .btn:disabled {
-    opacity: 0.5;
+    opacity: 0.4;
     cursor: not-allowed;
   }
 
-  .error {
-    color: var(--color-error);
+  .btn.primary {
+    background: var(--color-accent);
+    border-color: var(--color-accent);
+    color: var(--color-text-inverse);
+  }
+
+  .btn.primary:hover:not(:disabled) {
+    background: var(--color-accent-hover);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .message {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-4) var(--space-5);
+    border-radius: var(--radius-lg);
     font-size: var(--text-sm);
+  }
+
+  .message p {
     margin: 0;
   }
 
-  .success {
+  .message.error {
+    color: var(--color-error);
+    background: var(--color-error-soft);
+  }
+
+  .message.success {
     color: var(--color-success);
-    font-size: var(--text-sm);
-    margin: 0;
+    background: var(--color-success-soft);
   }
 </style>

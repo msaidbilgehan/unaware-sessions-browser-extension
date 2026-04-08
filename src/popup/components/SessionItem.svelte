@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { SessionProfile } from '@shared/types';
+  import { formatRelativeTime } from '@shared/utils';
   import Icon from '@shared/components/Icon.svelte';
   import InlineEdit from '@shared/components/InlineEdit.svelte';
   import SessionDetail from './SessionDetail.svelte';
@@ -93,64 +94,81 @@
   {ondragend}
   {ondrop}
 >
-  {#if draggable}
-    <span class="grip" aria-hidden="true">
-      <Icon name="grip-vertical" size={12} />
+  <div class="item-content">
+    {#if draggable}
+      <span class="grip" aria-hidden="true">
+        <Icon name="grip-vertical" size={10} />
+      </span>
+    {/if}
+
+    <span class="indicator">
+      {#if session.emoji}
+        <span class="emoji">{session.emoji}</span>
+      {:else}
+        <span class="dot" style="background-color: {session.color}"></span>
+      {/if}
     </span>
-  {/if}
 
-  {#if session.emoji}
-    <span class="emoji">{session.emoji}</span>
-  {:else}
-    <span class="dot" style="background-color: {session.color}"></span>
-  {/if}
+    {#if editing}
+      <span
+        class="name-edit"
+        onclick={(e) => e.stopPropagation()}
+        onkeydown={(e) => e.stopPropagation()}
+        role="presentation"
+      >
+        <InlineEdit value={session.name} onsave={handleRename} oncancel={() => (editing = false)} />
+      </span>
+    {:else}
+      <div class="name-group">
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <span class="name" ondblclick={handleDoubleClick}>{session.name}</span>
+        {#if session.lastRefreshedAt}
+          <span class="last-refreshed" title={new Date(session.lastRefreshedAt).toLocaleString()}>
+            {formatRelativeTime(session.lastRefreshedAt)}
+          </span>
+        {/if}
+      </div>
+    {/if}
 
-  {#if editing}
-    <span
-      class="name-edit"
-      onclick={(e) => e.stopPropagation()}
-      onkeydown={(e) => e.stopPropagation()}
-      role="presentation"
-    >
-      <InlineEdit value={session.name} onsave={handleRename} oncancel={() => (editing = false)} />
-    </span>
-  {:else}
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <span class="name" ondblclick={handleDoubleClick}>{session.name}</span>
-  {/if}
+    <div class="badges">
+      {#if session.pinned}
+        <span class="badge pin-badge" aria-label="Pinned">
+          <Icon name="pin" size={9} />
+        </span>
+      {/if}
 
-  {#if hasOriginData && !isActive}
-    <span class="origin-badge" title="Has saved data for this site">
-      <Icon name="globe" size={10} />
-    </span>
-  {/if}
+      {#if hasOriginData && !isActive}
+        <span class="badge data-badge" title="Has saved data for this site">
+          <Icon name="database" size={9} />
+        </span>
+      {/if}
 
-  {#if session.pinned}
-    <span class="pin-badge" aria-label="Pinned">
-      <Icon name="pin" size={10} />
-    </span>
-  {/if}
+      {#if tabCount > 0}
+        <span class="badge tab-badge" title="{tabCount} tab{tabCount === 1 ? '' : 's'}">
+          {tabCount}
+        </span>
+      {/if}
 
-  {#if tabCount > 0}
-    <span class="tab-count" title="{tabCount} tab{tabCount === 1 ? '' : 's'}">{tabCount}</span>
-  {/if}
+      {#if isActive}
+        <span class="badge active-badge">active</span>
+      {/if}
+    </div>
 
-  {#if isActive}
-    <span class="badge">active</span>
-  {/if}
-
-  {#if showActions}
-    <button
-      class="expand-btn"
-      onclick={toggleDetail}
-      aria-label={expanded ? 'Collapse details' : 'Expand details'}
-    >
-      <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={12} />
-    </button>
-    <button class="delete-btn" onclick={handleDelete} aria-label="Delete session {session.name}">
-      <Icon name="x" size={14} />
-    </button>
-  {/if}
+    {#if showActions}
+      <div class="hover-actions">
+        <button
+          class="action-icon"
+          onclick={toggleDetail}
+          aria-label={expanded ? 'Collapse details' : 'Expand details'}
+        >
+          <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={11} />
+        </button>
+        <button class="action-icon danger" onclick={handleDelete} aria-label="Delete session {session.name}">
+          <Icon name="x" size={12} />
+        </button>
+      </div>
+    {/if}
+  </div>
 </div>
 
 {#if expanded}
@@ -159,34 +177,54 @@
 
 <style>
   .session-item {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    padding: var(--space-4) var(--space-5);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-lg);
     cursor: pointer;
-    transition: all var(--transition-fast);
+    transition: all var(--transition-smooth);
     position: relative;
     background: var(--color-bg-elevated);
     border: 1px solid var(--color-border-secondary);
     border-left: 3px solid var(--session-color);
-    box-shadow: var(--shadow-sm);
   }
 
   .session-item:hover {
     background: var(--color-bg-secondary);
-    box-shadow: var(--shadow-md);
+    border-color: var(--color-border-primary);
+    box-shadow: var(--shadow-sm);
   }
 
   .session-item.active {
-    background: color-mix(in srgb, var(--session-color) 8%, var(--color-bg-elevated));
-    border-color: color-mix(in srgb, var(--session-color) 20%, var(--color-border-secondary));
+    background: color-mix(in srgb, var(--session-color) 6%, var(--color-bg-elevated));
+    border-color: color-mix(in srgb, var(--session-color) 25%, var(--color-border-secondary));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--session-color) 10%, transparent),
+                var(--shadow-xs);
+  }
+
+  .item-content {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-4) var(--space-4);
   }
 
   .grip {
     color: var(--color-text-tertiary);
     cursor: grab;
     flex-shrink: 0;
+    opacity: 0.5;
+    transition: opacity var(--transition-fast);
+  }
+
+  .session-item:hover .grip {
+    opacity: 1;
+  }
+
+  .indicator {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
   }
 
   .dot {
@@ -194,61 +232,97 @@
     height: 10px;
     border-radius: var(--radius-full);
     flex-shrink: 0;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--session-color) 15%, transparent);
   }
 
   .emoji {
-    font-size: 16px;
+    font-size: 15px;
     line-height: 1;
     flex-shrink: 0;
+  }
+
+  .name-group {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
   }
 
   .name {
     font-size: var(--text-base);
     font-weight: var(--font-medium);
     color: var(--color-text-primary);
-    flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    line-height: var(--leading-snug);
+  }
+
+  .last-refreshed {
+    font-size: 10px;
+    color: var(--color-text-tertiary);
+    line-height: 1;
   }
 
   .name-edit {
     flex: 1;
   }
 
-  .origin-badge {
-    color: var(--color-accent);
+  .badges {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
     flex-shrink: 0;
-    opacity: 0.7;
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
   }
 
   .pin-badge {
     color: var(--color-warning);
-    flex-shrink: 0;
   }
 
-  .tab-count {
-    font-size: var(--text-xs);
+  .data-badge {
+    color: var(--color-accent);
+    opacity: 0.6;
+  }
+
+  .tab-badge {
+    font-size: 10px;
     color: var(--color-text-tertiary);
     background: var(--color-bg-tertiary);
-    padding: 0 var(--space-3);
+    padding: 0 var(--space-2);
     border-radius: var(--radius-full);
-    font-weight: var(--font-medium);
-    min-width: 18px;
+    font-weight: var(--font-semibold);
+    min-width: 16px;
+    height: 16px;
     text-align: center;
+    line-height: 16px;
   }
 
-  .badge {
+  .active-badge {
     font-size: 10px;
     color: var(--color-accent);
     background: var(--color-accent-soft);
     padding: 1px var(--space-3);
     border-radius: var(--radius-full);
-    font-weight: var(--font-medium);
+    font-weight: var(--font-semibold);
+    line-height: 14px;
+  }
+
+  .hover-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
     flex-shrink: 0;
   }
 
-  .expand-btn {
+  .action-icon {
     background: none;
     border: none;
     color: var(--color-text-tertiary);
@@ -257,24 +331,15 @@
     border-radius: var(--radius-sm);
     line-height: 1;
     display: flex;
+    transition: all var(--transition-fast);
   }
 
-  .expand-btn:hover {
+  .action-icon:hover {
     color: var(--color-text-secondary);
+    background: var(--color-interactive-hover);
   }
 
-  .delete-btn {
-    background: none;
-    border: none;
-    color: var(--color-text-tertiary);
-    cursor: pointer;
-    padding: var(--space-1);
-    border-radius: var(--radius-sm);
-    line-height: 1;
-    display: flex;
-  }
-
-  .delete-btn:hover {
+  .action-icon.danger:hover {
     color: var(--color-error);
     background: var(--color-error-soft);
   }

@@ -6,7 +6,7 @@
     setAutoRefreshInterval,
     onSettingsChange,
   } from '@shared/settings-store';
-  import { GITHUB_URL, OPENCOLLECTIVE_URL } from '@shared/constants';
+  import { STORAGE_KEYS } from '@shared/constants';
   import {
     listSessions,
     createSession,
@@ -22,6 +22,7 @@
     getSessionsForOrigin,
     saveSessionData,
     clearOriginData,
+    detectSession,
   } from '@shared/api';
   import { fly } from 'svelte/transition';
   import Icon from '@shared/components/Icon.svelte';
@@ -85,6 +86,7 @@
     currentTabEntry ? sessions.find((s) => s.id === currentTabEntry!.sessionId) : undefined,
   );
 
+  // Full initial load with loading skeleton — called once on mount
   async function loadState() {
     loading = true;
     try {
@@ -100,6 +102,16 @@
         currentTabEntry = await getSessionForTab(tab.id);
       }
       const origin = tab?.url ? extractOrigin(tab.url) : '';
+
+      // Auto-detect session from cookies when tab-session mapping is lost
+      if (!currentTabEntry && origin && tab?.id) {
+        const detectedId = await detectSession(origin);
+        if (detectedId) {
+          await assignTab(tab.id, detectedId, origin);
+          currentTabEntry = { sessionId: detectedId, origin };
+        }
+      }
+
       if (origin) {
         const ids = await getSessionsForOrigin(origin);
         sessionsWithOriginData = new Set(ids);
@@ -110,6 +122,29 @@
       console.error('[Unaware Sessions] Failed to load state:', err);
     } finally {
       loading = false;
+    }
+  }
+
+  // Silent data update — no loading skeleton, no full rebuild.
+  // Svelte reactivity handles re-rendering only the changed parts.
+  async function updateSessionsQuietly() {
+    try {
+      const [sessionList, counts] = await Promise.all([
+        listSessions(),
+        getAllTabCounts(),
+      ]);
+      sessions = sessionList;
+      tabCounts = counts;
+
+      if (currentTab?.url) {
+        const origin = extractOrigin(currentTab.url);
+        if (origin) {
+          const ids = await getSessionsForOrigin(origin);
+          sessionsWithOriginData = new Set(ids);
+        }
+      }
+    } catch {
+      // Silently ignore — UI stays with current data
     }
   }
 
@@ -141,8 +176,8 @@
     if (!currentTab?.id) return;
     try {
       await switchSession(currentTab.id, sessionId);
-      // Update local state immediately so the UI reflects the new session
       currentTabEntry = { sessionId, origin: currentOrigin };
+      sessions = await listSessions();
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Failed to switch session', 'error');
     }
@@ -223,8 +258,20 @@
       if (currentTab?.id && currentTabEntry) {
         await saveSessionData(currentTab.id);
       }
-      await loadState();
-      showToast('Session data updated', 'success');
+
+      // Refresh UI quietly — no loading skeleton
+      await updateSessionsQuietly();
+
+      // Auto-detect session if no mapping exists
+      if (!currentTabEntry && currentOrigin && currentTab?.id) {
+        const detectedId = await detectSession(currentOrigin);
+        if (detectedId) {
+          await assignTab(currentTab.id, detectedId, currentOrigin);
+          currentTabEntry = { sessionId: detectedId, origin: currentOrigin };
+        }
+      }
+
+      showToast(currentTabEntry ? 'Session data updated' : 'Session detected', 'success');
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Failed to update', 'error');
     } finally {
@@ -324,9 +371,24 @@
     loadState();
   });
 
+  // Silently update when storage changes externally (e.g., auto-refresh, settings page, context menu)
+  $effect(() => {
+    function handleStorageChange(
+      changes: Record<string, chrome.storage.StorageChange>,
+      area: string,
+    ) {
+      if (area !== 'local') return;
+      if (STORAGE_KEYS.SESSIONS in changes || STORAGE_KEYS.SESSION_ORDER in changes) {
+        updateSessionsQuietly();
+      }
+    }
+    chrome.storage.onChanged.addListener(handleStorageChange);
+    return () => chrome.storage.onChanged.removeListener(handleStorageChange);
+  });
+
   // Auto-refresh
   let autoRefreshInterval = $state<AutoRefreshInterval>(getAutoRefreshInterval());
-  let savedInterval: AutoRefreshInterval = 10;
+  let savedInterval: AutoRefreshInterval = 60;
   const autoRefreshEnabled = $derived(autoRefreshInterval > 0);
 
   $effect(() => {
@@ -345,24 +407,26 @@
     }
   }
 
-  $effect(() => {
-    const intervalSec = autoRefreshInterval;
-    if (intervalSec === 0) return;
-
-    const id = setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        loadState();
-      }
-    }, intervalSec * 1000);
-
-    return () => clearInterval(id);
-  });
+  // Auto-refresh is handled by the service worker alarm (background/auto-refresh.ts).
+  // The storage listener above picks up changes and updates the UI quietly.
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <main onkeydown={handleKeydown}>
   {#if loading}
-    <div class="loading">Loading...</div>
+    <div class="popup-content">
+      <div class="header">
+        <div class="header-title">
+          <AppLogo size={20} />
+          <h1>Sessions</h1>
+        </div>
+      </div>
+      <div class="loading-skeleton">
+        <div class="skel skel-panel"></div>
+        <div class="skel skel-item"></div>
+        <div class="skel skel-item short"></div>
+      </div>
+    </div>
   {:else if view === 'new'}
     <div
       class="popup-content"
@@ -379,27 +443,11 @@
     >
       <div class="header">
         <div class="header-title">
-          <AppLogo size={22} />
-          <h1>Unaware Sessions</h1>
+          <AppLogo size={20} />
+          <h1>Sessions</h1>
         </div>
         <div class="header-actions">
           <ThemeToggle />
-          <button
-            class="icon-btn"
-            onclick={() => chrome.tabs.create({ url: GITHUB_URL })}
-            aria-label="GitHub"
-            title="GitHub"
-          >
-            <Icon name="github" size={15} />
-          </button>
-          <button
-            class="icon-btn sponsor-btn"
-            onclick={() => chrome.tabs.create({ url: `${OPENCOLLECTIVE_URL}/donate` })}
-            aria-label="Sponsor"
-            title="Sponsor on Open Collective"
-          >
-            <Icon name="heart" size={15} />
-          </button>
           <button
             class="icon-btn"
             onclick={() => chrome.runtime.openOptionsPage()}
@@ -415,6 +463,7 @@
         {currentOrigin}
         currentSessionColor={currentSession?.color}
         currentSessionEmoji={currentSession?.emoji}
+        currentSessionName={currentSession?.name}
         onrefresh={handleUpdateSessionData}
         {refreshing}
         {autoRefreshEnabled}
@@ -494,13 +543,14 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    background: var(--color-bg-primary);
   }
 
   .popup-content {
     display: flex;
     flex-direction: column;
-    gap: var(--space-5);
-    padding: var(--space-5);
+    gap: var(--space-4);
+    padding: var(--space-6);
     overflow-y: auto;
     flex: 1;
   }
@@ -509,6 +559,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    padding-bottom: var(--space-2);
   }
 
   .header-title {
@@ -523,6 +574,7 @@
     margin: 0;
     color: var(--color-text-primary);
     line-height: var(--leading-tight);
+    letter-spacing: -0.01em;
   }
 
   .header-actions {
@@ -537,7 +589,7 @@
     color: var(--color-text-tertiary);
     cursor: pointer;
     padding: var(--space-2);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-md);
     line-height: 1;
     display: flex;
     align-items: center;
@@ -549,42 +601,58 @@
     background: var(--color-interactive-hover);
   }
 
-  .icon-btn.sponsor-btn {
-    color: #ef4444;
-  }
-
-  .icon-btn.sponsor-btn:hover {
-    color: #ef4444;
-    background: var(--color-error-soft);
-  }
-
   .new-btn {
     display: flex;
     align-items: center;
     justify-content: center;
     gap: var(--space-3);
-    padding: var(--space-3) var(--space-5);
-    background: var(--color-bg-tertiary);
+    padding: var(--space-4) var(--space-5);
+    background: var(--color-bg-secondary);
     border: 1px dashed var(--color-border-primary);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-lg);
     font-size: var(--text-sm);
     font-family: var(--font-sans);
-    color: var(--color-text-secondary);
+    color: var(--color-text-tertiary);
     cursor: pointer;
-    transition: all var(--transition-fast);
+    transition: all var(--transition-smooth);
     flex-shrink: 0;
   }
 
   .new-btn:hover {
-    background: var(--color-interactive-hover);
-    border-color: var(--color-text-tertiary);
-    color: var(--color-text-primary);
+    background: var(--color-accent-soft);
+    border-color: var(--color-accent-muted);
+    border-style: solid;
+    color: var(--color-accent);
   }
 
-  .loading {
-    text-align: center;
-    padding: var(--space-7);
-    font-size: var(--text-base);
-    color: var(--color-text-tertiary);
+  /* Loading skeleton */
+  .loading-skeleton {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+  }
+
+  .skel {
+    background: linear-gradient(
+      90deg,
+      var(--color-bg-tertiary) 25%,
+      var(--color-bg-secondary) 50%,
+      var(--color-bg-tertiary) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.5s ease-in-out infinite;
+    border-radius: var(--radius-lg);
+  }
+
+  .skel-panel {
+    height: 56px;
+  }
+
+  .skel-item {
+    height: 44px;
+  }
+
+  .skel-item.short {
+    width: 60%;
   }
 </style>

@@ -36,34 +36,38 @@
 
 <div class="detail-panel">
   {#if loading}
-    <span class="loading">Loading stats...</span>
+    <div class="loading-row">
+      <div class="skel skel-stat"></div>
+      <div class="skel skel-stat"></div>
+      <div class="skel skel-stat"></div>
+      <div class="skel skel-stat"></div>
+    </div>
   {:else if error}
-    <span class="error">{error}</span>
+    <span class="error-text">{error}</span>
   {:else if stats}
     <div class="stat-grid">
       <div class="stat">
-        <span class="stat-label">Tabs</span>
         <span class="stat-value">{stats.tabCount}</span>
+        <span class="stat-label">Tabs</span>
       </div>
       <div class="stat">
-        <span class="stat-label">Cookies</span>
         <span class="stat-value">{stats.cookieCount}</span>
+        <span class="stat-label">Cookies</span>
       </div>
       <div class="stat">
-        <span class="stat-label">Storage</span>
         <span class="stat-value">{formatBytes(stats.storageBytes)}</span>
+        <span class="stat-label">Storage</span>
       </div>
       <div class="stat">
-        <span class="stat-label">IDB</span>
         <span class="stat-value">{stats.idbDatabases}</span>
+        <span class="stat-label">IDB</span>
       </div>
     </div>
     {#if stats.origins.length > 0}
       <div class="origins">
-        <span class="origins-label">Origins:</span>
         {#each stats.origins as origin}
           <span class="origin-tag">
-            <Icon name="globe" size={10} />
+            <Icon name="globe" size={9} />
             {origin.replace(/^https?:\/\//, '')}
           </span>
         {/each}
@@ -75,19 +79,36 @@
 <style>
   .detail-panel {
     padding: var(--space-4);
-    margin-top: var(--space-3);
+    margin-top: var(--space-2);
     background: var(--color-bg-secondary);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-lg);
     border: 1px solid var(--color-border-secondary);
   }
 
-  .loading,
-  .error {
-    font-size: var(--text-xs);
-    color: var(--color-text-tertiary);
+  .loading-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: var(--space-3);
   }
 
-  .error {
+  .skel {
+    background: linear-gradient(
+      90deg,
+      var(--color-bg-tertiary) 25%,
+      var(--color-bg-secondary) 50%,
+      var(--color-bg-tertiary) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.5s ease-in-out infinite;
+    border-radius: var(--radius-sm);
+  }
+
+  .skel-stat {
+    height: 36px;
+  }
+
+  .error-text {
+    font-size: var(--text-xs);
     color: var(--color-error);
   }
 
@@ -102,17 +123,21 @@
     flex-direction: column;
     align-items: center;
     gap: var(--space-1);
-  }
-
-  .stat-label {
-    font-size: var(--text-xs);
-    color: var(--color-text-tertiary);
+    padding: var(--space-2) 0;
   }
 
   .stat-value {
     font-size: var(--text-sm);
-    font-weight: var(--font-semibold);
+    font-weight: var(--font-bold);
     color: var(--color-text-primary);
+    line-height: 1;
+  }
+
+  .stat-label {
+    font-size: 10px;
+    color: var(--color-text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
   }
 
   .origins {
@@ -120,13 +145,6 @@
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-2);
-    align-items: center;
-  }
-
-  .origins-label {
-    font-size: var(--text-xs);
-    color: var(--color-text-tertiary);
-    margin-right: var(--space-1);
   }
 
   .origin-tag {

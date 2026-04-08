@@ -7,8 +7,30 @@ import type {
   MessageResponse,
 } from '@shared/types';
 
+function isConnectionError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return (
+    msg.includes('Receiving end does not exist') ||
+    msg.includes('message port closed before a response was received') ||
+    msg.includes('Could not establish connection')
+  );
+}
+
 async function sendMessage<T>(message: Message): Promise<T> {
-  const response: MessageResponse<T> = await chrome.runtime.sendMessage(message);
+  let response: MessageResponse<T> | undefined;
+
+  try {
+    response = await chrome.runtime.sendMessage(message);
+  } catch (err) {
+    if (!isConnectionError(err)) throw err;
+    // Service worker may be waking up — wait briefly and retry once.
+    await new Promise<void>((resolve) => setTimeout(resolve, 200));
+    response = await chrome.runtime.sendMessage(message);
+  }
+
+  if (!response) {
+    throw new Error('No response from service worker');
+  }
   if (response.success) {
     return response.data as T;
   }
@@ -157,6 +179,10 @@ export function updateSessionStorageEntry(
     key,
     value,
   });
+}
+
+export function refreshActiveSessions(): Promise<{ refreshedCount: number }> {
+  return sendMessage({ type: MessageType.REFRESH_ACTIVE_SESSIONS });
 }
 
 export function deleteSessionStorageEntry(

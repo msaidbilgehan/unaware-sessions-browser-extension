@@ -3,6 +3,8 @@ import type { ExtensionSettings } from '@shared/types';
 export const ALARM_PERSIST_STATE = 'persist-state';
 export const ALARM_INTERVAL_MINUTES = 1;
 
+export const ALARM_AUTO_REFRESH = 'auto-refresh-sessions';
+
 export const STORAGE_KEYS = {
   SESSIONS: 'sessions',
   TAB_MAP: 'tabMap',

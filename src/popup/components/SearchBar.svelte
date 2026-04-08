@@ -24,7 +24,9 @@
 </script>
 
 <div class="search-bar">
-  <Icon name="search" size={14} class="search-icon" />
+  <span class="search-icon">
+    <Icon name="search" size={13} />
+  </span>
   <input
     type="text"
     placeholder="Search sessions..."
@@ -35,7 +37,7 @@
   />
   {#if query}
     <button class="clear-btn" onclick={handleClear} aria-label="Clear search">
-      <Icon name="x" size={12} />
+      <Icon name="x" size={11} />
     </button>
   {/if}
 </div>
@@ -46,19 +48,27 @@
     align-items: center;
     gap: var(--space-3);
     padding: var(--space-3) var(--space-4);
-    border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-md);
-    background: var(--color-bg-primary);
-    transition: border-color var(--transition-fast);
+    border: 1px solid var(--color-border-secondary);
+    border-radius: var(--radius-lg);
+    background: var(--color-bg-secondary);
+    transition: all var(--transition-smooth);
   }
 
   .search-bar:focus-within {
     border-color: var(--color-accent);
+    background: var(--color-bg-primary);
+    box-shadow: var(--shadow-glow);
   }
 
-  :global(.search-icon) {
+  .search-icon {
     color: var(--color-text-tertiary);
     flex-shrink: 0;
+    display: flex;
+    transition: color var(--transition-fast);
+  }
+
+  .search-bar:focus-within .search-icon {
+    color: var(--color-accent);
   }
 
   input {
@@ -84,9 +94,11 @@
     line-height: 1;
     display: flex;
     border-radius: var(--radius-sm);
+    transition: all var(--transition-fast);
   }
 
   .clear-btn:hover {
     color: var(--color-text-secondary);
+    background: var(--color-interactive-hover);
   }
 </style>

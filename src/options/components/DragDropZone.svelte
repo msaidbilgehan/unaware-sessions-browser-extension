@@ -36,9 +36,11 @@
   role="region"
   aria-label="Drop files here"
 >
-  <Icon name="upload" size={24} />
-  <p>Drag and drop a JSON file here</p>
-  <p class="hint">or use the import button below</p>
+  <div class="drop-icon">
+    <Icon name="upload" size={20} />
+  </div>
+  <p class="drop-text">Drag and drop a JSON file here</p>
+  <p class="drop-hint">or use the button below</p>
 </div>
 
 <style>
@@ -49,10 +51,16 @@
     gap: var(--space-3);
     padding: var(--space-7);
     border: 2px dashed var(--color-border-primary);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-xl);
     color: var(--color-text-tertiary);
     text-align: center;
-    transition: all var(--transition-fast);
+    transition: all var(--transition-smooth);
+    background: var(--color-bg-secondary);
+  }
+
+  .drop-zone:hover {
+    border-color: var(--color-text-tertiary);
+    background: var(--color-bg-tertiary);
   }
 
   .drop-zone.dragging {
@@ -61,12 +69,36 @@
     color: var(--color-accent);
   }
 
-  p {
-    margin: 0;
-    font-size: var(--text-sm);
+  .drop-icon {
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-lg);
+    background: var(--color-bg-tertiary);
+    transition: all var(--transition-fast);
   }
 
-  .hint {
+  .drop-zone.dragging .drop-icon {
+    background: var(--color-accent-soft);
+    color: var(--color-accent);
+  }
+
+  .drop-text {
+    margin: 0;
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+    color: var(--color-text-secondary);
+  }
+
+  .drop-zone.dragging .drop-text {
+    color: var(--color-accent);
+  }
+
+  .drop-hint {
+    margin: 0;
     font-size: var(--text-xs);
+    color: var(--color-text-tertiary);
   }
 </style>

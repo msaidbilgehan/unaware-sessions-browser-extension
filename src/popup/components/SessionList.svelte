@@ -57,6 +57,11 @@
     filteredSessions.filter((s) => !sessionsWithOriginData.has(s.id) && s.id !== activeSessionId),
   );
 
+  // Auto-expand other sessions when no site-specific sessions exist
+  const effectiveShowOther = $derived(
+    showOtherSessions || (thisSiteSessions.length === 0 && otherSessions.length > 0),
+  );
+
   function handleDragStart(e: DragEvent, index: number) {
     dragIndex = index;
     if (e.dataTransfer) {
@@ -72,7 +77,7 @@
   function handleDrop(e: DragEvent, index: number) {
     e.preventDefault();
     if (dragIndex !== null && dragIndex !== index) {
-      const allVisible = [...thisSiteSessions, ...(showOtherSessions ? otherSessions : [])];
+      const allVisible = [...thisSiteSessions, ...(effectiveShowOther ? otherSessions : [])];
       const items = [...allVisible];
       const [moved] = items.splice(dragIndex, 1);
       items.splice(index, 0, moved);
@@ -92,10 +97,12 @@
   {#if sessions.length === 0}
     <OnboardingEmpty {oncreate} />
   {:else if filteredSessions.length === 0}
-    <div class="empty">
+    <div class="empty-search">
+      <Icon name="search" size={16} />
       <p>No sessions match "{searchQuery}"</p>
     </div>
   {:else}
+    <!-- Default (no session) option -->
     <div
       class="default-item"
       class:active={!activeSessionId}
@@ -104,7 +111,9 @@
       onclick={onunassign}
       onkeydown={(e) => e.key === 'Enter' && onunassign()}
     >
-      <Icon name="globe" size={14} />
+      <span class="default-icon">
+        <Icon name="globe" size={13} />
+      </span>
       <span class="default-label">Default (no session)</span>
       {#if !activeSessionId}
         <span class="default-badge">active</span>
@@ -113,7 +122,10 @@
 
     {#if thisSiteSessions.length > 0}
       <div class="group">
-        <span class="group-label">This site</span>
+        <div class="group-header">
+          <span class="group-label">This site</span>
+          <span class="group-line"></span>
+        </div>
         {#each thisSiteSessions as session, i (session.id)}
           <div class="drag-wrapper" class:drag-over={dragOverIndex === i && dragIndex !== i}>
             <SessionItem
@@ -138,43 +150,51 @@
     {/if}
 
     {#if otherSessions.length > 0}
-      <div class="group other">
+      <div class="group">
         <button
           class="group-toggle"
           onclick={() => (showOtherSessions = !showOtherSessions)}
-          aria-expanded={showOtherSessions}
+          aria-expanded={effectiveShowOther}
         >
-          <span class="group-label">Other sessions ({otherSessions.length})</span>
-          <span class="toggle-chevron" class:open={showOtherSessions}>&#9662;</span>
+          <div class="group-header">
+            <span class="group-label">Other sessions</span>
+            <span class="group-count">{otherSessions.length}</span>
+            <span class="group-line"></span>
+          </div>
+          <span class="toggle-icon" class:open={effectiveShowOther}>
+            <Icon name="chevron-down" size={12} />
+          </span>
         </button>
-        {#if showOtherSessions}
-          {#each otherSessions as session, j (session.id)}
-            {@const idx = thisSiteSessions.length + j}
-            <div class="drag-wrapper" class:drag-over={dragOverIndex === idx && dragIndex !== idx}>
-              <SessionItem
-                {session}
-                isActive={false}
-                hasOriginData={false}
-                tabCount={tabCounts[session.id] ?? 0}
-                {onswitch}
-                {ondelete}
-                {onrename}
-                forceEditing={editingSessionId === session.id}
-                {oncontextmenu}
-                draggable={true}
-                ondragstart={(e) => handleDragStart(e, idx)}
-                ondragover={(e) => handleDragOver(e, idx)}
-                ondrop={(e) => handleDrop(e, idx)}
-                ondragend={handleDragEnd}
-              />
-            </div>
-          {/each}
+        {#if effectiveShowOther}
+          <div class="other-list">
+            {#each otherSessions as session, j (session.id)}
+              {@const idx = thisSiteSessions.length + j}
+              <div class="drag-wrapper" class:drag-over={dragOverIndex === idx && dragIndex !== idx}>
+                <SessionItem
+                  {session}
+                  isActive={false}
+                  hasOriginData={false}
+                  tabCount={tabCounts[session.id] ?? 0}
+                  {onswitch}
+                  {ondelete}
+                  {onrename}
+                  forceEditing={editingSessionId === session.id}
+                  {oncontextmenu}
+                  draggable={true}
+                  ondragstart={(e) => handleDragStart(e, idx)}
+                  ondragover={(e) => handleDragOver(e, idx)}
+                  ondrop={(e) => handleDrop(e, idx)}
+                  ondragend={handleDragEnd}
+                />
+              </div>
+            {/each}
+          </div>
         {/if}
       </div>
     {/if}
 
-    {#if thisSiteSessions.length === 0 && !showOtherSessions}
-      <div class="empty">
+    {#if thisSiteSessions.length === 0 && !effectiveShowOther}
+      <div class="empty-site">
         <p>No sessions for this site yet.</p>
       </div>
     {/if}
@@ -192,29 +212,39 @@
     display: flex;
     align-items: center;
     gap: var(--space-3);
-    padding: var(--space-3) var(--space-5);
-    border-radius: var(--radius-md);
-    border: 1px dashed var(--color-border-primary);
+    padding: var(--space-4) var(--space-4);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--color-border-secondary);
     cursor: pointer;
     color: var(--color-text-tertiary);
-    transition: all var(--transition-fast);
+    transition: all var(--transition-smooth);
+    background: transparent;
   }
 
   .default-item:hover {
     background: var(--color-interactive-hover);
     color: var(--color-text-secondary);
+    border-color: var(--color-border-primary);
   }
 
   .default-item.active {
-    border-style: solid;
-    border-color: var(--color-border-secondary);
+    border-color: var(--color-border-primary);
     background: var(--color-bg-elevated);
     color: var(--color-text-primary);
   }
 
+  .default-icon {
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.6;
+  }
+
   .default-label {
     flex: 1;
-    font-size: var(--text-sm);
+    font-size: var(--text-base);
     font-weight: var(--font-medium);
   }
 
@@ -224,7 +254,8 @@
     background: var(--color-accent-soft);
     padding: 1px var(--space-3);
     border-radius: var(--radius-full);
-    font-weight: var(--font-medium);
+    font-weight: var(--font-semibold);
+    line-height: 14px;
   }
 
   .group {
@@ -233,18 +264,46 @@
     gap: var(--space-2);
   }
 
+  .group-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    flex: 1;
+  }
+
   .group-label {
     font-size: var(--text-xs);
     font-weight: var(--font-semibold);
     color: var(--color-text-tertiary);
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    white-space: nowrap;
+  }
+
+  .group-count {
+    font-size: 10px;
+    color: var(--color-text-tertiary);
+    background: var(--color-bg-tertiary);
+    padding: 0 var(--space-2);
+    border-radius: var(--radius-full);
+    font-weight: var(--font-semibold);
+    min-width: 16px;
+    height: 16px;
+    line-height: 16px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+
+  .group-line {
+    flex: 1;
+    height: 1px;
+    background: var(--color-border-secondary);
   }
 
   .group-toggle {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    gap: var(--space-3);
     background: none;
     border: none;
     padding: var(--space-2) 0;
@@ -257,30 +316,46 @@
     color: var(--color-text-secondary);
   }
 
-  .toggle-chevron {
-    font-size: var(--text-xs);
+  .toggle-icon {
     color: var(--color-text-tertiary);
     transition: transform var(--transition-fast);
+    display: flex;
+    flex-shrink: 0;
   }
 
-  .toggle-chevron.open {
+  .toggle-icon.open {
     transform: rotate(180deg);
   }
 
-  .other {
-    opacity: 0.7;
+  .other-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    opacity: 0.85;
+    transition: opacity var(--transition-fast);
   }
 
-  .other:hover {
+  .other-list:hover {
     opacity: 1;
   }
 
-  .empty {
+  .empty-search,
+  .empty-site {
     text-align: center;
-    padding: var(--space-6) var(--space-4);
+    padding: var(--space-7) var(--space-4);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-3);
   }
 
-  .empty p {
+  .empty-search :global(svg) {
+    color: var(--color-text-tertiary);
+    opacity: 0.5;
+  }
+
+  .empty-search p,
+  .empty-site p {
     margin: 0;
     font-size: var(--text-sm);
     color: var(--color-text-tertiary);

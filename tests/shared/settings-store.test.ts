@@ -92,12 +92,12 @@ describe('initSettings', () => {
 
 describe('setAutoRefreshInterval', () => {
   it('updates the interval and persists to storage', async () => {
-    await setAutoRefreshInterval(10);
+    await setAutoRefreshInterval(60);
 
-    expect(getAutoRefreshInterval()).toBe(10);
+    expect(getAutoRefreshInterval()).toBe(60);
     expect(chrome.storage.local.set).toHaveBeenCalledWith({
       [STORAGE_KEYS.EXTENSION_SETTINGS]: expect.objectContaining({
-        autoRefreshInterval: 10,
+        autoRefreshInterval: 60,
       }),
     });
   });
@@ -205,7 +205,7 @@ describe('onSettingsChange', () => {
     const unsub = onSettingsChange(listener);
 
     unsub();
-    await setAutoRefreshInterval(10);
+    await setAutoRefreshInterval(60);
 
     expect(listener).not.toHaveBeenCalled();
   });
@@ -216,7 +216,7 @@ describe('onSettingsChange', () => {
     settingsUnsubs.push(onSettingsChange(listener1));
     settingsUnsubs.push(onSettingsChange(listener2));
 
-    await setAutoRefreshInterval(5);
+    await setAutoRefreshInterval(30);
 
     expect(listener1).toHaveBeenCalledOnce();
     expect(listener2).toHaveBeenCalledOnce();
@@ -229,7 +229,7 @@ describe('onSettingsChange', () => {
     settingsUnsubs.push(onSettingsChange(listener2));
 
     unsub1();
-    await setAutoRefreshInterval(10);
+    await setAutoRefreshInterval(60);
 
     expect(listener1).not.toHaveBeenCalled();
     expect(listener2).toHaveBeenCalledOnce();

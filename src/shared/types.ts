@@ -8,6 +8,7 @@ export interface SessionProfile {
   pinned?: boolean;
   createdAt: number;
   updatedAt: number;
+  lastRefreshedAt?: number;
   settings: SessionSettings;
 }
 
@@ -57,7 +58,7 @@ export interface SessionSettings {
 
 // ── Extension Settings ──────────────────────────────────────────
 
-export type AutoRefreshInterval = 0 | 5 | 10 | 30 | 60;
+export type AutoRefreshInterval = 0 | 30 | 60 | 120 | 300;
 
 export interface ExtensionSettings {
   autoRefreshInterval: AutoRefreshInterval;
@@ -157,6 +158,9 @@ export enum MessageType {
   // Session operations
   DUPLICATE_SESSION = 'DUPLICATE_SESSION',
   REORDER_SESSIONS = 'REORDER_SESSIONS',
+
+  // Auto-refresh (saves fresh data for all tracked tabs)
+  REFRESH_ACTIVE_SESSIONS = 'REFRESH_ACTIVE_SESSIONS',
 
   // Content script lifecycle
   CONTENT_SCRIPT_READY = 'CONTENT_SCRIPT_READY',
@@ -322,6 +326,10 @@ export interface DeleteSessionStorageEntryMessage {
   key: string;
 }
 
+export interface RefreshActiveSessionsMessage {
+  type: MessageType.REFRESH_ACTIVE_SESSIONS;
+}
+
 export type Message =
   | CreateSessionMessage
   | DeleteSessionMessage
@@ -349,7 +357,8 @@ export type Message =
   | UpdateSessionCookieMessage
   | DeleteSessionCookieMessage
   | UpdateSessionStorageEntryMessage
-  | DeleteSessionStorageEntryMessage;
+  | DeleteSessionStorageEntryMessage
+  | RefreshActiveSessionsMessage;
 
 // ── Response Wrapper ─────────────────────────────────────────────
 

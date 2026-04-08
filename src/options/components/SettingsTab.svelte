@@ -9,6 +9,7 @@
     onSettingsChange,
   } from '@shared/settings-store';
   import type { AutoRefreshInterval } from '@shared/types';
+  import Icon from '@shared/components/Icon.svelte';
 
   let theme = $state<ThemePreference>(getTheme());
 
@@ -37,11 +38,11 @@
   });
 
   const intervalOptions: { value: AutoRefreshInterval; label: string }[] = [
-    { value: 0, label: 'Disabled' },
-    { value: 5, label: '5 seconds' },
-    { value: 10, label: '10 seconds' },
-    { value: 30, label: '30 seconds' },
-    { value: 60, label: '60 seconds' },
+    { value: 0, label: 'Off' },
+    { value: 30, label: '30s' },
+    { value: 60, label: '1m' },
+    { value: 120, label: '2m' },
+    { value: 300, label: '5m' },
   ];
 
   async function handleIntervalChange(value: AutoRefreshInterval) {
@@ -61,100 +62,150 @@
   async function handleDefaultEnabledChange(enabled: boolean) {
     await setAutoRefreshDefaultEnabled(enabled);
   }
+
+  const themeOptions: { value: ThemePreference; label: string; icon: string }[] = [
+    { value: 'light', label: 'Light', icon: 'sun' },
+    { value: 'dark', label: 'Dark', icon: 'moon' },
+    { value: 'system', label: 'System', icon: 'monitor' },
+  ];
 </script>
 
-<section>
-  <h2>Appearance</h2>
-  <div class="theme-options">
-    <label class="theme-option" class:active={theme === 'light'}>
-      <input
-        type="radio"
-        name="theme"
-        value="light"
-        checked={theme === 'light'}
-        onchange={() => setTheme('light')}
-      />
-      <span class="option-label">Light</span>
-    </label>
-    <label class="theme-option" class:active={theme === 'dark'}>
-      <input
-        type="radio"
-        name="theme"
-        value="dark"
-        checked={theme === 'dark'}
-        onchange={() => setTheme('dark')}
-      />
-      <span class="option-label">Dark</span>
-    </label>
-    <label class="theme-option" class:active={theme === 'system'}>
-      <input
-        type="radio"
-        name="theme"
-        value="system"
-        checked={theme === 'system'}
-        onchange={() => setTheme('system')}
-      />
-      <span class="option-label">System</span>
-    </label>
-  </div>
-</section>
+<div class="settings-layout">
+  <!-- Appearance -->
+  <section class="card">
+    <div class="card-header">
+      <div class="card-icon">
+        <Icon name="sun" size={16} />
+      </div>
+      <div>
+        <h2>Appearance</h2>
+        <p class="description">Choose how Unaware Sessions looks to you.</p>
+      </div>
+    </div>
 
-<section>
-  <h2>Data Refresh</h2>
-  <p class="description">
-    Automatically refresh session data at the selected interval. Only active while the popup or
-    settings page is visible.
-  </p>
-  <div class="interval-options">
-    {#each intervalOptions as opt (opt.value)}
-      <label class="interval-option" class:active={refreshInterval === opt.value}>
-        <input
-          type="radio"
-          name="refresh-interval"
-          value={opt.value}
-          checked={refreshInterval === opt.value}
-          onchange={() => handleIntervalChange(opt.value)}
-        />
-        <span class="option-label">{opt.label}</span>
-      </label>
-    {/each}
-  </div>
+    <div class="theme-options">
+      {#each themeOptions as opt}
+        <button
+          class="theme-option"
+          class:active={theme === opt.value}
+          onclick={() => setTheme(opt.value)}
+          aria-pressed={theme === opt.value}
+        >
+          <Icon name={opt.icon} size={16} />
+          <span>{opt.label}</span>
+        </button>
+      {/each}
+    </div>
+  </section>
 
-  <div class="default-toggle">
-    <label class="toggle-label">
-      <input
-        type="checkbox"
-        checked={defaultEnabled}
-        onchange={(e: Event) => handleDefaultEnabledChange((e.target as HTMLInputElement).checked)}
-      />
-      <span class="option-label">Enable auto-refresh by default for new domains</span>
+  <!-- Data Refresh -->
+  <section class="card">
+    <div class="card-header">
+      <div class="card-icon">
+        <Icon name="refresh-cw" size={16} />
+      </div>
+      <div>
+        <h2>Auto-Refresh</h2>
+        <p class="description">
+          Automatically refresh session data at the selected interval while the popup or settings page is visible.
+        </p>
+      </div>
+    </div>
+
+    <div class="setting-row">
+      <span class="setting-label">Refresh interval</span>
+      <div class="interval-options">
+        {#each intervalOptions as opt (opt.value)}
+          <button
+            class="interval-pill"
+            class:active={refreshInterval === opt.value}
+            onclick={() => handleIntervalChange(opt.value)}
+            aria-pressed={refreshInterval === opt.value}
+          >
+            {opt.label}
+          </button>
+        {/each}
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <label class="toggle-row">
+      <div class="toggle-info">
+        <span class="toggle-label">Auto-refresh for new domains</span>
+        <span class="toggle-description">
+          Newly discovered domains in sessions will have auto-refresh turned on automatically.
+        </span>
+      </div>
+      <button
+        class="toggle-switch"
+        class:on={defaultEnabled}
+        onclick={() => handleDefaultEnabledChange(!defaultEnabled)}
+        role="switch"
+        aria-checked={defaultEnabled}
+        aria-label="Toggle auto-refresh for new domains"
+      >
+        <span class="toggle-thumb"></span>
+      </button>
     </label>
-    <p class="description toggle-description">
-      When enabled, newly discovered domains in sessions will have auto-refresh turned on
-      automatically.
-    </p>
-  </div>
-</section>
+  </section>
+</div>
 
 <style>
-  section {
+  .settings-layout {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-6);
+  }
+
+  .card {
     background: var(--color-bg-elevated);
     border: 1px solid var(--color-border-secondary);
+    border-radius: var(--radius-2xl);
+    padding: var(--space-7);
+    box-shadow: var(--shadow-xs);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-6);
+  }
+
+  .card-header {
+    display: flex;
+    gap: var(--space-4);
+    align-items: flex-start;
+  }
+
+  .card-icon {
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     border-radius: var(--radius-lg);
-    padding: var(--space-6);
-    box-shadow: var(--shadow-sm);
+    background: var(--color-accent-soft);
+    color: var(--color-accent);
+    flex-shrink: 0;
   }
 
   h2 {
-    font-size: var(--text-lg);
+    font-size: var(--text-md);
     font-weight: var(--font-semibold);
-    margin: 0 0 var(--space-5);
+    margin: 0;
     color: var(--color-text-primary);
+    line-height: var(--leading-tight);
   }
 
+  .description {
+    font-size: var(--text-sm);
+    color: var(--color-text-tertiary);
+    margin: var(--space-1) 0 0;
+    line-height: var(--leading-relaxed);
+  }
+
+  /* Theme options */
   .theme-options {
     display: flex;
-    gap: var(--space-4);
+    gap: var(--space-3);
   }
 
   .theme-option {
@@ -163,86 +214,143 @@
     gap: var(--space-3);
     padding: var(--space-4) var(--space-6);
     border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-lg);
+    background: var(--color-bg-primary);
     cursor: pointer;
-    transition: all var(--transition-fast);
+    transition: all var(--transition-smooth);
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+    font-family: var(--font-sans);
+    color: var(--color-text-secondary);
+    flex: 1;
+    justify-content: center;
   }
 
-  .theme-option:hover {
+  .theme-option:hover:not(.active) {
     background: var(--color-interactive-hover);
+    border-color: var(--color-border-primary);
   }
 
   .theme-option.active {
     border-color: var(--color-accent);
     background: var(--color-accent-soft);
+    color: var(--color-accent);
+    box-shadow: var(--shadow-glow);
   }
 
-  .theme-option input {
-    accent-color: var(--color-accent);
+  /* Interval */
+  .setting-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
   }
 
-  .option-label {
+  .setting-label {
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+    color: var(--color-text-secondary);
+  }
+
+  .interval-options {
+    display: flex;
+    gap: var(--space-1);
+    padding: var(--space-1);
+    background: var(--color-bg-tertiary);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--color-border-secondary);
+  }
+
+  .interval-pill {
+    padding: var(--space-2) var(--space-4);
+    background: none;
+    border: none;
+    border-radius: var(--radius-md);
+    font-size: var(--text-xs);
+    font-family: var(--font-sans);
+    font-weight: var(--font-medium);
+    color: var(--color-text-tertiary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    white-space: nowrap;
+  }
+
+  .interval-pill:hover:not(.active) {
+    color: var(--color-text-secondary);
+    background: var(--color-interactive-hover);
+  }
+
+  .interval-pill.active {
+    color: var(--color-text-primary);
+    background: var(--color-bg-elevated);
+    box-shadow: var(--shadow-xs);
+  }
+
+  .divider {
+    height: 1px;
+    background: var(--color-border-secondary);
+    margin: 0;
+  }
+
+  /* Toggle row */
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-6);
+    cursor: pointer;
+  }
+
+  .toggle-info {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .toggle-label {
     font-size: var(--text-sm);
     font-weight: var(--font-medium);
     color: var(--color-text-primary);
   }
 
-  .description {
-    font-size: var(--text-sm);
+  .toggle-description {
+    font-size: var(--text-xs);
     color: var(--color-text-tertiary);
-    margin: 0 0 var(--space-5);
     line-height: var(--leading-relaxed);
   }
 
-  .interval-options {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-4);
-  }
-
-  .interval-option {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    padding: var(--space-4) var(--space-6);
+  /* Toggle switch */
+  .toggle-switch {
+    position: relative;
+    width: 40px;
+    height: 22px;
+    background: var(--color-bg-tertiary);
     border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-full);
     cursor: pointer;
-    transition: all var(--transition-fast);
+    transition: all var(--transition-smooth);
+    flex-shrink: 0;
+    padding: 0;
   }
 
-  .interval-option:hover {
-    background: var(--color-interactive-hover);
-  }
-
-  .interval-option.active {
+  .toggle-switch.on {
+    background: var(--color-accent);
     border-color: var(--color-accent);
-    background: var(--color-accent-soft);
   }
 
-  .interval-option input {
-    accent-color: var(--color-accent);
+  .toggle-thumb {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    background: white;
+    border-radius: var(--radius-full);
+    box-shadow: var(--shadow-sm);
+    transition: transform var(--transition-spring);
   }
 
-  .default-toggle {
-    margin-top: var(--space-5);
-    padding-top: var(--space-5);
-    border-top: 1px solid var(--color-border-secondary);
-  }
-
-  .toggle-label {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    cursor: pointer;
-  }
-
-  .toggle-label input {
-    accent-color: var(--color-accent);
-  }
-
-  .toggle-description {
-    margin-top: var(--space-2);
-    margin-left: calc(var(--space-3) + 16px);
+  .toggle-switch.on .toggle-thumb {
+    transform: translateX(18px);
   }
 </style>
