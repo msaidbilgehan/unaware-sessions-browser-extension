@@ -87,3 +87,7 @@ export function reorderSessions(orderedIds: string[]): Promise<void> {
 export function getSessionsForOrigin(origin: string): Promise<string[]> {
   return sendMessage({ type: MessageType.GET_SESSIONS_FOR_ORIGIN, origin });
 }
+
+export function saveSessionData(tabId: number): Promise<void> {
+  return sendMessage({ type: MessageType.SAVE_SESSION_DATA, tabId });
+}

@@ -15,6 +15,7 @@
     reorderSessions,
     duplicateSession as duplicateSessionApi,
     getSessionsForOrigin,
+    saveSessionData,
   } from '@shared/api';
   import { fly } from 'svelte/transition';
   import Icon from '@shared/components/Icon.svelte';
@@ -204,6 +205,26 @@
     }
   }
 
+  let saving = $state(false);
+
+  async function handleSaveSessionData() {
+    if (!currentTab?.id || !currentTabEntry) return;
+    saving = true;
+    try {
+      await saveSessionData(currentTab.id);
+      showToast('Session data saved', 'success');
+      // Refresh origin data indicators
+      if (currentOrigin) {
+        const ids = await getSessionsForOrigin(currentOrigin);
+        sessionsWithOriginData = new Set(ids);
+      }
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to save session data', 'error');
+    } finally {
+      saving = false;
+    }
+  }
+
   async function handleReorder(orderedIds: string[]) {
     try {
       await reorderSessions(orderedIds);
@@ -337,6 +358,13 @@
         onunassign={handleUnassign}
       />
 
+      {#if currentTabEntry}
+        <button class="save-data-btn" onclick={handleSaveSessionData} disabled={saving}>
+          <Icon name="download" size={14} />
+          {saving ? 'Saving...' : 'Update Session Data'}
+        </button>
+      {/if}
+
       {#if sessions.length > 5}
         <SearchBar query={searchQuery} onchange={(q) => (searchQuery = q)} />
       {/if}
@@ -453,6 +481,33 @@
   .settings-btn:hover {
     color: var(--color-text-secondary);
     background: var(--color-interactive-hover);
+  }
+
+  .save-data-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-5);
+    background: var(--color-accent-soft);
+    border: 1px solid var(--color-accent);
+    border-radius: var(--radius-md);
+    font-size: var(--text-sm);
+    font-family: var(--font-sans);
+    color: var(--color-accent);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    flex-shrink: 0;
+  }
+
+  .save-data-btn:hover:not(:disabled) {
+    background: var(--color-accent);
+    color: var(--color-text-inverse);
+  }
+
+  .save-data-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .new-btn {
