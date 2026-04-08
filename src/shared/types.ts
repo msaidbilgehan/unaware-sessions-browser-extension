@@ -55,6 +55,15 @@ export interface SessionSettings {
   headers?: Record<string, string>;
 }
 
+// ── Extension Settings ──────────────────────────────────────────
+
+export type AutoRefreshInterval = 0 | 5 | 10 | 30 | 60;
+
+export interface ExtensionSettings {
+  autoRefreshInterval: AutoRefreshInterval;
+  autoRefreshDefaultEnabled: boolean;
+}
+
 // ── Tab-Session Mapping ──────────────────────────────────────────
 
 export interface TabSessionEntry {

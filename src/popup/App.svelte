@@ -1,6 +1,12 @@
 <script lang="ts">
-  import type { SessionProfile, TabSessionEntry } from '@shared/types';
+  import type { SessionProfile, TabSessionEntry, AutoRefreshInterval } from '@shared/types';
   import { extractOrigin } from '@shared/utils';
+  import {
+    getAutoRefreshInterval,
+    setAutoRefreshInterval,
+    onSettingsChange,
+  } from '@shared/settings-store';
+  import { GITHUB_URL, OPENCOLLECTIVE_URL } from '@shared/constants';
   import {
     listSessions,
     createSession,
@@ -317,6 +323,40 @@
   $effect(() => {
     loadState();
   });
+
+  // Auto-refresh
+  let autoRefreshInterval = $state<AutoRefreshInterval>(getAutoRefreshInterval());
+  let savedInterval: AutoRefreshInterval = 10;
+  const autoRefreshEnabled = $derived(autoRefreshInterval > 0);
+
+  $effect(() => {
+    const unsub = onSettingsChange((s) => {
+      autoRefreshInterval = s.autoRefreshInterval;
+    });
+    return unsub;
+  });
+
+  async function handleAutoRefreshToggle() {
+    if (autoRefreshInterval > 0) {
+      savedInterval = autoRefreshInterval;
+      await setAutoRefreshInterval(0);
+    } else {
+      await setAutoRefreshInterval(savedInterval);
+    }
+  }
+
+  $effect(() => {
+    const intervalSec = autoRefreshInterval;
+    if (intervalSec === 0) return;
+
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        loadState();
+      }
+    }, intervalSec * 1000);
+
+    return () => clearInterval(id);
+  });
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -346,6 +386,22 @@
           <ThemeToggle />
           <button
             class="icon-btn"
+            onclick={() => chrome.tabs.create({ url: GITHUB_URL })}
+            aria-label="GitHub"
+            title="GitHub"
+          >
+            <Icon name="github" size={15} />
+          </button>
+          <button
+            class="icon-btn sponsor-btn"
+            onclick={() => chrome.tabs.create({ url: `${OPENCOLLECTIVE_URL}/donate` })}
+            aria-label="Sponsor"
+            title="Sponsor on Open Collective"
+          >
+            <Icon name="heart" size={15} />
+          </button>
+          <button
+            class="icon-btn"
             onclick={() => chrome.runtime.openOptionsPage()}
             aria-label="Settings"
             title="Settings"
@@ -361,6 +417,8 @@
         currentSessionEmoji={currentSession?.emoji}
         onrefresh={handleUpdateSessionData}
         {refreshing}
+        {autoRefreshEnabled}
+        onautorefreshToggle={handleAutoRefreshToggle}
       />
 
       {#if sessions.length > 5}
@@ -489,6 +547,15 @@
   .icon-btn:hover {
     color: var(--color-text-secondary);
     background: var(--color-interactive-hover);
+  }
+
+  .icon-btn.sponsor-btn {
+    color: #ef4444;
+  }
+
+  .icon-btn.sponsor-btn:hover {
+    color: #ef4444;
+    background: var(--color-error-soft);
   }
 
   .new-btn {

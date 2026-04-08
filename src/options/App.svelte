@@ -1,6 +1,7 @@
 <script lang="ts">
-  import type { SessionProfile } from '@shared/types';
+  import type { SessionProfile, AutoRefreshInterval } from '@shared/types';
   import { listSessions } from '@shared/api';
+  import { getAutoRefreshInterval, onSettingsChange } from '@shared/settings-store';
   import TabBar from './components/TabBar.svelte';
   import SessionsTab from './components/SessionsTab.svelte';
   import ImportExportTab from './components/ImportExportTab.svelte';
@@ -32,6 +33,29 @@
 
   $effect(() => {
     loadSessions();
+  });
+
+  // Auto-refresh
+  let autoRefreshInterval = $state<AutoRefreshInterval>(getAutoRefreshInterval());
+
+  $effect(() => {
+    const unsub = onSettingsChange((s) => {
+      autoRefreshInterval = s.autoRefreshInterval;
+    });
+    return unsub;
+  });
+
+  $effect(() => {
+    const intervalSec = autoRefreshInterval;
+    if (intervalSec === 0) return;
+
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        loadSessions();
+      }
+    }, intervalSec * 1000);
+
+    return () => clearInterval(id);
   });
 </script>
 

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
-  import type { SessionProfile, SessionDetails } from '@shared/types';
+  import type { SessionProfile, SessionDetails, AutoRefreshInterval } from '@shared/types';
   import {
     updateSession,
     deleteSession as deleteSessionApi,
@@ -11,6 +11,13 @@
     updateSessionStorageEntry,
     deleteSessionStorageEntry,
   } from '@shared/api';
+  import {
+    isDomainAutoRefreshEnabled,
+    setDomainAutoRefresh,
+    getAutoRefreshInterval,
+    onSettingsChange,
+    onDomainRefreshChange,
+  } from '@shared/settings-store';
   import Icon from '@shared/components/Icon.svelte';
   import InlineEdit from '@shared/components/InlineEdit.svelte';
   import ColorPicker from '@shared/components/ColorPicker.svelte';
@@ -90,15 +97,20 @@
   });
 
   // Load all session details on mount
+  let detailsLoadVersion = 0;
+
   async function loadAllDetails() {
+    const version = ++detailsLoadVersion;
     detailsLoading = true;
     detailsMap.clear();
     for (const session of sessions) {
+      if (detailsLoadVersion !== version) return;
       try {
         const d = await getSessionDetails(session.id);
+        if (detailsLoadVersion !== version) return;
         detailsMap.set(session.id, d);
       } catch {
-        // Skip
+        // Skip failed session detail fetch
       }
     }
     detailsLoading = false;
@@ -109,6 +121,67 @@
       loadAllDetails();
     }
   });
+
+  // ── Per-domain auto-refresh ───────────────────────────────────
+
+  let autoRefreshInterval = $state<AutoRefreshInterval>(getAutoRefreshInterval());
+  // Increment to force $effect re-evaluation when domain map changes
+  let domainRefreshVersion = $state(0);
+
+  $effect(() => {
+    const unsub = onSettingsChange((s) => {
+      autoRefreshInterval = s.autoRefreshInterval;
+    });
+    return unsub;
+  });
+
+  $effect(() => {
+    const unsub = onDomainRefreshChange(() => {
+      domainRefreshVersion += 1;
+    });
+    return unsub;
+  });
+
+  $effect(() => {
+    const intervalSec = autoRefreshInterval;
+    // Read version to subscribe to domain map changes
+    void domainRefreshVersion;
+    if (intervalSec === 0) return;
+
+    // Collect sessions that have at least one auto-refresh-enabled domain
+    const sessionIdsToRefresh: string[] = [];
+    for (const session of sessions) {
+      const details = detailsMap.get(session.id);
+      if (!details) continue;
+      for (const origin of details.origins) {
+        if (isDomainAutoRefreshEnabled(session.id, origin.origin)) {
+          sessionIdsToRefresh.push(session.id);
+          break;
+        }
+      }
+    }
+
+    if (sessionIdsToRefresh.length === 0) return;
+
+    const id = setInterval(async () => {
+      if (document.visibilityState !== 'visible') return;
+      for (const sessionId of sessionIdsToRefresh) {
+        try {
+          const d = await getSessionDetails(sessionId);
+          detailsMap.set(sessionId, d);
+        } catch {
+          // Skip failed refresh
+        }
+      }
+    }, intervalSec * 1000);
+
+    return () => clearInterval(id);
+  });
+
+  async function handleToggleDomainRefresh(sessionId: string, origin: string) {
+    const current = isDomainAutoRefreshEnabled(sessionId, origin);
+    await setDomainAutoRefresh(sessionId, origin, !current);
+  }
 
   async function handleRename(sessionId: string, newName: string) {
     editingId = null;
@@ -147,7 +220,6 @@
       await deleteSessionOriginData(sessionId, origin);
       const d = await getSessionDetails(sessionId);
       detailsMap.set(sessionId, d);
-
     } catch (err) {
       console.error('Failed to delete origin data:', err);
     }
@@ -160,7 +232,6 @@
       await updateSessionCookie(sessionId, origin, name, domain, value);
       const d = await getSessionDetails(sessionId);
       detailsMap.set(sessionId, d);
-
     } catch (err) {
       console.error('Failed to update cookie:', err);
     }
@@ -177,7 +248,6 @@
       await deleteSessionCookie(sessionId, origin, name, domain);
       const d = await getSessionDetails(sessionId);
       detailsMap.set(sessionId, d);
-
     } catch (err) {
       console.error('Failed to delete cookie:', err);
     }
@@ -190,7 +260,6 @@
       await updateSessionStorageEntry(sessionId, origin, type, key, value);
       const d = await getSessionDetails(sessionId);
       detailsMap.set(sessionId, d);
-
     } catch (err) {
       console.error('Failed to update storage:', err);
     }
@@ -207,7 +276,6 @@
       await deleteSessionStorageEntry(sessionId, origin, type, key);
       const d = await getSessionDetails(sessionId);
       detailsMap.set(sessionId, d);
-
     } catch (err) {
       console.error('Failed to delete storage entry:', err);
     }
@@ -358,6 +426,17 @@
                                 detail.cookieBytes + detail.storageBytes,
                               )}</span
                             >
+                            <button
+                              class="auto-refresh-btn"
+                              class:active={isDomainAutoRefreshEnabled(session.id, detail.origin)}
+                              onclick={() => handleToggleDomainRefresh(session.id, detail.origin)}
+                              title={isDomainAutoRefreshEnabled(session.id, detail.origin)
+                                ? 'Disable auto-refresh'
+                                : 'Enable auto-refresh'}
+                            >
+                              <Icon name="refresh-cw" size={12} />
+                              Auto-refresh
+                            </button>
                             <button
                               class="icon-btn danger small"
                               onclick={() =>
@@ -805,6 +884,29 @@
   }
   .icon-btn.small {
     padding: var(--space-1);
+  }
+  .auto-refresh-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    background: none;
+    border: 1px solid var(--color-border-secondary);
+    border-radius: var(--radius-sm);
+    padding: var(--space-1) var(--space-3);
+    font-size: var(--text-xs);
+    font-family: var(--font-sans);
+    color: var(--color-text-tertiary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+  .auto-refresh-btn:hover {
+    color: var(--color-text-secondary);
+    background: var(--color-interactive-hover);
+  }
+  .auto-refresh-btn.active {
+    color: var(--color-accent);
+    border-color: var(--color-accent);
+    background: var(--color-accent-soft);
   }
   .icon-btn.tiny {
     padding: 0;

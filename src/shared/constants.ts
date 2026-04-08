@@ -1,3 +1,5 @@
+import type { ExtensionSettings } from '@shared/types';
+
 export const ALARM_PERSIST_STATE = 'persist-state';
 export const ALARM_INTERVAL_MINUTES = 1;
 
@@ -6,7 +8,14 @@ export const STORAGE_KEYS = {
   TAB_MAP: 'tabMap',
   SESSION_ORDER: 'sessionOrder',
   THEME_PREFERENCE: 'themePreference',
+  EXTENSION_SETTINGS: 'extensionSettings',
+  AUTO_REFRESH_DOMAINS: 'autoRefreshDomains',
 } as const;
+
+export const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
+  autoRefreshInterval: 0,
+  autoRefreshDefaultEnabled: false,
+};
 
 export const DNR_RULE_ID_BASE = 1000;
 export const DNR_RULE_LIMIT = 5000;
@@ -33,6 +42,10 @@ export const STORAGE_STORE_DB_VERSION = 1;
 
 export const IDB_SNAPSHOT_TIMEOUT_MS = 5000;
 export const IDB_SNAPSHOT_MAX_SIZE_MB = 50;
+
+export const GITHUB_URL =
+  'https://github.com/msaidbilgehan/unaware-sessions-browser-extension/tree/master';
+export const OPENCOLLECTIVE_URL = 'https://opencollective.com/unaware-sessions-browser-ext';
 
 export const DEFAULT_SESSION_EMOJIS = [
   '\u{1F3E0}',
