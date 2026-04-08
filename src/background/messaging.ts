@@ -19,6 +19,7 @@ import {
   handleContentScriptReady,
   saveAllCookiesForSession,
   saveTabStorage,
+  detectSessionForOrigin,
 } from './cookie-engine';
 import { rebuildContextMenu } from './context-menu';
 import { updateBadge } from './badge-manager';
@@ -152,6 +153,12 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
     await saveAllCookiesForSession(entry.sessionId, origin);
     await saveTabStorage(msg.tabId, entry.sessionId, origin);
     return { success: true };
+  },
+
+  [MessageType.DETECT_SESSION]: async (msg) => {
+    if (msg.type !== MessageType.DETECT_SESSION) return { success: false };
+    const sessionId = await detectSessionForOrigin(msg.origin);
+    return { success: true, data: sessionId };
   },
 
   [MessageType.PING]: async () => {

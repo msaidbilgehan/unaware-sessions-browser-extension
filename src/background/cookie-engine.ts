@@ -142,6 +142,53 @@ async function restoreTabStorage(tabId: number, sessionId: string, origin: strin
   }
 }
 
+/**
+ * Detect which saved session best matches the current cookies for a given origin.
+ * Compares live browser cookies against each session's saved cookie snapshot.
+ * Returns the session ID with the highest cookie match ratio, or null if no match.
+ */
+export async function detectSessionForOrigin(origin: string): Promise<string | null> {
+  const domain = extractDomain(origin);
+  if (!domain) return null;
+
+  const liveCookies = await chrome.cookies.getAll({ domain });
+  if (liveCookies.length === 0) return null;
+
+  // Build a set of "name=value" fingerprints from live cookies
+  const liveFingerprints = new Set(liveCookies.map((c) => `${c.name}=${c.value}`));
+
+  // Get all session IDs that have snapshots for this origin
+  const sessionIds = await cookieStore.getSessionIdsForOrigin(origin);
+  if (sessionIds.length === 0) return null;
+
+  let bestSessionId: string | null = null;
+  let bestScore = 0;
+
+  for (const sessionId of sessionIds) {
+    const snapshot = await cookieStore.load(sessionId, origin);
+    if (!snapshot || snapshot.cookies.length === 0) continue;
+
+    // Count how many saved cookies match live cookies exactly
+    let matches = 0;
+    for (const saved of snapshot.cookies) {
+      if (liveFingerprints.has(`${saved.name}=${saved.value}`)) {
+        matches++;
+      }
+    }
+
+    // Score = matched cookies / max(live, saved) — prevents bias toward small snapshots
+    const score = matches / Math.max(liveCookies.length, snapshot.cookies.length);
+
+    if (score > bestScore && matches > 0) {
+      bestScore = score;
+      bestSessionId = sessionId;
+    }
+  }
+
+  // Require at least 30% match to avoid false positives
+  return bestScore >= 0.3 ? bestSessionId : null;
+}
+
 export function handleContentScriptReady(tabId: number): void {
   const pending = pendingRestores.get(tabId);
   if (!pending) return;
