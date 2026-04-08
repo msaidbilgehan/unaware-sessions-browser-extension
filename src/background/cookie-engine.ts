@@ -63,10 +63,11 @@ export async function restoreCookies(sessionId: string, origin: string): Promise
 
   for (const cookie of snapshot.cookies) {
     const url = buildCookieUrl(cookie);
+    const isHostCookie = cookie.name.startsWith('__Host-');
+    const isSecureCookie = cookie.name.startsWith('__Secure-');
 
     let secure = cookie.secure;
-    // sameSite 'no_restriction' maps to SameSite=None which requires Secure on Chromium
-    if (cookie.sameSite === 'no_restriction') {
+    if (cookie.sameSite === 'no_restriction' || isHostCookie || isSecureCookie) {
       secure = true;
     }
 
@@ -75,8 +76,9 @@ export async function restoreCookies(sessionId: string, origin: string): Promise
         url,
         name: cookie.name,
         value: cookie.value,
-        domain: cookie.domain,
-        path: cookie.path,
+        // __Host- cookies must NOT have a domain attribute
+        ...(isHostCookie ? {} : { domain: cookie.domain }),
+        path: isHostCookie ? '/' : cookie.path,
         secure,
         httpOnly: cookie.httpOnly,
         sameSite: cookie.sameSite,
