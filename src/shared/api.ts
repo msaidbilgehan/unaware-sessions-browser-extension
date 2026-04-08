@@ -109,3 +109,67 @@ export function getSessionDetails(
 export function deleteSessionOriginData(sessionId: string, origin: string): Promise<void> {
   return sendMessage({ type: MessageType.DELETE_SESSION_ORIGIN_DATA, sessionId, origin });
 }
+
+export function updateSessionCookie(
+  sessionId: string,
+  origin: string,
+  cookieName: string,
+  cookieDomain: string,
+  newValue: string,
+): Promise<void> {
+  return sendMessage({
+    type: MessageType.UPDATE_SESSION_COOKIE,
+    sessionId,
+    origin,
+    cookieName,
+    cookieDomain,
+    newValue,
+  });
+}
+
+export function deleteSessionCookie(
+  sessionId: string,
+  origin: string,
+  cookieName: string,
+  cookieDomain: string,
+): Promise<void> {
+  return sendMessage({
+    type: MessageType.DELETE_SESSION_COOKIE,
+    sessionId,
+    origin,
+    cookieName,
+    cookieDomain,
+  });
+}
+
+export function updateSessionStorageEntry(
+  sessionId: string,
+  origin: string,
+  storageType: 'localStorage' | 'sessionStorage',
+  key: string,
+  value: string,
+): Promise<void> {
+  return sendMessage({
+    type: MessageType.UPDATE_SESSION_STORAGE_ENTRY,
+    sessionId,
+    origin,
+    storageType,
+    key,
+    value,
+  });
+}
+
+export function deleteSessionStorageEntry(
+  sessionId: string,
+  origin: string,
+  storageType: 'localStorage' | 'sessionStorage',
+  key: string,
+): Promise<void> {
+  return sendMessage({
+    type: MessageType.DELETE_SESSION_STORAGE_ENTRY,
+    sessionId,
+    origin,
+    storageType,
+    key,
+  });
+}

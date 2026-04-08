@@ -32,12 +32,15 @@ export interface SessionOriginDetail {
   storageTimestamp: number | null;
   cookies: Array<{
     name: string;
+    value: string;
     domain: string;
     path: string;
     secure: boolean;
     httpOnly: boolean;
     expirationDate?: number;
   }>;
+  localStorage: Record<string, string>;
+  sessionStorage: Record<string, string>;
 }
 
 export interface SessionDetails {
@@ -137,6 +140,10 @@ export enum MessageType {
   // Session data management (options page)
   GET_SESSION_DETAILS = 'GET_SESSION_DETAILS',
   DELETE_SESSION_ORIGIN_DATA = 'DELETE_SESSION_ORIGIN_DATA',
+  UPDATE_SESSION_COOKIE = 'UPDATE_SESSION_COOKIE',
+  DELETE_SESSION_COOKIE = 'DELETE_SESSION_COOKIE',
+  UPDATE_SESSION_STORAGE_ENTRY = 'UPDATE_SESSION_STORAGE_ENTRY',
+  DELETE_SESSION_STORAGE_ENTRY = 'DELETE_SESSION_STORAGE_ENTRY',
 
   // Session operations
   DUPLICATE_SESSION = 'DUPLICATE_SESSION',
@@ -272,6 +279,40 @@ export interface DeleteSessionOriginDataMessage {
   origin: string;
 }
 
+export interface UpdateSessionCookieMessage {
+  type: MessageType.UPDATE_SESSION_COOKIE;
+  sessionId: string;
+  origin: string;
+  cookieName: string;
+  cookieDomain: string;
+  newValue: string;
+}
+
+export interface DeleteSessionCookieMessage {
+  type: MessageType.DELETE_SESSION_COOKIE;
+  sessionId: string;
+  origin: string;
+  cookieName: string;
+  cookieDomain: string;
+}
+
+export interface UpdateSessionStorageEntryMessage {
+  type: MessageType.UPDATE_SESSION_STORAGE_ENTRY;
+  sessionId: string;
+  origin: string;
+  storageType: 'localStorage' | 'sessionStorage';
+  key: string;
+  value: string;
+}
+
+export interface DeleteSessionStorageEntryMessage {
+  type: MessageType.DELETE_SESSION_STORAGE_ENTRY;
+  sessionId: string;
+  origin: string;
+  storageType: 'localStorage' | 'sessionStorage';
+  key: string;
+}
+
 export type Message =
   | CreateSessionMessage
   | DeleteSessionMessage
@@ -295,7 +336,11 @@ export type Message =
   | DetectSessionMessage
   | ClearOriginDataMessage
   | GetSessionDetailsMessage
-  | DeleteSessionOriginDataMessage;
+  | DeleteSessionOriginDataMessage
+  | UpdateSessionCookieMessage
+  | DeleteSessionCookieMessage
+  | UpdateSessionStorageEntryMessage
+  | DeleteSessionStorageEntryMessage;
 
 // ── Response Wrapper ─────────────────────────────────────────────
 

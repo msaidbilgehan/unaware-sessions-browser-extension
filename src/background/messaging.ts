@@ -236,12 +236,15 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
         storageTimestamp: storageSnap?.timestamp ?? null,
         cookies: (cookieSnap?.cookies ?? []).map((c) => ({
           name: c.name,
+          value: c.value,
           domain: c.domain,
           path: c.path,
           secure: c.secure,
           httpOnly: c.httpOnly,
           expirationDate: c.expirationDate,
         })),
+        localStorage: storageSnap?.localStorage ?? {},
+        sessionStorage: storageSnap?.sessionStorage ?? {},
       });
     }
 
@@ -255,6 +258,50 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
     if (msg.type !== MessageType.DELETE_SESSION_ORIGIN_DATA) return { success: false };
     await cookieStore.deleteForOrigin(msg.sessionId, msg.origin);
     await storageStore.deleteForOrigin(msg.sessionId, msg.origin);
+    return { success: true };
+  },
+
+  [MessageType.UPDATE_SESSION_COOKIE]: async (msg) => {
+    if (msg.type !== MessageType.UPDATE_SESSION_COOKIE) return { success: false };
+    const snapshot = await cookieStore.load(msg.sessionId, msg.origin);
+    if (!snapshot) return { success: false, error: 'Snapshot not found' };
+    const cookie = snapshot.cookies.find(
+      (c) => c.name === msg.cookieName && c.domain === msg.cookieDomain,
+    );
+    if (!cookie) return { success: false, error: 'Cookie not found' };
+    cookie.value = msg.newValue;
+    await cookieStore.save(snapshot);
+    return { success: true };
+  },
+
+  [MessageType.DELETE_SESSION_COOKIE]: async (msg) => {
+    if (msg.type !== MessageType.DELETE_SESSION_COOKIE) return { success: false };
+    const snapshot = await cookieStore.load(msg.sessionId, msg.origin);
+    if (!snapshot) return { success: false, error: 'Snapshot not found' };
+    snapshot.cookies = snapshot.cookies.filter(
+      (c) => !(c.name === msg.cookieName && c.domain === msg.cookieDomain),
+    );
+    await cookieStore.save(snapshot);
+    return { success: true };
+  },
+
+  [MessageType.UPDATE_SESSION_STORAGE_ENTRY]: async (msg) => {
+    if (msg.type !== MessageType.UPDATE_SESSION_STORAGE_ENTRY) return { success: false };
+    const snapshot = await storageStore.load(msg.sessionId, msg.origin);
+    if (!snapshot) return { success: false, error: 'Snapshot not found' };
+    snapshot[msg.storageType][msg.key] = msg.value;
+    await storageStore.save(snapshot);
+    return { success: true };
+  },
+
+  [MessageType.DELETE_SESSION_STORAGE_ENTRY]: async (msg) => {
+    if (msg.type !== MessageType.DELETE_SESSION_STORAGE_ENTRY) return { success: false };
+    const snapshot = await storageStore.load(msg.sessionId, msg.origin);
+    if (!snapshot) return { success: false, error: 'Snapshot not found' };
+    const store = snapshot[msg.storageType] as Record<string, string>;
+    const { [msg.key]: _, ...rest } = store;
+    snapshot[msg.storageType] = rest;
+    await storageStore.save(snapshot);
     return { success: true };
   },
 
