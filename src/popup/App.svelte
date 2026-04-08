@@ -402,12 +402,12 @@
 
 <style>
   main {
-    width: 380px;
-    max-height: 560px;
-    padding: var(--space-5);
+    width: 400px;
+    max-height: 580px;
+    padding: var(--space-6);
     display: flex;
     flex-direction: column;
-    gap: var(--space-5);
+    gap: var(--space-6);
     overflow-y: auto;
   }
 
@@ -461,6 +461,7 @@
     justify-content: center;
     gap: var(--space-3);
     padding: var(--space-4) var(--space-6);
+    margin-top: var(--space-2);
     background: var(--color-bg-tertiary);
     border: 1px dashed var(--color-border-primary);
     border-radius: var(--radius-md);
@@ -469,6 +470,7 @@
     color: var(--color-text-secondary);
     cursor: pointer;
     transition: all var(--transition-fast);
+    flex-shrink: 0;
   }
 
   .new-btn:hover {
