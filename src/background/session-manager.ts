@@ -95,6 +95,14 @@ export async function updateSession(
     throw new Error(`Session not found: ${sessionId}`);
   }
 
+  if (updates.name !== undefined) {
+    const trimmed = updates.name.trim();
+    if (!trimmed) {
+      throw new Error('Session name cannot be empty');
+    }
+    updates = { ...updates, name: trimmed };
+  }
+
   const updated: SessionProfile = {
     ...existing,
     ...updates,

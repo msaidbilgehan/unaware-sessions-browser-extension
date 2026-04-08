@@ -246,9 +246,10 @@ export async function switchSession(tabId: number, targetSessionId: string): Pro
   const domain = extractDomain(origin);
   const currentEntry = getTabEntry(tabId);
 
-  // 1. Save current session's cookies for this origin only
+  // 1. Save current session's data before switching
   if (currentEntry) {
-    await saveCookies(currentEntry.sessionId, origin);
+    await saveAllCookiesForSession(currentEntry.sessionId, origin);
+    await saveTabStorage(tabId, currentEntry.sessionId, origin);
   }
 
   // 2. Clear cookies for this origin
@@ -317,6 +318,9 @@ export async function switchSession(tabId: number, targetSessionId: string): Pro
   // 6. Update DNR rules
   await updateRulesForTab(tabId, targetSessionId, origin);
 
-  // 7. Navigate tab to same URL
+  // 7. Queue storage restore for when the content script loads on the new page
+  pendingRestores.set(tabId, { sessionId: targetSessionId, origin });
+
+  // 8. Navigate tab to same URL
   await chrome.tabs.update(tabId, { url: tab.url });
 }
