@@ -106,6 +106,7 @@ export enum MessageType {
   // Session data capture
   SAVE_SESSION_DATA = 'SAVE_SESSION_DATA',
   DETECT_SESSION = 'DETECT_SESSION',
+  CLEAR_ORIGIN_DATA = 'CLEAR_ORIGIN_DATA',
 
   // Session operations
   DUPLICATE_SESSION = 'DUPLICATE_SESSION',
@@ -225,6 +226,11 @@ export interface DetectSessionMessage {
   origin: string;
 }
 
+export interface ClearOriginDataMessage {
+  type: MessageType.CLEAR_ORIGIN_DATA;
+  tabId: number;
+}
+
 export type Message =
   | CreateSessionMessage
   | DeleteSessionMessage
@@ -245,7 +251,8 @@ export type Message =
   | ReorderSessionsMessage
   | GetSessionsForOriginMessage
   | SaveSessionDataMessage
-  | DetectSessionMessage;
+  | DetectSessionMessage
+  | ClearOriginDataMessage;
 
 // ── Response Wrapper ─────────────────────────────────────────────
 

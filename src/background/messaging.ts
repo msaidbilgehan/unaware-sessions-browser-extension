@@ -20,6 +20,7 @@ import {
   saveAllCookiesForSession,
   saveTabStorage,
   detectSessionForOrigin,
+  clearCookies,
 } from './cookie-engine';
 import { rebuildContextMenu } from './context-menu';
 import { updateBadge } from './badge-manager';
@@ -159,6 +160,18 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
     if (msg.type !== MessageType.DETECT_SESSION) return { success: false };
     const sessionId = await detectSessionForOrigin(msg.origin);
     return { success: true, data: sessionId };
+  },
+
+  [MessageType.CLEAR_ORIGIN_DATA]: async (msg) => {
+    if (msg.type !== MessageType.CLEAR_ORIGIN_DATA) return { success: false };
+    const tab = await chrome.tabs.get(msg.tabId);
+    if (!tab.url) return { success: false, error: 'Tab has no URL' };
+
+    const origin = new URL(tab.url).origin;
+    await unassignTab(msg.tabId);
+    await clearCookies(origin);
+    await chrome.tabs.update(msg.tabId, { url: tab.url });
+    return { success: true };
   },
 
   [MessageType.PING]: async () => {

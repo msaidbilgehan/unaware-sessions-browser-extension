@@ -95,3 +95,7 @@ export function saveSessionData(tabId: number): Promise<void> {
 export function detectSession(origin: string): Promise<string | null> {
   return sendMessage({ type: MessageType.DETECT_SESSION, origin });
 }
+
+export function clearOriginData(tabId: number): Promise<void> {
+  return sendMessage({ type: MessageType.CLEAR_ORIGIN_DATA, tabId });
+}

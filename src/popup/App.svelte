@@ -8,7 +8,6 @@
     switchSession,
     getSessionForTab,
     assignTab,
-    unassignTab,
     getCurrentTab,
     getAllTabCounts,
     updateSession,
@@ -17,6 +16,7 @@
     getSessionsForOrigin,
     saveSessionData,
     detectSession,
+    clearOriginData,
   } from '@shared/api';
   import { fly } from 'svelte/transition';
   import Icon from '@shared/components/Icon.svelte';
@@ -212,10 +212,10 @@
   async function handleUnassign() {
     if (!currentTab?.id) return;
     try {
-      await unassignTab(currentTab.id);
+      await clearOriginData(currentTab.id);
       currentTabEntry = undefined;
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Failed to unassign tab', 'error');
+      showToast(err instanceof Error ? err.message : 'Failed to clear session', 'error');
     }
   }
 
