@@ -96,10 +96,10 @@
         class="refresh-btn"
         onclick={onrefresh}
         disabled={refreshing}
-        aria-label="Update session data"
-        title="Update session data"
+        aria-label="Refresh session data"
+        title="Refresh session data"
       >
-        <Icon name="refresh" size={14} />
+        <Icon name="refresh-cw" size={14} />
       </button>
     </div>
   {/if}
