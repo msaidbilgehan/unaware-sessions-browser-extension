@@ -25,9 +25,18 @@
   });
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="overlay-backdrop" onclick={onclose}>
-  <div class="overlay" onclick={(e) => e.stopPropagation()}>
+<div
+  class="overlay-backdrop"
+  onclick={onclose}
+  onkeydown={(e) => e.key === 'Escape' && onclose()}
+  role="presentation"
+>
+  <div
+    class="overlay"
+    onclick={(e) => e.stopPropagation()}
+    onkeydown={(e) => e.stopPropagation()}
+    role="presentation"
+  >
     <h3>Quick Switch</h3>
     <p class="hint">Press a number to switch</p>
     <div class="session-list">

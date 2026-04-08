@@ -72,7 +72,12 @@
         <div class="table-row" style="--row-color: {session.color}">
           <span class="color-cell">
             {#if colorEditId === session.id}
-              <div class="color-edit-popover" onclick={(e) => e.stopPropagation()}>
+              <div
+                class="color-edit-popover"
+                onclick={(e) => e.stopPropagation()}
+                onkeydown={(e) => e.stopPropagation()}
+                role="presentation"
+              >
                 <ColorPicker
                   selected={session.color}
                   onchange={(c) => handleColorChange(session.id, c)}

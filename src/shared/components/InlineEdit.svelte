@@ -5,8 +5,8 @@
     oncancel: () => void;
   }
 
-  let { value, onsave, oncancel }: Props = $props();
-  let inputValue = $state(value);
+  let props = $props<Props>();
+  let inputValue = $state(props.value);
   let inputRef = $state<HTMLInputElement | undefined>(undefined);
 
   $effect(() => {
@@ -20,16 +20,16 @@
       submit();
     } else if (e.key === 'Escape') {
       e.preventDefault();
-      oncancel();
+      props.oncancel();
     }
   }
 
   function submit() {
     const trimmed = inputValue.trim();
-    if (trimmed && trimmed !== value) {
-      onsave(trimmed);
+    if (trimmed && trimmed !== props.value) {
+      props.onsave(trimmed);
     } else {
-      oncancel();
+      props.oncancel();
     }
   }
 </script>

@@ -96,7 +96,12 @@
   {/if}
 
   {#if editing}
-    <span class="name-edit" onclick={(e) => e.stopPropagation()}>
+    <span
+      class="name-edit"
+      onclick={(e) => e.stopPropagation()}
+      onkeydown={(e) => e.stopPropagation()}
+      role="presentation"
+    >
       <InlineEdit value={session.name} onsave={handleRename} oncancel={() => (editing = false)} />
     </span>
   {:else}

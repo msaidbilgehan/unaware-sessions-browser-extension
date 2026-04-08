@@ -8,7 +8,7 @@
   }
 
   let { sessions }: Props = $props();
-  let stats: SvelteMap<string, SessionStats> = new SvelteMap();
+  let stats = new SvelteMap<string, SessionStats>();
   let loading = $state(false);
 
   async function loadStats() {

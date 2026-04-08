@@ -16,9 +16,12 @@
 
   let { existing, imported, onconfirm, oncancel }: Props = $props();
 
-  let entries = $state<DiffEntry[]>(
-    imported.map((imp) => {
-      const match = existing.find((e) => e.id === imp.id || e.name === imp.name);
+  function buildEntries(
+    importedList: SessionProfile[],
+    existingList: SessionProfile[],
+  ): DiffEntry[] {
+    return importedList.map((imp) => {
+      const match = existingList.find((e) => e.id === imp.id || e.name === imp.name);
       let status: DiffEntry['status'] = 'new';
       if (match) {
         const changed =
@@ -26,8 +29,10 @@
         status = changed ? 'update' : 'unchanged';
       }
       return { imported: imp, status, selected: status !== 'unchanged' };
-    }),
-  );
+    });
+  }
+
+  let entries = $state<DiffEntry[]>(buildEntries(imported, existing));
 
   const selectedCount = $derived(entries.filter((e) => e.selected).length);
 

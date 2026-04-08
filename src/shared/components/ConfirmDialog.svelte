@@ -51,8 +51,7 @@
   });
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="backdrop" onkeydown={handleKeydown} onclick={oncancel}>
+<div class="backdrop" onkeydown={handleKeydown} onclick={oncancel} role="presentation">
   <div
     class="dialog"
     role="alertdialog"
@@ -60,7 +59,9 @@
     aria-labelledby="confirm-title"
     aria-describedby="confirm-message"
     bind:this={dialogRef}
+    tabindex="-1"
     onclick={(e) => e.stopPropagation()}
+    onkeydown={(e) => e.stopPropagation()}
   >
     <h3 id="confirm-title">{title}</h3>
     <p id="confirm-message">{message}</p>

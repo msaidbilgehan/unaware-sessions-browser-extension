@@ -13,7 +13,7 @@
   let { tabs, activeTab, onchange }: Props = $props();
 </script>
 
-<nav class="tab-bar" role="tablist">
+<div class="tab-bar" role="tablist">
   {#each tabs as tab}
     <button
       class="tab"
@@ -25,7 +25,7 @@
       {tab.label}
     </button>
   {/each}
-</nav>
+</div>
 
 <style>
   .tab-bar {
