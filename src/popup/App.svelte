@@ -367,12 +367,8 @@
 
       <CurrentTabPanel
         {currentOrigin}
-        currentSessionName={currentSession?.name}
         currentSessionColor={currentSession?.color}
         currentSessionEmoji={currentSession?.emoji}
-        {sessions}
-        onswitch={handleSwitch}
-        onunassign={handleUnassign}
         onrefresh={handleUpdateSessionData}
         {refreshing}
       />
@@ -388,6 +384,7 @@
         {sessionsWithOriginData}
         {searchQuery}
         onswitch={handleSwitch}
+        onunassign={handleUnassign}
         ondelete={handleDeleteRequest}
         onrename={handleRename}
         oncontextmenu={handleContextMenu}

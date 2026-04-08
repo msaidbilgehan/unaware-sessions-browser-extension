@@ -3,6 +3,8 @@
   import SessionItem from './SessionItem.svelte';
   import OnboardingEmpty from './OnboardingEmpty.svelte';
 
+  import Icon from '@shared/components/Icon.svelte';
+
   interface Props {
     sessions: SessionProfile[];
     activeSessionId: string | undefined;
@@ -10,6 +12,7 @@
     sessionsWithOriginData: Set<string>;
     searchQuery: string;
     onswitch: (sessionId: string) => void;
+    onunassign: () => void;
     ondelete: (sessionId: string) => void;
     onrename: (sessionId: string, newName: string) => void;
     oncontextmenu: (e: MouseEvent, sessionId: string) => void;
@@ -24,6 +27,7 @@
     sessionsWithOriginData,
     searchQuery,
     onswitch,
+    onunassign,
     ondelete,
     onrename,
     oncontextmenu,
@@ -90,6 +94,21 @@
       <p>No sessions match "{searchQuery}"</p>
     </div>
   {:else}
+    <div
+      class="default-item"
+      class:active={!activeSessionId}
+      role="button"
+      tabindex="0"
+      onclick={onunassign}
+      onkeydown={(e) => e.key === 'Enter' && onunassign()}
+    >
+      <Icon name="globe" size={14} />
+      <span class="default-label">Default (no session)</span>
+      {#if !activeSessionId}
+        <span class="default-badge">active</span>
+      {/if}
+    </div>
+
     {#if thisSiteSessions.length > 0}
       <div class="group">
         <span class="group-label">This site</span>
@@ -163,6 +182,45 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
+  }
+
+  .default-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-5);
+    border-radius: var(--radius-md);
+    border: 1px dashed var(--color-border-primary);
+    cursor: pointer;
+    color: var(--color-text-tertiary);
+    transition: all var(--transition-fast);
+  }
+
+  .default-item:hover {
+    background: var(--color-interactive-hover);
+    color: var(--color-text-secondary);
+  }
+
+  .default-item.active {
+    border-style: solid;
+    border-color: var(--color-border-secondary);
+    background: var(--color-bg-elevated);
+    color: var(--color-text-primary);
+  }
+
+  .default-label {
+    flex: 1;
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+  }
+
+  .default-badge {
+    font-size: 10px;
+    color: var(--color-accent);
+    background: var(--color-accent-soft);
+    padding: 1px var(--space-3);
+    border-radius: var(--radius-full);
+    font-weight: var(--font-medium);
   }
 
   .group {
