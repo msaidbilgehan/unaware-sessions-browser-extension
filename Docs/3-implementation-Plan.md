@@ -1,7 +1,7 @@
 # Unaware Sessions — Implementation Plan
 
-**Version:** 0.1.0  
-**Status:** Draft  
+**Version:** 0.1.0
+**Status:** Draft
 **Last Updated:** 2026-04-07
 
 ---
@@ -49,11 +49,11 @@ gantt
 
 ### 1.1 Project Scaffolding
 
-- [ ] Initialize Vite + TypeScript project with web-ext plugin
-- [ ] Configure `manifest.json` for MV3 (permissions, service worker, content scripts)
-- [ ] Set up ESLint + Prettier with shared config
-- [ ] Set up Vitest for unit tests
-- [ ] Create folder structure:
+- [x] Initialize Vite + TypeScript project with web-ext plugin
+- [x] Configure `manifest.json` for MV3 (permissions, service worker, content scripts)
+- [x] Set up ESLint + Prettier with shared config
+- [x] Set up Vitest for unit tests
+- [x] Create folder structure:
 
 ```
 src/
@@ -86,45 +86,46 @@ src/
 
 ### 1.2 Service Worker Core
 
-- [ ] Implement SW lifecycle management (install, activate, wake)
-- [ ] State hydration from `chrome.storage.session` on SW wake
-- [ ] Message router: receive messages from popup/content scripts, dispatch to handlers
-- [ ] `chrome.alarms` for periodic state persistence (backup every 60s)
+- [x] Implement SW lifecycle management (install, activate, wake)
+- [x] State hydration from `chrome.storage.session` on SW wake
+- [x] Message router: receive messages from popup/content scripts, dispatch to handlers
+- [x] `chrome.alarms` for periodic state persistence (backup every 60s)
 
 ### 1.3 Session Manager
 
-- [ ] `createSession(name, color)` — generate UUID, store profile in `chrome.storage.local`
-- [ ] `deleteSession(id)` — remove profile, clean up all snapshots for that session
-- [ ] `listSessions()` — return all session profiles
-- [ ] `updateSession(id, partial)` — rename, recolor
-- [ ] `getSessionForTab(tabId)` — lookup from tab-session map
+- [x] `createSession(name, color)` — generate UUID, store profile in `chrome.storage.local`
+- [x] `deleteSession(id)` — remove profile, clean up all snapshots for that session
+- [x] `listSessions()` — return all session profiles
+- [x] `updateSession(id, partial)` — rename, recolor
+- [x] `getSessionForTab(tabId)` — lookup from tab-session map
 
 ### 1.4 Cookie Swap Engine
 
-- [ ] `saveCookies(sessionId, origin)` — `chrome.cookies.getAll({domain})` → store in extension IndexedDB
-- [ ] `clearCookies(origin)` — `chrome.cookies.remove()` for all cookies on origin
-- [ ] `restoreCookies(sessionId, origin)` — load from extension IndexedDB → `chrome.cookies.set()` each
-- [ ] `switchSession(tabId, targetSessionId)` — orchestrate: save current → clear → restore target → reload tab
-- [ ] Handle subdomain cookies (`.gmail.com` vs `mail.gmail.com`)
-- [ ] Handle `Secure`, `SameSite`, `HttpOnly` attributes correctly on restore
+- [x] `saveCookies(sessionId, origin)` — `chrome.cookies.getAll({domain})` → store in extension IndexedDB
+- [x] `clearCookies(origin)` — `chrome.cookies.remove()` for all cookies on origin
+- [x] `restoreCookies(sessionId, origin)` — load from extension IndexedDB → `chrome.cookies.set()` each
+- [x] `switchSession(tabId, targetSessionId)` — orchestrate: save current origin cookies → clear origin cookies → restore target cookies (with cross-domain passthrough) → update mapping → update DNR → navigate tab via `chrome.tabs.update({url})`
+- [x] Handle subdomain cookies (`.gmail.com` vs `mail.gmail.com`)
+- [x] Handle `Secure`, `SameSite`, `HttpOnly` attributes correctly on restore
 
 ### 1.5 Tab Tracker
 
-- [ ] Listen to `chrome.tabs.onCreated`, `onRemoved`, `onUpdated`
-- [ ] Maintain `tabId → { sessionId, origin }` mapping
-- [ ] Persist mapping to `chrome.storage.session`
-- [ ] Clean up mappings when tabs close
-- [ ] Handle tab navigation (origin change within same tab)
+- [x] Listen to `chrome.tabs.onCreated`, `onRemoved`, `onUpdated`
+- [x] Maintain `tabId → { sessionId, origin }` mapping
+- [x] Persist mapping to `chrome.storage.session`
+- [x] Clean up mappings when tabs close
+- [x] Handle tab navigation (origin change within same tab)
 
 ### 1.6 DNR Manager
 
-- [ ] Generate `declarativeNetRequest` dynamic rules for cookie header manipulation
-- [ ] Scope rules to specific tab + session combination
-- [ ] Update rules on session switch
-- [ ] Monitor rule count (warn if approaching 5,000 limit)
-- [ ] Clean up stale rules on session/tab removal
+- [x] Generate `declarativeNetRequest` dynamic rules for cookie header manipulation
+- [x] Scope rules to specific tab + session combination
+- [x] Update rules on session switch
+- [x] Monitor rule count (warn if approaching 5,000 limit)
+- [x] Clean up stale rules on session/tab removal
 
 **Phase 1 Exit Criteria:**
+
 - Can create 3 sessions via background script console
 - Can assign a tab to a session
 - Switching sessions on a tab swaps cookies and reloads
@@ -139,44 +140,40 @@ src/
 
 ### 2.1 Content Script — Storage Swap
 
-- [ ] Change content script `run_at` from `document_idle` to `document_start`
-- [ ] On SW message `saveStorage`:
+- [x] Change content script `run_at` from `document_idle` to `document_start`
+- [x] On SW message `saveStorage`:
   - Read all `localStorage` keys/values → send to SW for IndexedDB storage
   - Read all `sessionStorage` keys/values → send to SW for IndexedDB storage
-- [ ] On SW message `restoreStorage`:
+- [x] On SW message `restoreStorage`:
   - Clear `localStorage` and `sessionStorage`
   - Write all keys/values from snapshot
-- [ ] Handle storage quota errors (skip with warning if origin storage exceeds limits)
-- [ ] Measure and report storage sizes to SW
+- [x] Handle storage quota errors (skip with warning if origin storage exceeds limits)
+- [x] Measure and report storage sizes to SW
 
 ### 2.2 Content Script — IndexedDB Swap (Best-Effort)
 
-- [ ] Enumerate databases via `indexedDB.databases()` (check browser support)
-- [ ] For each database:
+- [x] Enumerate databases via `indexedDB.databases()` (check browser support)
+- [x] For each database:
   - Open with current version
   - Iterate all object stores
   - Read all records via cursor
   - Serialize to transferable format (handle Blobs, ArrayBuffers)
-- [ ] Save full IDB snapshot to extension's own IndexedDB (namespaced by session + origin)
-- [ ] Restore: delete existing databases → recreate with saved schema + data
-- [ ] Add timeout (5s max per database) — skip and warn on slow/large databases
-- [ ] Skip databases over configurable size threshold (default: 50MB)
+- [x] Save full IDB snapshot to extension's own IndexedDB (namespaced by session + origin)
+- [x] Restore: delete existing databases → recreate with saved schema + data
+- [x] Add timeout (5s max per database) — skip and warn on slow/large databases
+- [x] Skip databases over configurable size threshold (default: 50MB)
 
 ### 2.3 Integrate with Session Switch Flow
 
-- [ ] Update `switchSession` in cookie engine to coordinate with content script:
-  1. Send `saveStorage` to content script → wait for completion
-  2. Swap cookies (existing logic)
-  3. Reload tab
-  4. Content script at `document_start` restores target session storage
-- [ ] Handle edge case: content script not yet injected (fresh tab)
-- [ ] Handle edge case: content script message timeout (page unresponsive)
+- [x] Storage save is decoupled from session switch — users save storage manually via the "Refresh session data" button. Cookie swap handles the switch. Content script restores storage on page load if a pending restore is queued.
+- [x] Handle edge case: content script not yet injected (fresh tab)
+- [x] Handle edge case: content script message timeout (page unresponsive)
 
 **Phase 2 Exit Criteria:**
-- localStorage data persists across session switches
-- sessionStorage data persists across session switches
-- IndexedDB snapshots work on simple sites (e.g., a test page with known IDB schema)
-- Complex sites (Gmail) degrade gracefully — cookie isolation still works, IDB restore skipped with warning
+
+- localStorage and sessionStorage can be saved/restored via manual action
+- IndexedDB snapshots work on simple sites
+- Cookie isolation handles login state across switches
 
 ---
 
@@ -186,49 +183,52 @@ src/
 
 ### 3.1 Popup UI (Svelte)
 
-- [ ] Session list view:
+- [x] Session list view:
   - Display all sessions with name, color dot, tab count
   - Active session highlighted
-  - Click to expand: show tabs in that session
-- [ ] New session form:
+  - Domain-grouped session list ("This site" / "Other sessions")
+  - "Default (no session)" option for fresh login
+- [x] New session form:
   - Name input (validate: non-empty, unique)
   - Color picker (8 preset colors + custom hex)
   - Create button
-- [ ] Current tab panel:
+- [x] Current tab panel:
   - Show current tab's origin and active session
-  - Session switcher dropdown → triggers swap + reload
-- [ ] Session management:
-  - Rename (inline edit)
+  - Click session cards to switch sessions
+- [x] Session management:
+  - Inline rename (double-click or right-click → Rename)
   - Delete (confirm dialog, warn about data loss)
-  - Duplicate session profile
-- [ ] Empty state: first-run onboarding prompt
-- [ ] Loading states during session switch
+  - Context menu on sessions (Rename, Duplicate, Pin, Delete)
+  - Refresh button to re-capture session data
+- [x] Empty state: first-run onboarding prompt
+- [x] Loading states during session switch
 
 ### 3.2 Context Menu
 
-- [ ] Register `chrome.contextMenus` on extension install
-- [ ] "Open in Session" parent menu on links
-- [ ] Dynamic child items: one per session + "New Session..."
-- [ ] Update menu items when sessions are created/deleted
-- [ ] Handle: open link in new tab with target session's cookies pre-loaded
+- [x] Register `chrome.contextMenus` on extension install
+- [x] "Open in Session" parent menu on links
+- [x] Dynamic child items: one per session + "New Session..."
+- [x] Update menu items when sessions are created/deleted
+- [x] Handle: open link in new tab with target session's cookies pre-loaded
 
 ### 3.3 Tab Badges
 
-- [ ] Set `chrome.action.setBadgeText` with session name abbreviation (first 2 chars)
-- [ ] Set `chrome.action.setBadgeBackgroundColor` with session color
-- [ ] Update badge on tab focus change
-- [ ] Clear badge when tab has no session (default context)
+- [x] Set `chrome.action.setBadgeText` with session name abbreviation (first 2 chars)
+- [x] Set `chrome.action.setBadgeBackgroundColor` with session color
+- [x] Update badge on tab focus change
+- [x] Clear badge when tab has no session (default context)
 
 ### 3.4 Options Page
 
-- [ ] Session profile management (list, bulk delete)
-- [ ] Import/Export buttons (JSON file)
-- [ ] Per-session settings: User-Agent override, custom headers
-- [ ] Data usage display (total storage per session)
-- [ ] "Clear all data" with confirmation
-- [ ] About section (version, links)
+- [x] Session profile management (list, bulk delete)
+- [x] Import/Export buttons (JSON file)
+- [x] Per-session settings: User-Agent override, custom headers
+- [x] Data usage display (total storage per session)
+- [x] "Clear all data" with confirmation
+- [x] About section (version, links)
 
 **Phase 3 Exit Criteria:**
+
 - User can create, switch, rename, delete sessions entirely via popup UI
 - Right-click "Open in Session" works on any link
 - Tab badges show session identity at a glance
@@ -240,7 +240,7 @@ src/
 
 **Goal:** Firefox support via `contextualIdentities`, import/export, E2E tests, and store-ready packaging.
 
-### 4.1 Firefox Support
+### 4.1 Firefox Support (Not started)
 
 - [ ] Detect Firefox at runtime (`typeof browser !== 'undefined'` + user agent)
 - [ ] Firefox session manager: create/delete `contextualIdentities` (containers)
@@ -251,9 +251,9 @@ src/
 
 ### 4.2 Import / Export
 
-- [ ] Export: serialize all session profiles to JSON → download as file
-- [ ] Import: file picker → validate JSON schema → create sessions
-- [ ] Handle conflicts (duplicate session names): prompt user to rename or skip
+- [x] Export: serialize all session profiles to JSON → download as file
+- [x] Import: file picker with drag-drop support → validate JSON schema → visual diff preview → create sessions
+- [x] Handle conflicts (duplicate session names): prompt user to rename or skip
 - [ ] Optional: AES-256-GCM encryption with user-provided passphrase
 
 ### 4.3 E2E Testing
@@ -282,11 +282,9 @@ src/
 - [ ] Update `README.md` with install instructions and screenshots
 
 **Phase 4 Exit Criteria:**
-- Extension works on Chrome and Firefox
-- Import/export works with optional encryption
-- All E2E tests pass on both browsers
-- Store-ready packages generated
-- Privacy policy and listing materials complete
+
+- Import/export with visual diff preview works
+- Firefox support, E2E tests, and store packaging are not yet implemented
 
 ---
 

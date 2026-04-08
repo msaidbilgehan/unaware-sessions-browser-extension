@@ -30,11 +30,11 @@ Unaware Sessions Browser Extension fills the gap: lightweight session isolation 
 | Layer | Technology | Role |
 |---|---|---|
 | Extension Runtime | WebExtensions API (Manifest V3) | Cross-browser extension framework |
-| Session Isolation | `browser.contextualIdentities` / `chrome.cookies` | Sandboxed cookie jars per tab |
-| Proxy Layer | Container-scoped proxy rules | Optional per-session proxy routing |
-| Storage | IndexedDB (local) | Persist session profiles, labels, colors |
+| Session Isolation | `chrome.cookies` API + content script storage swap | Sandboxed cookie jars per tab |
+| Storage | `chrome.storage.local` + extension IndexedDB | Persist session profiles, labels, colors |
 | UI Framework | Svelte | Popup & sidebar interface |
-| Build System | Vite + web-ext | Dev server, hot reload, packaging |
+| Styling | CSS Custom Properties | Design system with light/dark themes |
+| Build System | Vite + @crxjs/vite-plugin | Dev server, hot reload, packaging |
 | Language | TypeScript | End-to-end type safety |
 
 ---
@@ -47,28 +47,25 @@ Unaware Sessions Browser Extension fills the gap: lightweight session isolation 
 - Each profile gets its own isolated cookie jar, localStorage, and sessionStorage
 - Open any link in any session context via right-click menu
 - Tab badge indicators showing which session a tab belongs to
-- Switch a tab's session identity on the fly without reloading
+- Switch a tab's session identity with automatic page navigation
+- Domain-grouped session list — "This site" shows relevant sessions, "Other sessions" collapsed
+- "Default (no session)" option for clean browsing / fresh login
 
 **Management**
 
-- Import / export session profiles as encrypted JSON
-- Bulk-assign tabs to sessions
-- Session templates — pre-configured groups of tabs + session pairings for common workflows
-- Quick-launch: open a saved template in one click
+- Import / export session profiles as JSON with visual diff preview
+- Drag-to-reorder sessions
+- Per-session storage usage dashboard
 
 **Privacy**
 
 - Zero network calls — the extension makes no outbound requests, ever
 - No analytics, no crash reporting, no update pings beyond the browser's own extension update mechanism
-- All data stored in local IndexedDB; nothing leaves the device
-- Optional passphrase lock on the session vault
+- All data stored in `chrome.storage.local` + extension IndexedDB; nothing leaves the device
 
 **Developer-Friendly**
 
-- Per-session User-Agent override
-- Per-session proxy configuration (HTTP/SOCKS5)
-- Request header injection per session (useful for staging auth tokens)
-- DevTools helper: shows active session context in the console
+- Per-session User-Agent override (configurable in settings interface)
 
 ---
 
@@ -81,16 +78,15 @@ Unaware Sessions Browser Extension fills the gap: lightweight session isolation 
 │  │ Popup UI (Svelte)           │                     │
 │  │  - Name: "client-A"         │                     │
 │  │  - Color: #3B82F6           │                     │
-│  │  - Proxy: none              │                     │
 │  └────────────┬────────────────┘                     │
 │               │                                      │
 │               ▼                                      │
 │  ┌─────────────────────────────┐                     │
 │  │ Background Service Worker   │                     │
-│  │  1. Create contextual       │                     │
-│  │     identity (cookie jar)   │                     │
+│  │  1. Save session profile in │                     │
+│  │     chrome.storage.local    │                     │
 │  │  2. Store profile metadata  │                     │
-│  │     in IndexedDB            │                     │
+│  │     and tab-session mapping │                     │
 │  │  3. Register tab listeners  │                     │
 │  └────────────┬────────────────┘                     │
 │               │                                      │
@@ -111,10 +107,10 @@ Unaware Sessions Browser Extension fills the gap: lightweight session isolation 
 
 **Lifecycle in brief:**
 
-1. User creates a session profile (name, color, optional proxy/headers).
-2. Background worker provisions an isolated browser context (contextual identity on Firefox, partitioned cookie store on Chromium).
+1. User creates a session profile (name, color, optional settings).
+2. Background worker stores the session profile and tracks the tab-session mapping.
 3. Any tab opened under that session inherits the isolated context.
-4. Navigations, cookie writes, and storage operations are scoped to that session's partition.
+4. On session switch, cookies are saved/swapped for the origin and the page navigates to apply new session.
 5. When the user closes a session, its tabs close and its cookie jar can be preserved or wiped — user's choice.
 
 ---
@@ -131,11 +127,8 @@ cd Unaware Sessions Browser Extension
 # Install dependencies
 npm install
 
-# Development mode (Firefox)
-npm run dev:firefox
-
-# Development mode (Chrome)
-npm run dev:chrome
+# Development mode
+npm run dev
 
 # Production build
 npm run build
@@ -147,12 +140,7 @@ npm run build
 
 1. Navigate to `chrome://extensions`
 2. Enable "Developer mode"
-3. Click "Load unpacked" → select `dist/chrome`
-
-**Firefox:**
-
-1. Navigate to `about:debugging#/runtime/this-firefox`
-2. Click "Load Temporary Add-on" → select `dist/firefox/manifest.json`
+3. Click "Load unpacked" → select `dist/`
 
 ### Quick Start
 
@@ -161,19 +149,6 @@ npm run build
 3. Right-click any link → **Open in Session** → choose your session.
 4. The tab opens with a colored badge. Cookies and storage are fully isolated.
 5. Create more sessions as needed. Switch any tab between sessions from the popup.
-
-### CLI (Optional)
-
-```bash
-# Export all session profiles
-npx Unaware Sessions Browser Extension export --out sessions.json
-
-# Import session profiles
-npx Unaware Sessions Browser Extension import --file sessions.json
-
-# List active sessions
-npx Unaware Sessions Browser Extension list
-```
 
 ---
 
@@ -232,7 +207,7 @@ Optional passphrase to encrypt and lock the session vault. Requires unlock on br
 
 ## License
 
-MIT
+BSD 3-Clause
 
 ---
 

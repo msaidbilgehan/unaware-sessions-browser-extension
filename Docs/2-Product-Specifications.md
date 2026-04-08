@@ -38,11 +38,13 @@ No `contextualIdentities` API available. Session isolation is achieved through *
 - **IndexedDB** — Content script save/restore on reload (best-effort)
 - **Cache API** — Content script save/restore on reload (best-effort)
 
+Cookie swap uses origin-scoped save/clear/restore. When a session snapshot contains cross-domain cookies (e.g., `anthropic.com` for `claude.ai`, `authenticator.cursor.sh` for `cursor.com`), those are also restored during session switch to preserve auth flows that span multiple domains.
+
 Cookie header manipulation via `declarativeNetRequest` dynamic rules for outbound request isolation.
 
 ### 3.2 Firefox
 
-Firefox provides `browser.contextualIdentities` API, which offers **real kernel-level cookie jar isolation**. The extension should use this API directly when available, falling back to Snapshot & Swap only for storage layers not covered by contextual identities.
+Firefox provides `browser.contextualIdentities` API, which offers **real kernel-level cookie jar isolation**. The extension should use this API directly when available, falling back to Snapshot & Swap only for storage layers not covered by contextual identities. (Not yet implemented — planned for future release)
 
 ### 3.3 Isolation Matrix
 
@@ -155,50 +157,44 @@ graph TB
 
 ### 4.3 Session Switch Flow (Chromium)
 
+The user clicks a session card in the popup session list. The switch is entirely orchestrated by the service worker — no content script interaction occurs during the switch itself. DOM storage (localStorage, sessionStorage, IndexedDB) is saved separately via the manual "Refresh session data" button, not as part of the switch flow.
+
 ```mermaid
 sequenceDiagram
     participant U as User
     participant P as Popup
     participant SW as Service Worker
-    participant CS as Content Script
     participant DB as Extension IndexedDB
     participant API as chrome.cookies
 
-    U->>P: Click "Switch to Session B"
-    P->>SW: switchSession(tabId, sessionB)
+    U->>P: Click session card in list
+    P->>SW: switchSession(tabId, targetSessionId)
     
-    Note over SW: 1. Save current session
-    SW->>CS: saveStorage(currentOrigin)
-    CS->>CS: Read localStorage, sessionStorage
-    CS->>DB: Store snapshot (sessionA + origin)
-    CS-->>SW: saved
-    
+    Note over SW: 1. Save current session's cookies (origin-scoped)
     SW->>API: getAll({domain: origin})
     API-->>SW: cookies[]
-    SW->>DB: Store cookies (sessionA + origin)
+    SW->>DB: Store cookies (currentSessionId + origin)
     
-    Note over SW: 2. Clear and restore target session
-    SW->>API: removeAll({domain: origin})
-    SW->>DB: Load cookies (sessionB + origin)
+    Note over SW: 2. Clear cookies for origin
+    SW->>API: remove(cookie) for each origin cookie
+    
+    Note over SW: 3. Restore target session's cookies
+    SW->>DB: Load cookies (targetSessionId + origin)
     SW->>API: set(cookie) for each
     
-    SW->>SW: Update tab-session mapping
+    Note over SW: 4. Restore cross-domain cookies from snapshot (auth flows)
+    SW->>DB: Load full snapshot, find extra domains
+    SW->>API: set(cookie) for each cross-domain cookie
+    
+    Note over SW: 5. Update state and navigate
+    SW->>SW: Update tab-session mapping (assignTab)
     SW->>SW: Update DNR rules
-    SW->>SW: Update badge/icon
-    
-    Note over SW: 3. Queue storage restore and reload tab
-    SW->>SW: Queue pending restore for tabId
-    SW->>API: chrome.tabs.reload(tabId)
-    
-    Note over CS: Content script runs at document_start
-    CS-->>SW: CONTENT_SCRIPT_READY
-    SW->>DB: Load snapshot (sessionB + origin)
-    SW->>CS: RESTORE_STORAGE (localStorage + sessionStorage + IndexedDB)
-    CS->>CS: Write localStorage, sessionStorage, IndexedDB (best-effort)
-    CS-->>SW: restored
+    SW->>API: chrome.tabs.update(tabId, {url})
 ```
 
 ### 4.4 Session Switch Flow (Firefox)
+
+(Not yet implemented)
 
 ```mermaid
 sequenceDiagram
@@ -229,6 +225,8 @@ interface SessionProfile {
   id: string;                  // UUID v4
   name: string;                // User-defined label
   color: string;               // Hex color for badge/UI
+  emoji?: string;              // Optional emoji icon for session
+  pinned?: boolean;            // Pin session to top of list
   createdAt: number;           // Unix timestamp
   updatedAt: number;           // Unix timestamp
   settings: SessionSettings;
@@ -311,7 +309,8 @@ interface CookieSnapshot {
     "declarativeNetRequest",
     "declarativeNetRequestFeedback",
     "contextMenus",
-    "alarms"
+    "alarms",
+    "favicon"
   ],
   "host_permissions": ["<all_urls>"]
 }
@@ -328,6 +327,7 @@ interface CookieSnapshot {
 | `declarativeNetRequestFeedback` | Debug DNR rule matches |
 | `contextMenus` | "Open in Session" right-click menu |
 | `alarms` | Periodic cleanup, session auto-save |
+| `favicon` | Display site icons in popup via _favicon API |
 
 ---
 
@@ -336,12 +336,12 @@ interface CookieSnapshot {
 | Layer | Technology | Role |
 |---|---|---|
 | Extension Runtime | WebExtensions API (MV3) | Cross-browser extension framework |
-| UI Framework | Svelte | Popup, options page, sidebar |
-| Build System | Vite + web-ext | Dev server, HMR, packaging |
+| UI Framework | Svelte 5 | Popup, options page, sidebar |
+| Build System | Vite + @crxjs/vite-plugin | Dev server, HMR, packaging |
 | Language | TypeScript | End-to-end type safety |
 | Internal Storage | chrome.storage.local + IndexedDB | Session profiles + storage snapshots |
-| Styling | CSS Modules | Scoped, minimal styles |
-| Testing | Vitest + Playwright | Unit + E2E |
+| Styling | CSS Custom Properties | Scoped, minimal styles |
+| Testing | Vitest + fake-indexeddb | Unit + mock storage |
 | Linting | ESLint + Prettier | Code quality |
 
 ---
@@ -354,24 +354,29 @@ interface CookieSnapshot {
 +-------------------------------+
 |  Unaware Sessions        [gear]|
 +-------------------------------+
+|  gmail.com          [refresh] |
++-------------------------------+
 |                               |
+|  o Default (no session)       |
+|                               |
+|  THIS SITE                    |
 |  * work-gmail           [3]   |
 |  * client-A             [1]   |
-|  * staging              [2]   |
-|  o personal (inactive)        |
 |                               |
-+-------------------------------+
-|  Current tab: gmail.com       |
-|  Session: work-gmail     [<>] |
+|  OTHER SESSIONS (2)        v  |
+|  o staging              [2]   |
+|  o personal                   |
+|                               |
 +-------------------------------+
 |  [+ New Session]              |
 +-------------------------------+
 
-* = active (has tabs)
-o = inactive
+* = active on this tab
+o = inactive / other origin
 [3] = tab count
-[<>] = switch session
+[refresh] = save session data
 [gear] = settings/options
+v = expand/collapse toggle
 ```
 
 ### 8.2 Popup — New Session
