@@ -159,7 +159,7 @@
                 {onswitch}
                 {ondelete}
                 {onrename}
-              forceEditing={editingSessionId === session.id}
+                forceEditing={editingSessionId === session.id}
                 {oncontextmenu}
                 draggable={true}
                 ondragstart={(e) => handleDragStart(e, idx)}
