@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { resetChromeMocks } from '../setup';
+import { resetChromeMocks, mockChrome } from '../setup';
 import {
   assignTab,
   unassignTab,
@@ -56,5 +56,94 @@ describe('tab-tracker', () => {
     initTabTracker();
     expect(chrome.tabs.onRemoved.addListener).toHaveBeenCalled();
     expect(chrome.tabs.onUpdated.addListener).toHaveBeenCalled();
+  });
+});
+
+describe('tab-tracker event handlers', () => {
+  beforeEach(() => {
+    initTabTracker();
+  });
+
+  it('removes tab entry when tab is closed', async () => {
+    await assignTab(1, 'session-1', 'https://example.com');
+
+    // Fire onRemoved event
+    mockChrome.tabs.onRemoved._fire(1, { windowId: 1, isWindowClosing: false });
+
+    // Wait for async handler
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(getTabEntry(1)).toBeUndefined();
+  });
+
+  it('ignores onRemoved for untracked tabs', async () => {
+    await assignTab(1, 'session-1', 'https://example.com');
+
+    mockChrome.tabs.onRemoved._fire(999, { windowId: 1, isWindowClosing: false });
+    await new Promise((r) => setTimeout(r, 10));
+
+    // Tab 1 should be unaffected
+    expect(getTabEntry(1)).toBeDefined();
+  });
+
+  it('updates origin when tab navigates to new origin', async () => {
+    await assignTab(1, 'session-1', 'https://example.com');
+
+    mockChrome.tabs.onUpdated._fire(
+      1,
+      { url: 'https://other.com/page' },
+      { id: 1, url: 'https://other.com/page' },
+    );
+    await new Promise((r) => setTimeout(r, 10));
+
+    const entry = getTabEntry(1);
+    expect(entry?.origin).toBe('https://other.com');
+    expect(entry?.sessionId).toBe('session-1');
+  });
+
+  it('does not update origin for same-origin navigation', async () => {
+    await assignTab(1, 'session-1', 'https://example.com');
+
+    mockChrome.tabs.onUpdated._fire(
+      1,
+      { url: 'https://example.com/other-page' },
+      { id: 1, url: 'https://example.com/other-page' },
+    );
+    await new Promise((r) => setTimeout(r, 10));
+
+    const entry = getTabEntry(1);
+    expect(entry?.origin).toBe('https://example.com');
+  });
+
+  it('ignores tab updates for untracked tabs', async () => {
+    mockChrome.tabs.onUpdated._fire(
+      999,
+      { url: 'https://example.com' },
+      { id: 999, url: 'https://example.com' },
+    );
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(getTabEntry(999)).toBeUndefined();
+  });
+
+  it('ignores tab updates without URL change', async () => {
+    await assignTab(1, 'session-1', 'https://example.com');
+
+    mockChrome.tabs.onUpdated._fire(1, { status: 'complete' }, { id: 1, url: 'https://example.com' });
+    await new Promise((r) => setTimeout(r, 10));
+
+    // Origin unchanged
+    expect(getTabEntry(1)?.origin).toBe('https://example.com');
+  });
+
+  it('returns a copy of all tab entries', async () => {
+    const { getAllTabEntries } = await import('@background/tab-tracker');
+    await assignTab(1, 's1', 'https://a.com');
+    await assignTab(2, 's2', 'https://b.com');
+
+    const entries = getAllTabEntries();
+    expect(entries.size).toBe(2);
+    expect(entries.get(1)?.sessionId).toBe('s1');
+    expect(entries.get(2)?.sessionId).toBe('s2');
   });
 });

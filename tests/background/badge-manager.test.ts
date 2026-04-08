@@ -81,4 +81,40 @@ describe('initBadgeManager', () => {
     expect(chrome.tabs.onActivated.addListener).toHaveBeenCalled();
     expect(chrome.tabs.onUpdated.addListener).toHaveBeenCalled();
   });
+
+  it('updates badge on tab activation', async () => {
+    const { mockChrome } = await import('../setup');
+    const session = await createSession('Active', '#10B981');
+    await assignTab(7, session.id, 'https://example.com');
+
+    initBadgeManager();
+
+    mockChrome.tabs.onActivated._fire({ tabId: 7, windowId: 1 });
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(chrome.action.setBadgeText).toHaveBeenCalledWith({ text: 'AC', tabId: 7 });
+  });
+
+  it('updates badge when tab finishes loading', async () => {
+    const { mockChrome } = await import('../setup');
+    const session = await createSession('Loaded', '#F59E0B');
+    await assignTab(8, session.id, 'https://example.com');
+
+    initBadgeManager();
+
+    mockChrome.tabs.onUpdated._fire(8, { status: 'complete' }, { id: 8 });
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(chrome.action.setBadgeText).toHaveBeenCalledWith({ text: 'LO', tabId: 8 });
+  });
+
+  it('ignores tab updates that are not status=complete', async () => {
+    const { mockChrome } = await import('../setup');
+    initBadgeManager();
+
+    mockChrome.tabs.onUpdated._fire(9, { status: 'loading' }, { id: 9 });
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(chrome.action.setBadgeText).not.toHaveBeenCalled();
+  });
 });

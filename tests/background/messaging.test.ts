@@ -1,10 +1,12 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { resetChromeMocks, mockChrome } from '../setup';
 import { initMessaging } from '@background/messaging';
 import { hydrateSessions } from '@background/session-manager';
 import { hydrateTabMap } from '@background/tab-tracker';
+import { cookieStore } from '@background/cookie-store';
+import { storageStore } from '@background/storage-store';
 import { MessageType } from '@shared/types';
-import type { MessageResponse } from '@shared/types';
+import type { MessageResponse, CookieSnapshot, StorageSnapshot } from '@shared/types';
 
 beforeEach(async () => {
   resetChromeMocks();
@@ -199,5 +201,323 @@ describe('messaging', () => {
     });
 
     expect(response.success).toBe(true);
+  });
+
+  it('handles GET_SESSION_FOR_TAB when no session assigned', async () => {
+    const response = await sendTestMessage({
+      type: MessageType.GET_SESSION_FOR_TAB,
+      tabId: 42,
+    });
+
+    expect(response.success).toBe(true);
+    expect(response.data).toBeUndefined();
+  });
+
+  it('handles GET_SESSION_FOR_TAB with assigned tab', async () => {
+    const createResp = await sendTestMessage({
+      type: MessageType.CREATE_SESSION,
+      name: 'Test',
+      color: '#3B82F6',
+    });
+    const sessionId = (createResp.data as { id: string }).id;
+
+    await sendTestMessage({
+      type: MessageType.ASSIGN_TAB,
+      tabId: 10,
+      sessionId,
+      origin: 'https://example.com',
+    });
+
+    const response = await sendTestMessage({
+      type: MessageType.GET_SESSION_FOR_TAB,
+      tabId: 10,
+    });
+
+    expect(response.success).toBe(true);
+    expect(response.data).toEqual({ sessionId, origin: 'https://example.com' });
+  });
+
+  it('handles ASSIGN_TAB and UNASSIGN_TAB', async () => {
+    const createResp = await sendTestMessage({
+      type: MessageType.CREATE_SESSION,
+      name: 'Test',
+      color: '#3B82F6',
+    });
+    const sessionId = (createResp.data as { id: string }).id;
+
+    const assignResp = await sendTestMessage({
+      type: MessageType.ASSIGN_TAB,
+      tabId: 5,
+      sessionId,
+      origin: 'https://example.com',
+    });
+    expect(assignResp.success).toBe(true);
+
+    const unassignResp = await sendTestMessage({
+      type: MessageType.UNASSIGN_TAB,
+      tabId: 5,
+    });
+    expect(unassignResp.success).toBe(true);
+
+    const getResp = await sendTestMessage({
+      type: MessageType.GET_SESSION_FOR_TAB,
+      tabId: 5,
+    });
+    expect(getResp.data).toBeUndefined();
+  });
+
+  it('handles GET_SESSIONS_FOR_ORIGIN', async () => {
+    const response = await sendTestMessage({
+      type: MessageType.GET_SESSIONS_FOR_ORIGIN,
+      origin: 'https://nonexistent.com',
+    });
+
+    expect(response.success).toBe(true);
+    expect(response.data).toEqual([]);
+  });
+
+  it('handles DETECT_SESSION', async () => {
+    (chrome.cookies.getAll as ReturnType<typeof vi.fn>).mockResolvedValueOnce([]);
+
+    const response = await sendTestMessage({
+      type: MessageType.DETECT_SESSION,
+      origin: 'https://example.com',
+    });
+
+    expect(response.success).toBe(true);
+    expect(response.data).toBeNull();
+  });
+
+  it('handles SAVE_SESSION_DATA when tab has no URL', async () => {
+    (chrome.tabs.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ id: 1 } as chrome.tabs.Tab);
+
+    const response = await sendTestMessage({
+      type: MessageType.SAVE_SESSION_DATA,
+      tabId: 1,
+    });
+
+    expect(response.success).toBe(false);
+    expect(response.error).toBe('Tab has no URL');
+  });
+
+  it('handles SAVE_SESSION_DATA when tab is not assigned', async () => {
+    (chrome.tabs.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: 99,
+      url: 'https://example.com',
+    } as chrome.tabs.Tab);
+
+    const response = await sendTestMessage({
+      type: MessageType.SAVE_SESSION_DATA,
+      tabId: 99,
+    });
+
+    expect(response.success).toBe(false);
+    expect(response.error).toBe('Tab is not assigned to a session');
+  });
+
+  it('handles CLEAR_ORIGIN_DATA', async () => {
+    (chrome.tabs.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: 1,
+      url: 'https://example.com/page',
+    } as chrome.tabs.Tab);
+    (chrome.cookies.getAll as ReturnType<typeof vi.fn>).mockResolvedValueOnce([]);
+
+    const response = await sendTestMessage({
+      type: MessageType.CLEAR_ORIGIN_DATA,
+      tabId: 1,
+    });
+
+    expect(response.success).toBe(true);
+    expect(chrome.tabs.update).toHaveBeenCalledWith(1, { url: 'https://example.com/page' });
+  });
+
+  it('handles CLEAR_ORIGIN_DATA when tab has no URL', async () => {
+    (chrome.tabs.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ id: 1 } as chrome.tabs.Tab);
+
+    const response = await sendTestMessage({
+      type: MessageType.CLEAR_ORIGIN_DATA,
+      tabId: 1,
+    });
+
+    expect(response.success).toBe(false);
+    expect(response.error).toBe('Tab has no URL');
+  });
+
+  it('handles DELETE_SESSION_ORIGIN_DATA', async () => {
+    const response = await sendTestMessage({
+      type: MessageType.DELETE_SESSION_ORIGIN_DATA,
+      sessionId: 's1',
+      origin: 'https://example.com',
+    });
+
+    expect(response.success).toBe(true);
+  });
+
+  it('handles UPDATE_SESSION_COOKIE', async () => {
+    // Save a cookie snapshot first
+    const snapshot: CookieSnapshot = {
+      sessionId: 'msg-s1',
+      origin: 'https://example.com',
+      timestamp: Date.now(),
+      cookies: [
+        {
+          name: 'token',
+          value: 'old',
+          domain: '.example.com',
+          path: '/',
+          secure: true,
+          httpOnly: false,
+          sameSite: 'lax',
+          hostOnly: false,
+          session: false,
+          storeId: '0',
+        } as chrome.cookies.Cookie,
+      ],
+    };
+    await cookieStore.save(snapshot);
+
+    const response = await sendTestMessage({
+      type: MessageType.UPDATE_SESSION_COOKIE,
+      sessionId: 'msg-s1',
+      origin: 'https://example.com',
+      cookieName: 'token',
+      cookieDomain: '.example.com',
+      newValue: 'updated',
+    });
+
+    expect(response.success).toBe(true);
+    const loaded = await cookieStore.load('msg-s1', 'https://example.com');
+    expect(loaded?.cookies[0].value).toBe('updated');
+  });
+
+  it('handles DELETE_SESSION_COOKIE', async () => {
+    const snapshot: CookieSnapshot = {
+      sessionId: 'msg-s2',
+      origin: 'https://example.com',
+      timestamp: Date.now(),
+      cookies: [
+        {
+          name: 'to-delete',
+          value: 'val',
+          domain: '.example.com',
+          path: '/',
+          secure: false,
+          httpOnly: false,
+          sameSite: 'lax',
+          hostOnly: false,
+          session: true,
+          storeId: '0',
+        } as chrome.cookies.Cookie,
+      ],
+    };
+    await cookieStore.save(snapshot);
+
+    const response = await sendTestMessage({
+      type: MessageType.DELETE_SESSION_COOKIE,
+      sessionId: 'msg-s2',
+      origin: 'https://example.com',
+      cookieName: 'to-delete',
+      cookieDomain: '.example.com',
+    });
+
+    expect(response.success).toBe(true);
+    const loaded = await cookieStore.load('msg-s2', 'https://example.com');
+    expect(loaded?.cookies).toHaveLength(0);
+  });
+
+  it('handles UPDATE_SESSION_STORAGE_ENTRY', async () => {
+    const snapshot: StorageSnapshot = {
+      sessionId: 'msg-s3',
+      origin: 'https://example.com',
+      timestamp: Date.now(),
+      localStorage: { key1: 'old' },
+      sessionStorage: {},
+    };
+    await storageStore.save(snapshot);
+
+    const response = await sendTestMessage({
+      type: MessageType.UPDATE_SESSION_STORAGE_ENTRY,
+      sessionId: 'msg-s3',
+      origin: 'https://example.com',
+      storageType: 'localStorage',
+      key: 'key1',
+      value: 'new-value',
+    });
+
+    expect(response.success).toBe(true);
+    const loaded = await storageStore.load('msg-s3', 'https://example.com');
+    expect(loaded?.localStorage.key1).toBe('new-value');
+  });
+
+  it('handles DELETE_SESSION_STORAGE_ENTRY', async () => {
+    const snapshot: StorageSnapshot = {
+      sessionId: 'msg-s4',
+      origin: 'https://example.com',
+      timestamp: Date.now(),
+      localStorage: { remove_me: 'val', keep: 'val2' },
+      sessionStorage: {},
+    };
+    await storageStore.save(snapshot);
+
+    const response = await sendTestMessage({
+      type: MessageType.DELETE_SESSION_STORAGE_ENTRY,
+      sessionId: 'msg-s4',
+      origin: 'https://example.com',
+      storageType: 'localStorage',
+      key: 'remove_me',
+    });
+
+    expect(response.success).toBe(true);
+    const loaded = await storageStore.load('msg-s4', 'https://example.com');
+    expect(loaded?.localStorage).toEqual({ keep: 'val2' });
+  });
+
+  it('handles GET_SESSION_DETAILS with cookie and storage data', async () => {
+    const cookieSnap: CookieSnapshot = {
+      sessionId: 'msg-details',
+      origin: 'https://example.com',
+      timestamp: Date.now(),
+      cookies: [
+        {
+          name: 'c1',
+          value: 'v1',
+          domain: '.example.com',
+          path: '/',
+          secure: false,
+          httpOnly: false,
+          sameSite: 'lax',
+          hostOnly: false,
+          session: true,
+          storeId: '0',
+        } as chrome.cookies.Cookie,
+      ],
+    };
+    await cookieStore.save(cookieSnap);
+
+    const storageSnap: StorageSnapshot = {
+      sessionId: 'msg-details',
+      origin: 'https://example.com',
+      timestamp: Date.now(),
+      localStorage: { k: 'v' },
+      sessionStorage: {},
+    };
+    await storageStore.save(storageSnap);
+
+    const response = await sendTestMessage({
+      type: MessageType.GET_SESSION_DETAILS,
+      sessionId: 'msg-details',
+    });
+
+    expect(response.success).toBe(true);
+    const details = response.data as {
+      sessionId: string;
+      origins: Array<{ origin: string; cookieCount: number }>;
+      totalCookies: number;
+    };
+    expect(details.sessionId).toBe('msg-details');
+    expect(details.origins).toHaveLength(1);
+    expect(details.origins[0].origin).toBe('https://example.com');
+    expect(details.origins[0].cookieCount).toBe(1);
+    expect(details.totalCookies).toBe(1);
   });
 });

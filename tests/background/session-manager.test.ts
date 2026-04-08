@@ -114,6 +114,26 @@ describe('session-manager', () => {
     expect(unpinned.pinned).toBe(false);
   });
 
+  it('rejects empty name in updateSession (regression: name validation)', async () => {
+    const session = await createSession('valid', '#3B82F6');
+    await expect(updateSession(session.id, { name: '' })).rejects.toThrow(
+      'Session name cannot be empty',
+    );
+  });
+
+  it('rejects whitespace-only name in updateSession (regression: name validation)', async () => {
+    const session = await createSession('valid', '#3B82F6');
+    await expect(updateSession(session.id, { name: '   ' })).rejects.toThrow(
+      'Session name cannot be empty',
+    );
+  });
+
+  it('trims name in updateSession', async () => {
+    const session = await createSession('original', '#3B82F6');
+    const updated = await updateSession(session.id, { name: '  padded  ' });
+    expect(updated.name).toBe('padded');
+  });
+
   it('duplicates a session', async () => {
     const original = await createSession('Original', '#EF4444', '\u{1F3E0}');
     const copy = await duplicateSession(original.id);

@@ -119,3 +119,52 @@ describe('storage-store', () => {
     expect(stats.origins).toEqual(['https://a.com']);
   });
 });
+
+describe('getSessionIdsForOrigin', () => {
+  it('returns session IDs that have snapshots for an origin', async () => {
+    await storageStore.save(makeStorageSnapshot('s1', 'https://example.com'));
+    await storageStore.save(makeStorageSnapshot('s2', 'https://example.com'));
+    await storageStore.save(makeStorageSnapshot('s3', 'https://other.com'));
+
+    const ids = await storageStore.getSessionIdsForOrigin('https://example.com');
+    expect(ids).toContain('s1');
+    expect(ids).toContain('s2');
+    expect(ids).not.toContain('s3');
+    expect(ids).toHaveLength(2);
+  });
+
+  it('returns empty array when no sessions match', async () => {
+    const ids = await storageStore.getSessionIdsForOrigin('https://nonexistent.com');
+    expect(ids).toEqual([]);
+  });
+});
+
+describe('getAllSnapshotsForSession', () => {
+  it('returns all snapshots for a session', async () => {
+    await storageStore.save(makeStorageSnapshot('s1', 'https://a.com'));
+    await storageStore.save(makeStorageSnapshot('s1', 'https://b.com'));
+    await storageStore.save(makeStorageSnapshot('s2', 'https://a.com'));
+
+    const snapshots = await storageStore.getAllSnapshotsForSession('s1');
+    expect(snapshots).toHaveLength(2);
+    const origins = snapshots.map((s) => s.origin).sort();
+    expect(origins).toEqual(['https://a.com', 'https://b.com']);
+  });
+
+  it('returns empty array for unknown session', async () => {
+    const snapshots = await storageStore.getAllSnapshotsForSession('nonexistent');
+    expect(snapshots).toEqual([]);
+  });
+});
+
+describe('deleteForOrigin', () => {
+  it('deletes snapshot for a specific session+origin pair', async () => {
+    await storageStore.save(makeStorageSnapshot('s1', 'https://a.com'));
+    await storageStore.save(makeStorageSnapshot('s1', 'https://b.com'));
+
+    await storageStore.deleteForOrigin('s1', 'https://a.com');
+
+    expect(await storageStore.load('s1', 'https://a.com')).toBeUndefined();
+    expect(await storageStore.load('s1', 'https://b.com')).toBeDefined();
+  });
+});

@@ -112,3 +112,52 @@ describe('getStatsForSession', () => {
     expect(stats.cookieCount).toBe(1);
   });
 });
+
+describe('getSessionIdsForOrigin', () => {
+  it('returns session IDs that have snapshots for a given origin', async () => {
+    await cookieStore.save(makeCookieSnapshot('s1', 'https://example.com'));
+    await cookieStore.save(makeCookieSnapshot('s2', 'https://example.com'));
+    await cookieStore.save(makeCookieSnapshot('s3', 'https://other.com'));
+
+    const ids = await cookieStore.getSessionIdsForOrigin('https://example.com');
+    expect(ids).toContain('s1');
+    expect(ids).toContain('s2');
+    expect(ids).not.toContain('s3');
+    expect(ids).toHaveLength(2);
+  });
+
+  it('returns empty array when no sessions match', async () => {
+    const ids = await cookieStore.getSessionIdsForOrigin('https://nonexistent.com');
+    expect(ids).toEqual([]);
+  });
+});
+
+describe('getAllSnapshotsForSession', () => {
+  it('returns all snapshots for a session', async () => {
+    await cookieStore.save(makeCookieSnapshot('s1', 'https://a.com'));
+    await cookieStore.save(makeCookieSnapshot('s1', 'https://b.com'));
+    await cookieStore.save(makeCookieSnapshot('s2', 'https://a.com'));
+
+    const snapshots = await cookieStore.getAllSnapshotsForSession('s1');
+    expect(snapshots).toHaveLength(2);
+    const origins = snapshots.map((s) => s.origin).sort();
+    expect(origins).toEqual(['https://a.com', 'https://b.com']);
+  });
+
+  it('returns empty array for unknown session', async () => {
+    const snapshots = await cookieStore.getAllSnapshotsForSession('nonexistent');
+    expect(snapshots).toEqual([]);
+  });
+});
+
+describe('deleteForOrigin', () => {
+  it('deletes snapshot for a specific session+origin pair', async () => {
+    await cookieStore.save(makeCookieSnapshot('s1', 'https://a.com'));
+    await cookieStore.save(makeCookieSnapshot('s1', 'https://b.com'));
+
+    await cookieStore.deleteForOrigin('s1', 'https://a.com');
+
+    expect(await cookieStore.load('s1', 'https://a.com')).toBeUndefined();
+    expect(await cookieStore.load('s1', 'https://b.com')).toBeDefined();
+  });
+});
