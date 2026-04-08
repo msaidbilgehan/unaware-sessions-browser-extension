@@ -93,7 +93,6 @@
       if (tab?.id) {
         currentTabEntry = await getSessionForTab(tab.id);
 
-        // Auto-detect session if tab-tracker lost the mapping (e.g., extension reload)
         if (!currentTabEntry && tab.url) {
           const origin = extractOrigin(tab.url);
           if (origin) {
@@ -223,11 +222,9 @@
   async function handleUpdateSessionData() {
     refreshing = true;
     try {
-      // If a session is active, save its cookies + storage first
       if (currentTab?.id && currentTabEntry) {
         await saveSessionData(currentTab.id);
       }
-      // Then refresh all popup state
       await loadState();
       showToast('Session data updated', 'success');
     } catch (err) {
@@ -318,7 +315,6 @@
       view = 'new';
     } else if (e.key === '/' && view === 'list') {
       e.preventDefault();
-      // Search bar will auto-focus
       searchQuery = '';
     } else if (e.key === '?' && view === 'list') {
       e.preventDefault();
@@ -326,7 +322,6 @@
     }
   }
 
-  // Load state on mount
   $effect(() => {
     loadState();
   });
@@ -337,25 +332,33 @@
   {#if loading}
     <div class="loading">Loading...</div>
   {:else if view === 'new'}
-    <div in:fly={{ x: 200, duration: 200 }} out:fly={{ x: -200, duration: 150 }}>
+    <div
+      class="popup-content"
+      in:fly={{ x: 200, duration: 200 }}
+      out:fly={{ x: -200, duration: 150 }}
+    >
       <NewSessionForm oncreate={handleCreate} oncancel={() => (view = 'list')} />
     </div>
   {:else}
-    <div in:fly={{ x: -200, duration: 200 }} out:fly={{ x: 200, duration: 150 }}>
+    <div
+      class="popup-content"
+      in:fly={{ x: -200, duration: 200 }}
+      out:fly={{ x: 200, duration: 150 }}
+    >
       <div class="header">
         <div class="header-title">
-          <AppLogo size={24} />
+          <AppLogo size={22} />
           <h1>Unaware Sessions</h1>
         </div>
         <div class="header-actions">
           <ThemeToggle />
           <button
-            class="settings-btn"
+            class="icon-btn"
             onclick={() => chrome.runtime.openOptionsPage()}
             aria-label="Settings"
             title="Settings"
           >
-            <Icon name="settings" size={16} />
+            <Icon name="settings" size={15} />
           </button>
         </div>
       </div>
@@ -437,13 +440,21 @@
 
 <style>
   main {
-    width: 400px;
+    width: 380px;
+    min-height: 200px;
     max-height: 580px;
-    padding: var(--space-6);
     display: flex;
     flex-direction: column;
-    gap: var(--space-6);
+    overflow: hidden;
+  }
+
+  .popup-content {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
+    padding: var(--space-5);
     overflow-y: auto;
+    flex: 1;
   }
 
   .header {
@@ -455,7 +466,7 @@
   .header-title {
     display: flex;
     align-items: center;
-    gap: var(--space-4);
+    gap: var(--space-3);
   }
 
   h1 {
@@ -472,12 +483,12 @@
     gap: var(--space-1);
   }
 
-  .settings-btn {
+  .icon-btn {
     background: none;
     border: none;
     color: var(--color-text-tertiary);
     cursor: pointer;
-    padding: var(--space-2) var(--space-3);
+    padding: var(--space-2);
     border-radius: var(--radius-sm);
     line-height: 1;
     display: flex;
@@ -485,7 +496,7 @@
     transition: all var(--transition-fast);
   }
 
-  .settings-btn:hover {
+  .icon-btn:hover {
     color: var(--color-text-secondary);
     background: var(--color-interactive-hover);
   }
@@ -495,12 +506,11 @@
     align-items: center;
     justify-content: center;
     gap: var(--space-3);
-    padding: var(--space-4) var(--space-6);
-    margin-top: var(--space-2);
+    padding: var(--space-3) var(--space-5);
     background: var(--color-bg-tertiary);
     border: 1px dashed var(--color-border-primary);
     border-radius: var(--radius-md);
-    font-size: var(--text-base);
+    font-size: var(--text-sm);
     font-family: var(--font-sans);
     color: var(--color-text-secondary);
     cursor: pointer;

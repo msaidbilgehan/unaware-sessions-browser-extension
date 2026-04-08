@@ -99,7 +99,7 @@
         aria-label="Update session data"
         title="Update session data"
       >
-        <Icon name="download" size={14} />
+        <Icon name="refresh" size={14} />
       </button>
     </div>
   {/if}
@@ -107,11 +107,10 @@
 
 <style>
   .panel {
-    padding: var(--space-5);
+    padding: var(--space-4) var(--space-5);
     background: var(--color-bg-secondary);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-md);
     border: 1px solid var(--color-border-secondary);
-    box-shadow: var(--shadow-sm);
     transition: all var(--transition-fast);
   }
 
@@ -123,7 +122,7 @@
     display: flex;
     align-items: center;
     gap: var(--space-3);
-    margin-bottom: var(--space-4);
+    margin-bottom: var(--space-3);
   }
 
   .favicon {

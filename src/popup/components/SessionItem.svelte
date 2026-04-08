@@ -153,9 +153,9 @@
   .session-item {
     display: flex;
     align-items: center;
-    gap: var(--space-4);
-    padding: var(--space-5) var(--space-6);
-    border-radius: var(--radius-lg);
+    gap: var(--space-3);
+    padding: var(--space-4) var(--space-5);
+    border-radius: var(--radius-md);
     cursor: pointer;
     transition: all var(--transition-fast);
     position: relative;
