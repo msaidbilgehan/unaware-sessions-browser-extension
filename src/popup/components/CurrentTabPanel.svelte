@@ -22,7 +22,11 @@
     onunassign,
   }: Props = $props();
 
-  const faviconUrl = $derived(currentOrigin ? `chrome://favicon/size/16@2x/${currentOrigin}` : '');
+  const faviconUrl = $derived(
+    currentOrigin
+      ? `chrome-extension://${chrome.runtime.id}/_favicon/?pageUrl=${encodeURIComponent(currentOrigin)}&size=32`
+      : '',
+  );
   let faviconFailed = $state(false);
 
   $effect(() => {
