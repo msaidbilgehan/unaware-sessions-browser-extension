@@ -260,12 +260,14 @@ export async function switchSession(tabId: number, targetSessionId: string): Pro
   const origin = new URL(tab.url).origin;
   const currentEntry = getTabEntry(tabId);
 
-  // 1. Save current session's ALL cookies and tab storage
+  // 1. Save current session's ALL cookies
   //    Saves all browser cookies (not just this origin) to capture cross-domain
   //    auth flows like OAuth, SSO, and multi-subdomain authentication.
   if (currentEntry) {
     await saveAllCookiesForSession(currentEntry.sessionId, origin);
-    await saveTabStorage(tabId, currentEntry.sessionId, origin);
+    // Note: DOM storage (localStorage/sessionStorage) is NOT saved here because
+    // the tab is about to navigate — the content script may not respond in time.
+    // Users should use "Update Session Data" to save DOM storage before switching.
   }
 
   // 2. Clear ALL cookies (not just this origin) for clean isolation
