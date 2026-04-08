@@ -7,6 +7,7 @@
     sessions: SessionProfile[];
     activeSessionId: string | undefined;
     tabCounts: Record<string, number>;
+    sessionsWithOriginData: Set<string>;
     searchQuery: string;
     onswitch: (sessionId: string) => void;
     ondelete: (sessionId: string) => void;
@@ -20,6 +21,7 @@
     sessions,
     activeSessionId,
     tabCounts,
+    sessionsWithOriginData,
     searchQuery,
     onswitch,
     ondelete,
@@ -88,6 +90,7 @@
         <SessionItem
           {session}
           isActive={session.id === activeSessionId}
+          hasOriginData={sessionsWithOriginData.has(session.id)}
           tabCount={tabCounts[session.id] ?? 0}
           {onswitch}
           {ondelete}

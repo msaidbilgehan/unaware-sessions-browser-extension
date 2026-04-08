@@ -85,6 +85,14 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
     return { success: true, data: tabs };
   },
 
+  [MessageType.GET_SESSIONS_FOR_ORIGIN]: async (msg) => {
+    if (msg.type !== MessageType.GET_SESSIONS_FOR_ORIGIN) return { success: false };
+    const cookieSessionIds = await cookieStore.getSessionIdsForOrigin(msg.origin);
+    const storageSessionIds = await storageStore.getSessionIdsForOrigin(msg.origin);
+    const merged = [...new Set([...cookieSessionIds, ...storageSessionIds])];
+    return { success: true, data: merged };
+  },
+
   [MessageType.GET_ALL_TAB_COUNTS]: async () => {
     const entries = getAllTabEntries();
     const counts: Record<string, number> = {};

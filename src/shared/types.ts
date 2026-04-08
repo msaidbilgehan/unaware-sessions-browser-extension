@@ -101,6 +101,7 @@ export enum MessageType {
   GET_TABS_FOR_SESSION = 'GET_TABS_FOR_SESSION',
   GET_ALL_TAB_COUNTS = 'GET_ALL_TAB_COUNTS',
   GET_SESSION_STATS = 'GET_SESSION_STATS',
+  GET_SESSIONS_FOR_ORIGIN = 'GET_SESSIONS_FOR_ORIGIN',
 
   // Session operations
   DUPLICATE_SESSION = 'DUPLICATE_SESSION',
@@ -205,6 +206,11 @@ export interface ReorderSessionsMessage {
   orderedIds: string[];
 }
 
+export interface GetSessionsForOriginMessage {
+  type: MessageType.GET_SESSIONS_FOR_ORIGIN;
+  origin: string;
+}
+
 export type Message =
   | CreateSessionMessage
   | DeleteSessionMessage
@@ -222,7 +228,8 @@ export type Message =
   | GetAllTabCountsMessage
   | GetSessionStatsMessage
   | DuplicateSessionMessage
-  | ReorderSessionsMessage;
+  | ReorderSessionsMessage
+  | GetSessionsForOriginMessage;
 
 // ── Response Wrapper ─────────────────────────────────────────────
 

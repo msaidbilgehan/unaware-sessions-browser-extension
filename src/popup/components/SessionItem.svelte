@@ -7,6 +7,7 @@
   interface Props {
     session: SessionProfile;
     isActive: boolean;
+    hasOriginData?: boolean;
     tabCount?: number;
     onswitch: (sessionId: string) => void;
     ondelete: (sessionId: string) => void;
@@ -22,6 +23,7 @@
   let {
     session,
     isActive,
+    hasOriginData = false,
     tabCount = 0,
     onswitch,
     ondelete,
@@ -107,6 +109,12 @@
   {:else}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <span class="name" ondblclick={handleDoubleClick}>{session.name}</span>
+  {/if}
+
+  {#if hasOriginData && !isActive}
+    <span class="origin-badge" title="Has saved data for this site">
+      <Icon name="globe" size={10} />
+    </span>
   {/if}
 
   {#if session.pinned}
@@ -198,6 +206,12 @@
 
   .name-edit {
     flex: 1;
+  }
+
+  .origin-badge {
+    color: var(--color-accent);
+    flex-shrink: 0;
+    opacity: 0.7;
   }
 
   .pin-badge {

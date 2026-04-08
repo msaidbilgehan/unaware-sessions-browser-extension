@@ -14,6 +14,7 @@
     updateSession,
     reorderSessions,
     duplicateSession as duplicateSessionApi,
+    getSessionsForOrigin,
   } from '@shared/api';
   import { fly } from 'svelte/transition';
   import Icon from '@shared/components/Icon.svelte';
@@ -32,6 +33,7 @@
   // Primary data
   let sessions = $state<SessionProfile[]>([]);
   let tabCounts = $state<Record<string, number>>({});
+  let sessionsWithOriginData = $state<Set<string>>(new Set());
   let currentTab = $state<chrome.tabs.Tab | undefined>(undefined);
   let currentTabEntry = $state<TabSessionEntry | undefined>(undefined);
 
@@ -88,6 +90,13 @@
       tabCounts = counts;
       if (tab?.id) {
         currentTabEntry = await getSessionForTab(tab.id);
+      }
+      const origin = tab?.url ? extractOrigin(tab.url) : '';
+      if (origin) {
+        const ids = await getSessionsForOrigin(origin);
+        sessionsWithOriginData = new Set(ids);
+      } else {
+        sessionsWithOriginData = new Set();
       }
     } catch (err) {
       console.error('[Unaware Sessions] Failed to load state:', err);
@@ -336,6 +345,7 @@
         {sessions}
         activeSessionId={currentTabEntry?.sessionId}
         {tabCounts}
+        {sessionsWithOriginData}
         {searchQuery}
         onswitch={handleSwitch}
         ondelete={handleDeleteRequest}

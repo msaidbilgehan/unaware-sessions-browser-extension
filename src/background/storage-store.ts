@@ -104,6 +104,35 @@ class StorageStore {
     });
   }
 
+  async getSessionIdsForOrigin(origin: string): Promise<string[]> {
+    const db = await this.open();
+    const suffix = `:${origin}`;
+
+    return new Promise((resolve, reject) => {
+      const sessionIds: string[] = [];
+      const tx = db.transaction(STORAGE_STORE_NAME, 'readonly');
+      const cursorRequest = tx.objectStore(STORAGE_STORE_NAME).openKeyCursor();
+
+      cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result;
+        if (cursor) {
+          const key = cursor.key as string;
+          if (key.endsWith(suffix)) {
+            const sessionId = key.slice(0, -suffix.length);
+            if (!sessionIds.includes(sessionId)) {
+              sessionIds.push(sessionId);
+            }
+          }
+          cursor.continue();
+        }
+      };
+
+      tx.oncomplete = () => resolve(sessionIds);
+      tx.onerror = () =>
+        reject(new Error(`Failed to get sessions for origin: ${tx.error?.message}`));
+    });
+  }
+
   async deleteForSession(sessionId: string): Promise<void> {
     const db = await this.open();
 

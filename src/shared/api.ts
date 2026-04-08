@@ -83,3 +83,7 @@ export function duplicateSession(sessionId: string): Promise<SessionProfile> {
 export function reorderSessions(orderedIds: string[]): Promise<void> {
   return sendMessage({ type: MessageType.REORDER_SESSIONS, orderedIds });
 }
+
+export function getSessionsForOrigin(origin: string): Promise<string[]> {
+  return sendMessage({ type: MessageType.GET_SESSIONS_FOR_ORIGIN, origin });
+}
