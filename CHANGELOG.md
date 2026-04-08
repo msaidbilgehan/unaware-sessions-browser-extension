@@ -10,6 +10,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Auto-refresh toggle in popup:** Button next to refresh to enable/disable periodic session data refresh
+- **Auto-refresh settings:** Configurable interval (5s/10s/30s/60s) and per-domain toggle in options page
+- **Settings store:** New `settings-store.ts` module for extension settings persistence with listener pattern
+- **GitHub icon in popup header:** Opens repository page in new tab
+- **OpenCollective icon in popup header:** Heart icon linking to donate page
+- **GitHub link in About tab:** Repository link with external-link icon
+- **OpenCollective section in About tab:** Donate and Sponsors/Backers links
+- **New icons:** `github`, `heart`, `external-link` added to Icon.svelte
+- **Release scripts:** `npm run release`, `release:minor`, `release:major` for semver versioning
+- **Auto-refresh button title in SessionsTab:** Visible "Auto-refresh" text label on per-domain toggle
+- **New tests:** 144 new unit tests across 8 new/expanded test files (263 total, 90% statement coverage)
+  - `tests/shared/api.test.ts` — 32 tests covering all API message wrappers
+  - `tests/shared/settings-store.test.ts` — 25 tests covering settings persistence and listeners
+  - `tests/content/idb-swap.test.ts` — 15 tests covering IndexedDB snapshot/restore round-trip
+  - `tests/content/index.test.ts` — 12 tests covering content script message handlers
+  - `tests/background/service-worker.test.ts` — 6 tests covering initialization and event handlers
+  - Expanded: cookie-engine (+14), messaging (+15), tab-tracker (+7), cookie-store (+5), storage-store (+5), badge-manager (+3), session-manager (+5)
+
+### Changed
+
+- **Session switch now saves all cookies** (not just origin-scoped) before switching, preserving cross-domain auth cookies
+- **Session switch now saves tab storage** (localStorage/sessionStorage) before navigating
+- **`initSettings()` awaited before mount** in popup and options entry points, preventing race condition with stale defaults
+- **`initSettings()` notifies listeners** after loading from storage, ensuring late-subscribing components receive initial state
+- **SessionsTab `loadAllDetails` uses version guard** to prevent stale data from concurrent calls
+
+### Fixed
+
+- **DOM storage never restored after session switch:** `pendingRestores` map was never populated — session switch now queues a pending restore before navigation, and `handleContentScriptReady` triggers the restore when the content script loads
+- **Cross-domain auth cookies lost on switch:** `switchSession` was calling `saveCookies()` (origin-only) which overwrote the full snapshot saved by `saveAllCookiesForSession()` — now uses `saveAllCookiesForSession` to preserve cross-domain cookies
+- **Empty session names via `updateSession`:** `updateSession` now validates and trims the `name` field, rejecting empty/whitespace-only names (same validation as `createSession`)
+
+#### Prior Unreleased Items
+
 - **Design system:** CSS custom properties with light/dark theme tokens (`src/shared/theme.css`)
 - **Dark mode:** System preference detection + manual toggle (light/dark/system) with `chrome.storage` persistence
 - **SVG icon library:** Inline Lucide icons replacing all Unicode symbols (`src/shared/components/Icon.svelte`)
@@ -50,7 +84,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **New message types:** `GET_SESSIONS_FOR_ORIGIN`, `SAVE_SESSION_DATA`, `DETECT_SESSION`, `CLEAR_ORIGIN_DATA`
 - **`favicon` permission:** Required for MV3 `_favicon` API to display site icons
 
-### Changed
+#### Prior Changed
 
 - Session switch uses `chrome.tabs.update({url})` for fresh navigation instead of `chrome.tabs.reload()`
 - Cookie restore runs in parallel via `Promise.allSettled` instead of sequential `await` per cookie
@@ -58,7 +92,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Cross-domain auth cookies (e.g., `anthropic.com` for `claude.ai`) are set without clearing
 - Removed session selector dropdown from CurrentTabPanel — sessions are switched via the list cards
 - CurrentTabPanel now shows only: favicon, origin URL, and refresh button
-
 - Popup width from 320px to 380px
 - Session items now use card-based glassmorphism design with left color border accent
 - CurrentTabPanel now shows favicon, prominent domain, and session color accent
@@ -73,7 +106,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - All hardcoded CSS colors replaced with CSS custom property tokens
 - `confirm()` calls replaced with custom `ConfirmDialog` component (fixes Chrome extension popup compatibility)
 
-### Fixed
+#### Prior Fixed
 
 - Chrome mock missing `updateSessionRules`/`getSessionRules` — 7 pre-existing test failures resolved
 - Test assertions referencing `updateDynamicRules` updated to match actual `updateSessionRules` API

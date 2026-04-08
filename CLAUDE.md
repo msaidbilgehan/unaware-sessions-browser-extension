@@ -48,6 +48,9 @@ npm run lint         # ESLint check
 npm run lint:fix     # ESLint auto-fix
 npm run format       # Prettier format
 npm run format:check # Prettier dry-run
+npm run release      # Patch version bump + push tags
+npm run release:minor # Minor version bump + push tags
+npm run release:major # Major version bump + push tags
 ```
 
 ## Conventions
@@ -71,7 +74,7 @@ npm run format:check # Prettier dry-run
 ### Background (`src/background/`)
 
 - `session-manager.ts` — session CRUD, ordering, duplicate
-- `cookie-engine.ts` — cookie swap orchestration (save, clear, restore, switch)
+- `cookie-engine.ts` — cookie swap orchestration (save, clear, restore, switch) with DOM storage save/restore and pending restores
 - `cookie-store.ts` — IndexedDB wrapper for cookie snapshots + stats
 - `storage-store.ts` — IndexedDB wrapper for storage snapshots + stats
 - `tab-tracker.ts` — tab-to-session mapping with persistence
@@ -86,18 +89,19 @@ npm run format:check # Prettier dry-run
 - `api.ts` — typed message wrappers for popup/options (createSession, switchSession, getSessionStats, etc.)
 - `theme.css` — CSS custom properties design system (light/dark tokens, spacing, radii, shadows)
 - `theme-store.ts` — theme preference manager (light/dark/system with chrome.storage persistence)
-- `constants.ts` — extension-wide constants (storage keys, colors, emojis)
+- `settings-store.ts` — extension settings manager (auto-refresh interval, domain preferences, listener pattern)
+- `constants.ts` — extension-wide constants (storage keys, colors, emojis, GitHub/OpenCollective URLs)
 - `components/` — shared Svelte components (Icon, ThemeToggle, ConfirmDialog, Toast, InlineEdit, ColorPicker, EmojiPicker, AppLogo)
 
 ### Popup (`src/popup/`)
 
-- `App.svelte` — main popup (380px): header with logo + theme toggle, origin panel, grouped session list, keyboard shortcuts
-- `components/` — SessionList (domain-grouped with "Default" option), SessionItem, CurrentTabPanel (origin + refresh), NewSessionForm, SearchBar, ContextMenu, SessionDetail, KeyboardOverlay, OnboardingEmpty
+- `App.svelte` — main popup (380px): header with logo + theme toggle + GitHub/OpenCollective links, origin panel with auto-refresh toggle, grouped session list, keyboard shortcuts
+- `components/` — SessionList (domain-grouped with "Default" option), SessionItem, CurrentTabPanel (origin + refresh + auto-refresh toggle), NewSessionForm, SearchBar, ContextMenu, SessionDetail, KeyboardOverlay, OnboardingEmpty
 
 ### Options (`src/options/`)
 
 - `App.svelte` — tabbed layout (Sessions, Settings, Import/Export, About)
-- `components/` — TabBar, SessionsTab, SettingsTab, ImportExportTab, AboutTab, StorageDashboard, DragDropZone, ImportDiff
+- `components/` — TabBar, SessionsTab (domain folders, inline cookie/storage editing, per-domain auto-refresh), SettingsTab (theme + data refresh), ImportExportTab, AboutTab (GitHub, OpenCollective, data management), StorageDashboard, DragDropZone, ImportDiff
 
 ## Key Documentation
 

@@ -236,7 +236,7 @@ src/
   background/
     service-worker.ts        # SW entry point, lifecycle, hydration
     session-manager.ts       # Session CRUD, ordering, duplicate
-    cookie-engine.ts         # Cookie swap + session switch orchestration
+    cookie-engine.ts         # Cookie swap + session switch + DOM storage orchestration
     cookie-store.ts          # IndexedDB wrapper for cookie snapshots + stats
     storage-store.ts         # IndexedDB wrapper for storage snapshots + stats
     dnr-manager.ts           # declarativeNetRequest session rules
@@ -270,9 +270,9 @@ src/
     components/
       TabBar.svelte          # Tab navigation
       SessionsTab.svelte     # Session management with inline edit
-      SettingsTab.svelte     # Theme toggle (light/dark/system)
+      SettingsTab.svelte     # Theme + auto-refresh settings
       ImportExportTab.svelte # Import with drag-drop + visual diff
-      AboutTab.svelte        # Version, data management, about
+      AboutTab.svelte        # Version, data management, GitHub, OpenCollective
       StorageDashboard.svelte # Per-session storage usage bars
       DragDropZone.svelte    # Drag-and-drop file import zone
       ImportDiff.svelte      # Visual diff preview before import
@@ -280,6 +280,7 @@ src/
     types.ts                 # All TypeScript interfaces + message types
     api.ts                   # Typed messaging API (popup + options)
     constants.ts             # Extension-wide constants
+    settings-store.ts        # Extension settings manager (auto-refresh, domain prefs)
     storage.ts               # chrome.storage typed helpers
     utils.ts                 # Pure utility functions
     theme.css                # CSS custom properties design system
@@ -325,6 +326,9 @@ tests/
 | `npm run lint:fix` | ESLint auto-fix |
 | `npm run format` | Prettier auto-format |
 | `npm run format:check` | Prettier dry-run check |
+| `npm run release` | Patch version bump + push tags |
+| `npm run release:minor` | Minor version bump + push tags |
+| `npm run release:major` | Major version bump + push tags |
 
 ### Chrome Permissions
 
@@ -355,7 +359,7 @@ npm run test:watch
 npm run test:coverage
 ```
 
-Tests use **Vitest** with Chrome API mocks (defined in `tests/setup.ts`) and `fake-indexeddb` for IndexedDB testing. Coverage is tracked via v8. The test suite covers background services, shared utilities, content scripts, and theme management (119 tests, 68% statement coverage).
+Tests use **Vitest** with Chrome API mocks (defined in `tests/setup.ts`) and `fake-indexeddb` for IndexedDB testing. Coverage is tracked via v8. The test suite covers background services, shared utilities, content scripts, settings, and API layer (263 tests across 18 test files, 90% statement coverage).
 
 ---
 
@@ -400,29 +404,29 @@ npm run test         # All tests pass
 
 If you find Unaware Sessions useful, consider supporting its development:
 
-[![Open Collective](https://img.shields.io/badge/Open%20Collective-Donate-blue?logo=opencollective)](https://opencollective.com/unaware-sessions-browser-extension)
+[![Open Collective](https://img.shields.io/badge/Open%20Collective-Donate-blue?logo=opencollective)](https://opencollective.com/unaware-sessions-browser-ext)
 
 ### Donate
 
-<a href="https://opencollective.com/unaware-sessions-browser-extension/donate" target="_blank">
-  <img src="https://opencollective.com/unaware-sessions-browser-extension/donate/button@2x.png?color=blue" width="300" alt="Donate to Unaware Sessions on Open Collective" />
+<a href="https://opencollective.com/unaware-sessions-browser-ext/donate" target="_blank">
+  <img src="https://opencollective.com/unaware-sessions-browser-ext/donate/button@2x.png?color=blue" width="300" alt="Donate to Unaware Sessions on Open Collective" />
 </a>
 
 ### Sponsors
 
 Support this project by becoming a sponsor. Your logo will show up here with a link to your website.
 
-<a href="https://opencollective.com/unaware-sessions-browser-extension#sponsor"><img src="https://opencollective.com/unaware-sessions-browser-extension/sponsors.svg?width=890" alt="Sponsors on Open Collective" /></a>
+<a href="https://opencollective.com/unaware-sessions-browser-ext#sponsor"><img src="https://opencollective.com/unaware-sessions-browser-ext/sponsors.svg?width=890" alt="Sponsors on Open Collective" /></a>
 
 ### Backers
 
 Thank you to all our backers!
 
-<a href="https://opencollective.com/unaware-sessions-browser-extension#backer"><img src="https://opencollective.com/unaware-sessions-browser-extension/backers.svg?width=890" alt="Backers on Open Collective" /></a>
+<a href="https://opencollective.com/unaware-sessions-browser-ext#backer"><img src="https://opencollective.com/unaware-sessions-browser-ext/backers.svg?width=890" alt="Backers on Open Collective" /></a>
 
 ### Contributors
 
-<a href="https://opencollective.com/unaware-sessions-browser-extension#contributors"><img src="https://opencollective.com/unaware-sessions-browser-extension/contributors.svg?width=890" alt="Contributors on Open Collective" /></a>
+<a href="https://opencollective.com/unaware-sessions-browser-ext#contributors"><img src="https://opencollective.com/unaware-sessions-browser-ext/contributors.svg?width=890" alt="Contributors on Open Collective" /></a>
 
 ---
 
