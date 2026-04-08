@@ -99,3 +99,13 @@ export function detectSession(origin: string): Promise<string | null> {
 export function clearOriginData(tabId: number): Promise<void> {
   return sendMessage({ type: MessageType.CLEAR_ORIGIN_DATA, tabId });
 }
+
+export function getSessionDetails(
+  sessionId: string,
+): Promise<import('@shared/types').SessionDetails> {
+  return sendMessage({ type: MessageType.GET_SESSION_DETAILS, sessionId });
+}
+
+export function deleteSessionOriginData(sessionId: string, origin: string): Promise<void> {
+  return sendMessage({ type: MessageType.DELETE_SESSION_ORIGIN_DATA, sessionId, origin });
+}

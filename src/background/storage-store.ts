@@ -133,6 +133,43 @@ class StorageStore {
     });
   }
 
+  async getAllSnapshotsForSession(sessionId: string): Promise<StorageSnapshot[]> {
+    const db = await this.open();
+    const prefix = `${sessionId}:`;
+
+    return new Promise((resolve, reject) => {
+      const snapshots: StorageSnapshot[] = [];
+      const tx = db.transaction(STORAGE_STORE_NAME, 'readonly');
+      const cursorRequest = tx.objectStore(STORAGE_STORE_NAME).openCursor();
+
+      cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result;
+        if (cursor) {
+          const key = cursor.key as string;
+          if (key.startsWith(prefix)) {
+            snapshots.push(cursor.value as StorageSnapshot);
+          }
+          cursor.continue();
+        }
+      };
+
+      tx.oncomplete = () => resolve(snapshots);
+      tx.onerror = () => reject(new Error(`Failed to get snapshots: ${tx.error?.message}`));
+    });
+  }
+
+  async deleteForOrigin(sessionId: string, origin: string): Promise<void> {
+    const db = await this.open();
+    const key = `${sessionId}:${origin}`;
+
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORAGE_STORE_NAME, 'readwrite');
+      tx.objectStore(STORAGE_STORE_NAME).delete(key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(new Error(`Failed to delete origin data: ${tx.error?.message}`));
+    });
+  }
+
   async deleteForSession(sessionId: string): Promise<void> {
     const db = await this.open();
 

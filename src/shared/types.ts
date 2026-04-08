@@ -21,6 +21,32 @@ export interface SessionStats {
   idbDatabases: number;
 }
 
+export interface SessionOriginDetail {
+  origin: string;
+  cookieCount: number;
+  cookieBytes: number;
+  storageEntries: number;
+  storageBytes: number;
+  idbDatabases: number;
+  cookieTimestamp: number | null;
+  storageTimestamp: number | null;
+  cookies: Array<{
+    name: string;
+    domain: string;
+    path: string;
+    secure: boolean;
+    httpOnly: boolean;
+    expirationDate?: number;
+  }>;
+}
+
+export interface SessionDetails {
+  sessionId: string;
+  origins: SessionOriginDetail[];
+  totalCookies: number;
+  totalStorageBytes: number;
+}
+
 export interface SessionSettings {
   userAgent?: string;
   headers?: Record<string, string>;
@@ -107,6 +133,10 @@ export enum MessageType {
   SAVE_SESSION_DATA = 'SAVE_SESSION_DATA',
   DETECT_SESSION = 'DETECT_SESSION',
   CLEAR_ORIGIN_DATA = 'CLEAR_ORIGIN_DATA',
+
+  // Session data management (options page)
+  GET_SESSION_DETAILS = 'GET_SESSION_DETAILS',
+  DELETE_SESSION_ORIGIN_DATA = 'DELETE_SESSION_ORIGIN_DATA',
 
   // Session operations
   DUPLICATE_SESSION = 'DUPLICATE_SESSION',
@@ -231,6 +261,17 @@ export interface ClearOriginDataMessage {
   tabId: number;
 }
 
+export interface GetSessionDetailsMessage {
+  type: MessageType.GET_SESSION_DETAILS;
+  sessionId: string;
+}
+
+export interface DeleteSessionOriginDataMessage {
+  type: MessageType.DELETE_SESSION_ORIGIN_DATA;
+  sessionId: string;
+  origin: string;
+}
+
 export type Message =
   | CreateSessionMessage
   | DeleteSessionMessage
@@ -252,7 +293,9 @@ export type Message =
   | GetSessionsForOriginMessage
   | SaveSessionDataMessage
   | DetectSessionMessage
-  | ClearOriginDataMessage;
+  | ClearOriginDataMessage
+  | GetSessionDetailsMessage
+  | DeleteSessionOriginDataMessage;
 
 // ── Response Wrapper ─────────────────────────────────────────────
 

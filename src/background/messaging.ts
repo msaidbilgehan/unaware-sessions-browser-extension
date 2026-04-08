@@ -183,6 +183,81 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
     return { success: true };
   },
 
+  [MessageType.GET_SESSION_DETAILS]: async (msg) => {
+    if (msg.type !== MessageType.GET_SESSION_DETAILS) return { success: false };
+    const cookieSnapshots = await cookieStore.getAllSnapshotsForSession(msg.sessionId);
+    const storageSnapshots = await storageStore.getAllSnapshotsForSession(msg.sessionId);
+
+    const originMap = new Map<
+      string,
+      {
+        cookieSnap: (typeof cookieSnapshots)[0] | null;
+        storageSnap: (typeof storageSnapshots)[0] | null;
+      }
+    >();
+
+    for (const snap of cookieSnapshots) {
+      const existing = originMap.get(snap.origin);
+      originMap.set(snap.origin, { cookieSnap: snap, storageSnap: existing?.storageSnap ?? null });
+    }
+    for (const snap of storageSnapshots) {
+      const existing = originMap.get(snap.origin);
+      originMap.set(snap.origin, { cookieSnap: existing?.cookieSnap ?? null, storageSnap: snap });
+    }
+
+    let totalCookies = 0;
+    let totalStorageBytes = 0;
+    const origins = [];
+
+    for (const [origin, { cookieSnap, storageSnap }] of originMap) {
+      const cookieCount = cookieSnap?.cookies.length ?? 0;
+      const cookieBytes = cookieSnap ? JSON.stringify(cookieSnap.cookies).length : 0;
+      const storageEntries = storageSnap
+        ? Object.keys(storageSnap.localStorage).length +
+          Object.keys(storageSnap.sessionStorage).length
+        : 0;
+      const storageBytes = storageSnap
+        ? JSON.stringify(storageSnap.localStorage).length +
+          JSON.stringify(storageSnap.sessionStorage).length
+        : 0;
+      const idbDatabases = storageSnap?.indexedDB?.length ?? 0;
+
+      totalCookies += cookieCount;
+      totalStorageBytes += cookieBytes + storageBytes;
+
+      origins.push({
+        origin,
+        cookieCount,
+        cookieBytes,
+        storageEntries,
+        storageBytes,
+        idbDatabases,
+        cookieTimestamp: cookieSnap?.timestamp ?? null,
+        storageTimestamp: storageSnap?.timestamp ?? null,
+        cookies: (cookieSnap?.cookies ?? []).map((c) => ({
+          name: c.name,
+          domain: c.domain,
+          path: c.path,
+          secure: c.secure,
+          httpOnly: c.httpOnly,
+          expirationDate: c.expirationDate,
+        })),
+      });
+    }
+
+    return {
+      success: true,
+      data: { sessionId: msg.sessionId, origins, totalCookies, totalStorageBytes },
+    };
+  },
+
+  [MessageType.DELETE_SESSION_ORIGIN_DATA]: async (msg) => {
+    if (msg.type !== MessageType.DELETE_SESSION_ORIGIN_DATA) return { success: false };
+    await cookieStore.deleteForOrigin(msg.sessionId, msg.origin);
+    await storageStore.deleteForOrigin(msg.sessionId, msg.origin);
+    return { success: true };
+  },
+
   [MessageType.PING]: async () => {
     return { success: true, data: { status: 'alive' } };
   },

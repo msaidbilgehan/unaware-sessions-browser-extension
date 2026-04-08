@@ -152,6 +152,43 @@ class CookieStore {
     });
   }
 
+  async getAllSnapshotsForSession(sessionId: string): Promise<CookieSnapshot[]> {
+    const db = await this.open();
+    const prefix = `${sessionId}:`;
+
+    return new Promise((resolve, reject) => {
+      const snapshots: CookieSnapshot[] = [];
+      const tx = db.transaction(COOKIE_STORE_NAME, 'readonly');
+      const cursorRequest = tx.objectStore(COOKIE_STORE_NAME).openCursor();
+
+      cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result;
+        if (cursor) {
+          const key = cursor.key as string;
+          if (key.startsWith(prefix)) {
+            snapshots.push(cursor.value as CookieSnapshot);
+          }
+          cursor.continue();
+        }
+      };
+
+      tx.oncomplete = () => resolve(snapshots);
+      tx.onerror = () => reject(new Error(`Failed to get snapshots: ${tx.error?.message}`));
+    });
+  }
+
+  async deleteForOrigin(sessionId: string, origin: string): Promise<void> {
+    const db = await this.open();
+    const key = `${sessionId}:${origin}`;
+
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(COOKIE_STORE_NAME, 'readwrite');
+      tx.objectStore(COOKIE_STORE_NAME).delete(key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(new Error(`Failed to delete origin data: ${tx.error?.message}`));
+    });
+  }
+
   async deleteAll(): Promise<void> {
     const db = await this.open();
 
