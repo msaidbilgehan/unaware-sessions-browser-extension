@@ -236,21 +236,6 @@ export async function saveAllCookiesForSession(sessionId: string, origin: string
   await cookieStore.save(snapshot);
 }
 
-/**
- * Clear ALL cookies in the browser (not just one domain).
- * Necessary for clean session switching across multi-domain auth flows.
- */
-async function clearAllCookies(): Promise<void> {
-  const allCookies = await chrome.cookies.getAll({});
-
-  await Promise.all(
-    allCookies.map((cookie) => {
-      const url = buildCookieUrl(cookie);
-      return chrome.cookies.remove({ url, name: cookie.name });
-    }),
-  );
-}
-
 export async function switchSession(tabId: number, targetSessionId: string): Promise<void> {
   const tab = await chrome.tabs.get(tabId);
   if (!tab.url) {
@@ -260,33 +245,56 @@ export async function switchSession(tabId: number, targetSessionId: string): Pro
   const origin = new URL(tab.url).origin;
   const currentEntry = getTabEntry(tabId);
 
-  // 1. Save current session's ALL cookies
-  //    Saves all browser cookies (not just this origin) to capture cross-domain
-  //    auth flows like OAuth, SSO, and multi-subdomain authentication.
+  // 1. Save current session's cookies for this origin
   if (currentEntry) {
     await saveAllCookiesForSession(currentEntry.sessionId, origin);
-    // Note: DOM storage (localStorage/sessionStorage) is NOT saved here because
-    // the tab is about to navigate — the content script may not respond in time.
-    // Users should use "Update Session Data" to save DOM storage before switching.
   }
 
-  // 2. Clear ALL cookies (not just this origin) for clean isolation
-  await clearAllCookies();
+  // 2. Load target session's cookie snapshot
+  const targetSnapshot = await cookieStore.load(targetSessionId, origin);
 
-  // 3. Restore target session's cookies (includes all domains)
-  await restoreCookies(targetSessionId, origin);
+  // 3. Clear only the current origin's cookies (not ALL browser cookies).
+  //    Clearing all cookies breaks active connections on other tabs.
+  await clearCookies(origin);
 
-  // 4. Update tab-session mapping
+  // 4. Restore target session's cookies — overwrites with new values
+  if (targetSnapshot) {
+    await Promise.allSettled(
+      targetSnapshot.cookies.map((cookie) => {
+        const url = buildCookieUrl(cookie);
+        const isHostCookie = cookie.name.startsWith('__Host-');
+        const isSecureCookie = cookie.name.startsWith('__Secure-');
+
+        let secure = cookie.secure;
+        if (cookie.sameSite === 'no_restriction' || isHostCookie || isSecureCookie) {
+          secure = true;
+        }
+
+        return chrome.cookies.set({
+          url,
+          name: cookie.name,
+          value: cookie.value,
+          ...(isHostCookie ? {} : { domain: cookie.domain }),
+          path: isHostCookie ? '/' : cookie.path,
+          secure,
+          httpOnly: cookie.httpOnly,
+          sameSite: cookie.sameSite,
+          ...(cookie.expirationDate ? { expirationDate: cookie.expirationDate } : {}),
+        });
+      }),
+    );
+  }
+
+  // 5. Update tab-session mapping
   await assignTab(tabId, targetSessionId, origin);
 
-  // 5. Update DNR rules
+  // 6. Update DNR rules
   await updateRulesForTab(tabId, targetSessionId, origin);
 
-  // 6. Queue storage restore for when content script is ready after reload
+  // 7. Queue storage restore for when content script is ready after reload
   pendingRestores.set(tabId, { sessionId: targetSessionId, origin });
 
-  // 7. Navigate tab to same URL — fresh navigation ensures all cookies
-  //    are committed before the request fires. Using update({url}) instead
-  //    of reload() avoids stale cached state from the previous session.
+  // 8. Navigate tab to same URL — fresh navigation ensures all cookies
+  //    are committed before the request fires.
   await chrome.tabs.update(tabId, { url: tab.url });
 }
