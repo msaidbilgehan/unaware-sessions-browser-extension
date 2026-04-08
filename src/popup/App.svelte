@@ -15,6 +15,7 @@
     reorderSessions,
     duplicateSession as duplicateSessionApi,
     getSessionsForOrigin,
+    saveSessionData,
   } from '@shared/api';
   import { fly } from 'svelte/transition';
   import Icon from '@shared/components/Icon.svelte';
@@ -204,6 +205,25 @@
     }
   }
 
+  let refreshing = $state(false);
+
+  async function handleUpdateSessionData() {
+    refreshing = true;
+    try {
+      // If a session is active, save its cookies + storage first
+      if (currentTab?.id && currentTabEntry) {
+        await saveSessionData(currentTab.id);
+      }
+      // Then refresh all popup state
+      await loadState();
+      showToast('Session data updated', 'success');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to update', 'error');
+    } finally {
+      refreshing = false;
+    }
+  }
+
   async function handleReorder(orderedIds: string[]) {
     try {
       await reorderSessions(orderedIds);
@@ -337,6 +357,11 @@
         onunassign={handleUnassign}
       />
 
+      <button class="save-data-btn" onclick={handleUpdateSessionData} disabled={refreshing}>
+        <Icon name="download" size={14} />
+        {refreshing ? 'Updating...' : 'Update Session Data'}
+      </button>
+
       {#if sessions.length > 5}
         <SearchBar query={searchQuery} onchange={(q) => (searchQuery = q)} />
       {/if}
@@ -453,6 +478,33 @@
   .settings-btn:hover {
     color: var(--color-text-secondary);
     background: var(--color-interactive-hover);
+  }
+
+  .save-data-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-5);
+    background: var(--color-accent-soft);
+    border: 1px solid var(--color-accent);
+    border-radius: var(--radius-md);
+    font-size: var(--text-sm);
+    font-family: var(--font-sans);
+    color: var(--color-accent);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    flex-shrink: 0;
+  }
+
+  .save-data-btn:hover:not(:disabled) {
+    background: var(--color-accent);
+    color: var(--color-text-inverse);
+  }
+
+  .save-data-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .new-btn {

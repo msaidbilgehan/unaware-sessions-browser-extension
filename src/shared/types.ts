@@ -103,6 +103,9 @@ export enum MessageType {
   GET_SESSION_STATS = 'GET_SESSION_STATS',
   GET_SESSIONS_FOR_ORIGIN = 'GET_SESSIONS_FOR_ORIGIN',
 
+  // Session data capture
+  SAVE_SESSION_DATA = 'SAVE_SESSION_DATA',
+
   // Session operations
   DUPLICATE_SESSION = 'DUPLICATE_SESSION',
   REORDER_SESSIONS = 'REORDER_SESSIONS',
@@ -211,6 +214,11 @@ export interface GetSessionsForOriginMessage {
   origin: string;
 }
 
+export interface SaveSessionDataMessage {
+  type: MessageType.SAVE_SESSION_DATA;
+  tabId: number;
+}
+
 export type Message =
   | CreateSessionMessage
   | DeleteSessionMessage
@@ -229,7 +237,8 @@ export type Message =
   | GetSessionStatsMessage
   | DuplicateSessionMessage
   | ReorderSessionsMessage
-  | GetSessionsForOriginMessage;
+  | GetSessionsForOriginMessage
+  | SaveSessionDataMessage;
 
 // ── Response Wrapper ─────────────────────────────────────────────
 

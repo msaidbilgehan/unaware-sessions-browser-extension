@@ -14,7 +14,12 @@ import {
   getTabsForSession,
   getAllTabEntries,
 } from './tab-tracker';
-import { switchSession, handleContentScriptReady } from './cookie-engine';
+import {
+  switchSession,
+  handleContentScriptReady,
+  saveAllCookiesForSession,
+  saveTabStorage,
+} from './cookie-engine';
 import { rebuildContextMenu } from './context-menu';
 import { updateBadge } from './badge-manager';
 import { cookieStore } from './cookie-store';
@@ -132,6 +137,20 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
   [MessageType.REORDER_SESSIONS]: async (msg) => {
     if (msg.type !== MessageType.REORDER_SESSIONS) return { success: false };
     await setLocal(STORAGE_KEYS.SESSION_ORDER, msg.orderedIds);
+    return { success: true };
+  },
+
+  [MessageType.SAVE_SESSION_DATA]: async (msg) => {
+    if (msg.type !== MessageType.SAVE_SESSION_DATA) return { success: false };
+    const tab = await chrome.tabs.get(msg.tabId);
+    if (!tab.url) return { success: false, error: 'Tab has no URL' };
+
+    const entry = getTabEntry(msg.tabId);
+    if (!entry) return { success: false, error: 'Tab is not assigned to a session' };
+
+    const origin = new URL(tab.url).origin;
+    await saveAllCookiesForSession(entry.sessionId, origin);
+    await saveTabStorage(msg.tabId, entry.sessionId, origin);
     return { success: true };
   },
 

@@ -88,7 +88,11 @@ export async function restoreCookies(sessionId: string, origin: string): Promise
   }
 }
 
-async function saveTabStorage(tabId: number, sessionId: string, origin: string): Promise<void> {
+export async function saveTabStorage(
+  tabId: number,
+  sessionId: string,
+  origin: string,
+): Promise<void> {
   try {
     const response = (await withTimeout(
       chrome.tabs.sendMessage(tabId, {
@@ -152,7 +156,7 @@ export function handleContentScriptReady(tabId: number): void {
  * Save cookies for ALL domains in the browser under the given session+origin key.
  * This captures cross-domain auth cookies (e.g., authenticator.cursor.sh for cursor.com).
  */
-async function saveAllCookiesForSession(sessionId: string, origin: string): Promise<void> {
+export async function saveAllCookiesForSession(sessionId: string, origin: string): Promise<void> {
   const allCookies = await chrome.cookies.getAll({});
 
   const snapshot: CookieSnapshot = {
