@@ -14,16 +14,15 @@
   async function loadStats() {
     if (sessions.length === 0) return;
     loading = true;
-    const newStats = new SvelteMap<string, SessionStats>();
+    stats.clear();
     for (const session of sessions) {
       try {
         const s = await getSessionStats(session.id);
-        newStats.set(session.id, s);
+        stats.set(session.id, s);
       } catch {
         // Skip failed stats
       }
     }
-    stats = newStats;
     loading = false;
   }
 

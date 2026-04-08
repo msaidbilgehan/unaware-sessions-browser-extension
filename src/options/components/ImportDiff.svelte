@@ -14,7 +14,7 @@
     oncancel: () => void;
   }
 
-  let { existing, imported, onconfirm, oncancel }: Props = $props();
+  const { existing, imported, onconfirm, oncancel }: Props = $props();
 
   function buildEntries(
     importedList: SessionProfile[],
