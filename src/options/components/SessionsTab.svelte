@@ -872,6 +872,7 @@
     width: 100%;
     border-collapse: collapse;
     font-size: var(--text-xs);
+    table-layout: fixed;
   }
   .data-table th {
     text-align: left;
@@ -887,17 +888,19 @@
     vertical-align: middle;
   }
   .cell-name {
-    max-width: 140px;
+    width: 28%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     font-weight: var(--font-medium);
   }
   .cell-value {
-    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .cell-domain {
-    max-width: 100px;
+    width: 18%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
