@@ -18,13 +18,14 @@ Privacy-first, open-source browser extension for isolated browsing sessions with
 
 - **Service Worker** (`src/background/`) — session lifecycle, cookie swap, tab tracking, DNR rules, messaging
 - **Content Scripts** (`src/content/`) — DOM storage save/restore (localStorage, sessionStorage, IndexedDB)
-- **Popup UI** (`src/popup/`) — Svelte-based session management interface (380px wide)
+- **Popup UI** (`src/popup/`) — session list with domain grouping, "Default (no session)" for fresh login, 380px wide
 - **Options Page** (`src/options/`) — tabbed settings, import/export, storage dashboard
 - **Shared** (`src/shared/`) — types, constants, utilities, API layer, theme system, reusable Svelte components
 
 ### Key Design Constraints
 
-- **Page reload required on session switch** — DOM storage cannot be swapped under a running page
+- **Fresh navigation on session switch** — uses `chrome.tabs.update({url})` for clean cookie state
+- **Origin-scoped cookie swap** — saves/clears/restores cookies per-origin, with cross-domain cookie passthrough for auth flows
 - **One active session per origin at a time** — DOM storage is shared per-origin across all tabs
 - **MV3 only** — no MV2 support, no persistent background page
 - **Service Worker state must survive restarts** — persist to `chrome.storage.session` / `chrome.storage.local` / extension IndexedDB
@@ -90,8 +91,8 @@ npm run format:check # Prettier dry-run
 
 ### Popup (`src/popup/`)
 
-- `App.svelte` — main popup (380px): header with logo + theme toggle, search, session list, keyboard shortcuts
-- `components/` — SessionList, SessionItem, CurrentTabPanel, NewSessionForm, SearchBar, ContextMenu, SessionDetail, KeyboardOverlay, OnboardingEmpty
+- `App.svelte` — main popup (380px): header with logo + theme toggle, origin panel, grouped session list, keyboard shortcuts
+- `components/` — SessionList (domain-grouped with "Default" option), SessionItem, CurrentTabPanel (origin + refresh), NewSessionForm, SearchBar, ContextMenu, SessionDetail, KeyboardOverlay, OnboardingEmpty
 
 ### Options (`src/options/`)
 
@@ -108,7 +109,7 @@ npm run format:check # Prettier dry-run
 
 ## Permissions Required
 
-`storage`, `cookies`, `tabs`, `activeTab`, `scripting`, `declarativeNetRequest`, `declarativeNetRequestFeedback`, `contextMenus`, `alarms` + `<all_urls>` host permission.
+`storage`, `cookies`, `tabs`, `activeTab`, `scripting`, `declarativeNetRequest`, `declarativeNetRequestFeedback`, `contextMenus`, `alarms`, `favicon` + `<all_urls>` host permission.
 
 ## License
 

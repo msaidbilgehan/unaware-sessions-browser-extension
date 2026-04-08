@@ -42,8 +42,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Stats API:** `getStatsForSession()` on `CookieStore` and `StorageStore` for storage dashboard
 - **New tests:** 55 new unit tests across 5 new test files and 4 expanded test files (119 total, 68% coverage)
 - Installed `jsdom` dev dependency for browser environment tests
+- **Domain-grouped session list:** "This site" shows sessions with saved data for current origin, "Other sessions" collapsed below
+- **Default (no session):** Clears all cookies and navigates for a fresh login — acts as a clean browsing state
+- **Per-origin session indicator:** Globe icon badge on sessions that have saved data for the current domain
+- **Refresh button:** Inline icon in tab panel to re-capture session cookies and refresh popup state
+- **Session detection:** Detects active session by comparing live cookies against saved snapshots (manual via refresh)
+- **New message types:** `GET_SESSIONS_FOR_ORIGIN`, `SAVE_SESSION_DATA`, `DETECT_SESSION`, `CLEAR_ORIGIN_DATA`
+- **`favicon` permission:** Required for MV3 `_favicon` API to display site icons
 
 ### Changed
+
+- Session switch uses `chrome.tabs.update({url})` for fresh navigation instead of `chrome.tabs.reload()`
+- Cookie restore runs in parallel via `Promise.allSettled` instead of sequential `await` per cookie
+- Session switch only clears/restores cookies for the current origin (not all browser cookies)
+- Cross-domain auth cookies (e.g., `anthropic.com` for `claude.ai`) are set without clearing
+- Removed session selector dropdown from CurrentTabPanel — sessions are switched via the list cards
+- CurrentTabPanel now shows only: favicon, origin URL, and refresh button
 
 - Popup width from 320px to 380px
 - Session items now use card-based glassmorphism design with left color border accent
@@ -63,6 +77,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - Chrome mock missing `updateSessionRules`/`getSessionRules` — 7 pre-existing test failures resolved
 - Test assertions referencing `updateDynamicRules` updated to match actual `updateSessionRules` API
+- **ERR_CONNECTION_RESET on session switch:** Stopped clearing ALL browser cookies; now only clears origin-scoped cookies
+- **`__Host-` / `__Secure-` cookies:** Omit `domain` attribute and force `secure`/`path` for prefixed cookies during restore
+- **Broken favicon in popup:** Use MV3 `_favicon` endpoint with error fallback to globe icon
+- **Popup overflow clipping:** Restructured layout with scrollable content area and fixed-width container
+- **Circular import crash:** Removed `cookie-engine` ↔ `tab-tracker` circular dependency that crashed service worker
+- **Race conditions:** Tab tracker event handlers now call `ensureHydrated()` before accessing state
+- **Unhandled promise rejections:** All async event listeners wrapped with `.catch()` error handlers
+- **Stale popup state:** Popup updates `currentTabEntry` immediately after session switch
+- **Auto-detect re-assigning cleared sessions:** Removed aggressive auto-detection from popup load
+- **Svelte a11y warnings:** Added `role`, `onkeydown`, and `tabindex` attributes to interactive elements
+- **`state_referenced_locally` warnings:** Suppressed via `svelte.config.js` `onwarn` filter
 
 ## [0.1.0] - 2026-04-07
 
