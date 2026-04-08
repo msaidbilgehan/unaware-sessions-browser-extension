@@ -61,7 +61,8 @@ npm run release:major # Major version bump + push tags
 - **No external network calls** — zero analytics, telemetry, or external APIs
 - **Content scripts run at `document_start`** — critical for storage isolation before page scripts execute
 - **CSS custom properties** — all colors, spacing, radii, shadows use design tokens from `theme.css`
-- **Shared API layer** — `src/shared/api.ts` is the single source for popup/options to communicate with the service worker
+- **Shared API layer** — `src/shared/api.ts` is the single source for popup/options to communicate with the service worker; retries once (200 ms delay) on MV3 service worker wake-up connection errors before surfacing to callers
+- **"Other sessions" auto-expand** — `SessionList.svelte` expands the collapsed "Other sessions" group automatically when no site-specific sessions exist, so all sessions remain reachable from any origin
 
 ## File Naming
 
@@ -82,6 +83,7 @@ npm run release:major # Major version bump + push tags
 - `messaging.ts` — message router (all MessageType handlers)
 - `badge-manager.ts` — tab badge with session color + abbreviation
 - `context-menu.ts` — "Open in Session" right-click menu
+- `auto-refresh.ts` — alarm-driven periodic session data refresh for all tracked tabs
 
 ### Shared (`src/shared/`)
 

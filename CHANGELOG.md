@@ -41,6 +41,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **DOM storage never restored after session switch:** `pendingRestores` map was never populated — session switch now queues a pending restore before navigation, and `handleContentScriptReady` triggers the restore when the content script loads
 - **Cross-domain auth cookies lost on switch:** `switchSession` was calling `saveCookies()` (origin-only) which overwrote the full snapshot saved by `saveAllCookiesForSession()` — now uses `saveAllCookiesForSession` to preserve cross-domain cookies
 - **Empty session names via `updateSession`:** `updateSession` now validates and trims the `name` field, rejecting empty/whitespace-only names (same validation as `createSession`)
+- **"No sessions for this site yet" hides all sessions on unvisited origins:** The "Other sessions" group in the popup now auto-expands when no site-specific sessions exist (e.g., first visit to `authenticator.cursor.sh`), keeping all sessions accessible instead of hidden behind a collapsed toggle with a misleading empty-state message
+- **"Create Session" silently fails when service worker is asleep:** `sendMessage` in `src/shared/api.ts` now retries once with a 200 ms delay when Chrome MV3 throws "Receiving end does not exist" (service worker waking from sleep); also guards against `undefined` responses to prevent a downstream `TypeError`
 
 #### Prior Unreleased Items
 
