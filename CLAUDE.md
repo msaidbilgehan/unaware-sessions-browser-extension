@@ -8,18 +8,19 @@ Privacy-first, open-source browser extension for isolated browsing sessions with
 
 - **Runtime:** WebExtensions API (Manifest V3)
 - **Language:** TypeScript (strict mode)
-- **UI:** Svelte
-- **Build:** Vite + web-ext
-- **Testing:** Vitest + Playwright
+- **UI:** Svelte 5 (runes: `$state`, `$derived`, `$effect`)
+- **Styling:** CSS custom properties design system (`src/shared/theme.css`) — light/dark themes, no CSS framework
+- **Build:** Vite + @crxjs/vite-plugin
+- **Testing:** Vitest + fake-indexeddb
 - **Linting:** ESLint + Prettier
 
 ## Architecture
 
 - **Service Worker** (`src/background/`) — session lifecycle, cookie swap, tab tracking, DNR rules, messaging
 - **Content Scripts** (`src/content/`) — DOM storage save/restore (localStorage, sessionStorage, IndexedDB)
-- **Popup UI** (`src/popup/`) — Svelte-based session management interface
-- **Options Page** (`src/options/`) — settings, import/export, data management
-- **Shared** (`src/shared/`) — types, constants, utilities
+- **Popup UI** (`src/popup/`) — Svelte-based session management interface (380px wide)
+- **Options Page** (`src/options/`) — tabbed settings, import/export, storage dashboard
+- **Shared** (`src/shared/`) — types, constants, utilities, API layer, theme system, reusable Svelte components
 
 ### Key Design Constraints
 
@@ -38,8 +39,9 @@ Privacy-first, open-source browser extension for isolated browsing sessions with
 ```bash
 npm run dev          # Dev server with HMR
 npm run build        # Production build -> dist/
-npm run test         # Run tests
+npm run test         # Run tests (vitest)
 npm run test:watch   # Watch mode
+npm run test:coverage # Coverage report (v8)
 npm run type-check   # TypeScript validation
 npm run lint         # ESLint check
 npm run lint:fix     # ESLint auto-fix
@@ -50,16 +52,51 @@ npm run format:check # Prettier dry-run
 ## Conventions
 
 - **No `any`** — TypeScript strict mode, no implicit types
-- **Discriminated union messaging** — all messages between contexts use typed unions (`shared/types/messages.ts`)
-- **Entity-per-handler pattern** — each domain has its own handler in `background/handlers/` and service in `background/services/`
+- **Discriminated union messaging** — all messages between contexts use typed unions (`shared/types.ts`)
+- **Entity-per-handler pattern** — each domain has its own handler in `background/`
 - **No external network calls** — zero analytics, telemetry, or external APIs
 - **Content scripts run at `document_start`** — critical for storage isolation before page scripts execute
+- **CSS custom properties** — all colors, spacing, radii, shadows use design tokens from `theme.css`
+- **Shared API layer** — `src/shared/api.ts` is the single source for popup/options to communicate with the service worker
 
 ## File Naming
 
 - TypeScript files: `kebab-case.ts`
 - Svelte components: `PascalCase.svelte`
 - Test files: `*.test.ts` in `tests/` directory mirroring `src/` structure
+
+## Key Modules
+
+### Background (`src/background/`)
+
+- `session-manager.ts` — session CRUD, ordering, duplicate
+- `cookie-engine.ts` — cookie swap orchestration (save, clear, restore, switch)
+- `cookie-store.ts` — IndexedDB wrapper for cookie snapshots + stats
+- `storage-store.ts` — IndexedDB wrapper for storage snapshots + stats
+- `tab-tracker.ts` — tab-to-session mapping with persistence
+- `dnr-manager.ts` — declarativeNetRequest session rules
+- `messaging.ts` — message router (all MessageType handlers)
+- `badge-manager.ts` — tab badge with session color + abbreviation
+- `context-menu.ts` — "Open in Session" right-click menu
+
+### Shared (`src/shared/`)
+
+- `types.ts` — all TypeScript interfaces, MessageType enum, Message union
+- `api.ts` — typed message wrappers for popup/options (createSession, switchSession, getSessionStats, etc.)
+- `theme.css` — CSS custom properties design system (light/dark tokens, spacing, radii, shadows)
+- `theme-store.ts` — theme preference manager (light/dark/system with chrome.storage persistence)
+- `constants.ts` — extension-wide constants (storage keys, colors, emojis)
+- `components/` — shared Svelte components (Icon, ThemeToggle, ConfirmDialog, Toast, InlineEdit, ColorPicker, EmojiPicker, AppLogo)
+
+### Popup (`src/popup/`)
+
+- `App.svelte` — main popup (380px): header with logo + theme toggle, search, session list, keyboard shortcuts
+- `components/` — SessionList, SessionItem, CurrentTabPanel, NewSessionForm, SearchBar, ContextMenu, SessionDetail, KeyboardOverlay, OnboardingEmpty
+
+### Options (`src/options/`)
+
+- `App.svelte` — tabbed layout (Sessions, Settings, Import/Export, About)
+- `components/` — TabBar, SessionsTab, SettingsTab, ImportExportTab, AboutTab, StorageDashboard, DragDropZone, ImportDiff
 
 ## Key Documentation
 

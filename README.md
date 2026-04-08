@@ -56,9 +56,26 @@ Unaware Sessions fills the gap: lightweight session isolation that works inside 
 
 ### Management
 
-- Import / export session profiles as JSON (optionally encrypted)
-- Session list with active tab counts and color indicators
-- Rename, delete, and duplicate session profiles
+- Import / export session profiles as JSON with visual diff preview
+- Drag-and-drop file import
+- Session list with active tab counts, color indicators, and pinning
+- Rename (double-click), delete (with undo), and duplicate session profiles
+- Drag-to-reorder sessions
+- Per-session storage usage dashboard
+- Search/filter bar for large session lists
+- Right-click context menu on sessions (rename, duplicate, pin, delete)
+
+### UI & Accessibility
+
+- Dark mode with system preference detection (light / dark / system)
+- CSS custom properties design system — no external CSS framework
+- Glassmorphism card design with session color accents
+- SVG icon set (Lucide) replacing all Unicode symbols
+- Emoji avatars for sessions
+- Keyboard shortcuts: `n` (new), `/` (search), `?` (quick-switch), `Escape` (close)
+- Quick-switch overlay — press `?` then a number key to jump to a session
+- First-run onboarding flow
+- Full ARIA labels, focus rings, `prefers-reduced-motion`, and `prefers-contrast` support
 
 ### Privacy
 
@@ -112,10 +129,12 @@ Unaware Sessions fills the gap: lightweight session isolation that works inside 
 ### Session Switch Flow (Chromium)
 
 1. User selects "Switch to Session B" in popup
-2. Service Worker saves current session's cookies and triggers content script to save DOM storage
+2. Service Worker saves current session's cookies and triggers content script to save DOM storage (localStorage, sessionStorage, IndexedDB)
 3. Service Worker clears origin cookies and restores Session B's cookies
-4. Tab reloads — content script at `document_start` restores Session B's DOM storage
-5. Badge updates to reflect new session
+4. Service Worker queues a pending storage restore and reloads the tab
+5. Content script at `document_start` sends `CONTENT_SCRIPT_READY` to Service Worker
+6. Service Worker sends Session B's DOM storage to content script for restoration
+7. Badge updates to reflect new session
 
 ### Platform Strategy
 
@@ -140,12 +159,12 @@ Unaware Sessions fills the gap: lightweight session isolation that works inside 
 | Layer | Technology | Role |
 | ----- | ---------- | ---- |
 | Extension Runtime | WebExtensions API (MV3) | Cross-browser extension framework |
-| UI Framework | Svelte | Popup, options page |
-| Build System | Vite + web-ext | Dev server, HMR, packaging |
-| Language | TypeScript | End-to-end type safety |
+| UI Framework | Svelte 5 | Popup, options page (runes-based reactivity) |
+| Build System | Vite + @crxjs/vite-plugin | Dev server, HMR, Chrome extension bundling |
+| Language | TypeScript | End-to-end type safety (strict mode) |
 | Internal Storage | chrome.storage.local + IndexedDB | Session profiles + storage snapshots |
-| Styling | CSS Modules | Scoped, minimal styles |
-| Testing | Vitest + Playwright | Unit + E2E |
+| Styling | CSS Custom Properties | Design system with light/dark themes, no CSS framework |
+| Testing | Vitest + fake-indexeddb | Unit tests with Chrome API mocks |
 | Linting | ESLint + Prettier | Code quality |
 
 ---
@@ -215,38 +234,77 @@ Press `Alt+Shift+B` (the default keyboard shortcut) to open the Unaware Sessions
 ```text
 src/
   background/
-    service-worker.ts        # SW entry point
-    session-manager.ts       # Session CRUD + persistence
-    cookie-engine.ts         # Cookie swap logic
-    dnr-manager.ts           # declarativeNetRequest rules
-    tab-tracker.ts           # Tab-session mapping
-    messaging.ts             # Message router
+    service-worker.ts        # SW entry point, lifecycle, hydration
+    session-manager.ts       # Session CRUD, ordering, duplicate
+    cookie-engine.ts         # Cookie swap + session switch orchestration
+    cookie-store.ts          # IndexedDB wrapper for cookie snapshots + stats
+    storage-store.ts         # IndexedDB wrapper for storage snapshots + stats
+    dnr-manager.ts           # declarativeNetRequest session rules
+    tab-tracker.ts           # Tab-session mapping with persistence
+    messaging.ts             # Discriminated union message router
+    context-menu.ts          # "Open in Session" right-click menu
+    badge-manager.ts         # Tab badge with session color + abbreviation
   content/
-    index.ts                 # Content script entry
+    index.ts                 # Content script entry (document_start)
     storage-swap.ts          # localStorage/sessionStorage save/restore
-    idb-swap.ts              # IndexedDB save/restore (best-effort)
+    idb-swap.ts              # IndexedDB snapshot/restore (best-effort)
+    content.css              # Content script styles
   popup/
     index.html
-    App.svelte
+    main.ts                  # Svelte mount + theme init
+    App.svelte               # Main popup (380px): sessions, search, keyboard nav
     components/
+      SessionList.svelte     # Grouped session list with drag-to-reorder
+      SessionItem.svelte     # Session card with color accent, emoji, inline rename
+      NewSessionForm.svelte  # Create session form with color + emoji picker
+      CurrentTabPanel.svelte # Current tab info + favicon + session switcher
+      SearchBar.svelte       # Session search/filter
+      ContextMenu.svelte     # Right-click context menu
+      SessionDetail.svelte   # Expandable session stats panel
+      KeyboardOverlay.svelte # Quick-switch overlay (press ?)
+      OnboardingEmpty.svelte # First-run onboarding guide
   options/
     index.html
-    App.svelte
+    main.ts                  # Svelte mount + theme init
+    App.svelte               # Tabbed options page
+    components/
+      TabBar.svelte          # Tab navigation
+      SessionsTab.svelte     # Session management with inline edit
+      SettingsTab.svelte     # Theme toggle (light/dark/system)
+      ImportExportTab.svelte # Import with drag-drop + visual diff
+      AboutTab.svelte        # Version, data management, about
+      StorageDashboard.svelte # Per-session storage usage bars
+      DragDropZone.svelte    # Drag-and-drop file import zone
+      ImportDiff.svelte      # Visual diff preview before import
   shared/
-    types.ts                 # Shared TypeScript interfaces
+    types.ts                 # All TypeScript interfaces + message types
+    api.ts                   # Typed messaging API (popup + options)
     constants.ts             # Extension-wide constants
-    storage.ts               # chrome.storage helpers
-    utils.ts                 # Shared utilities
+    storage.ts               # chrome.storage typed helpers
+    utils.ts                 # Pure utility functions
+    theme.css                # CSS custom properties design system
+    theme-store.ts           # Theme preference manager
+    components/
+      Icon.svelte            # SVG icon library (Lucide paths)
+      ThemeToggle.svelte     # Dark mode toggle button
+      ConfirmDialog.svelte   # Modal confirmation dialog
+      Toast.svelte           # Toast notifications with undo
+      InlineEdit.svelte      # Inline text editing
+      ColorPicker.svelte     # Color preset + custom picker
+      EmojiPicker.svelte     # Emoji grid selector
+      AppLogo.svelte         # Theme-aware extension logo
   assets/
-    icons/
+    icons/                   # Extension icons (16, 32, 48, 128)
+    Unaware-Sessions-Extension-Icon/  # Brand assets (SVG + PNG, light/dark)
 Docs/
   1-Idea.md                  # Project concept and motivation
   2-Product-Specifications.md # Architecture, data model, isolation matrix
   3-implementation-Plan.md   # Phased delivery plan
 tests/
-  storage/                   # Chrome storage CRUD and schema migration tests
-  messaging/                 # Message type guard and dispatch tests
-  background/                # Handler-level integration tests
+  setup.ts                   # Global test setup with Chrome API mocks
+  background/                # Service worker module tests
+  content/                   # Content script tests
+  shared/                    # Shared utility + theme tests
 ```
 
 ---
@@ -259,7 +317,9 @@ tests/
 | ------- | ----------- |
 | `npm run dev` | Start dev server with HMR |
 | `npm run build` | Production build to `dist/` |
-| `npm run preview` | Serve the production build locally |
+| `npm run test` | Run unit tests (Vitest) |
+| `npm run test:watch` | Watch mode |
+| `npm run test:coverage` | Coverage report (v8) |
 | `npm run type-check` | TypeScript strict mode validation |
 | `npm run lint` | ESLint check |
 | `npm run lint:fix` | ESLint auto-fix |
@@ -295,7 +355,7 @@ npm run test:watch
 npm run test:coverage
 ```
 
-Tests use **Vitest** with a jsdom environment and Chrome API mocks. Coverage is tracked via v8.
+Tests use **Vitest** with Chrome API mocks (defined in `tests/setup.ts`) and `fake-indexeddb` for IndexedDB testing. Coverage is tracked via v8. The test suite covers background services, shared utilities, content scripts, and theme management (119 tests, 68% statement coverage).
 
 ---
 
@@ -323,8 +383,8 @@ npm run test         # All tests pass
 ### Conventions
 
 - **TypeScript strict mode** — no `any`, no implicit types.
-- **Entity-per-handler pattern** — each entity domain has its own handler in `background/handlers/` and service in `background/services/`.
-- **Discriminated union messaging** — all messages between contexts use typed discriminated unions (see `shared/types/messages.ts`).
+- **Entity-per-handler pattern** — each entity domain has its own module in `background/`.
+- **Discriminated union messaging** — all messages between contexts use typed discriminated unions (see `shared/types.ts`).
 - **No external network calls** — the extension runs entirely locally. No analytics, no telemetry, no external APIs.
 
 ### Pull Request Guidelines

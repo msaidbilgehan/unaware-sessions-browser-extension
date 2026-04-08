@@ -186,12 +186,15 @@ sequenceDiagram
     SW->>SW: Update DNR rules
     SW->>SW: Update badge/icon
     
-    Note over SW: 3. Reload tab
+    Note over SW: 3. Queue storage restore and reload tab
+    SW->>SW: Queue pending restore for tabId
     SW->>API: chrome.tabs.reload(tabId)
     
     Note over CS: Content script runs at document_start
-    CS->>DB: Load snapshot (sessionB + origin)
-    CS->>CS: Write localStorage, sessionStorage
+    CS-->>SW: CONTENT_SCRIPT_READY
+    SW->>DB: Load snapshot (sessionB + origin)
+    SW->>CS: RESTORE_STORAGE (localStorage + sessionStorage + IndexedDB)
+    CS->>CS: Write localStorage, sessionStorage, IndexedDB (best-effort)
     CS-->>SW: restored
 ```
 
