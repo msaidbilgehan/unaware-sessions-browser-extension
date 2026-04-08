@@ -15,6 +15,7 @@
     onunassign: () => void;
     ondelete: (sessionId: string) => void;
     onrename: (sessionId: string, newName: string) => void;
+    editingSessionId: string | null;
     oncontextmenu: (e: MouseEvent, sessionId: string) => void;
     oncreate: () => void;
     ondragend: (orderedIds: string[]) => void;
@@ -30,6 +31,7 @@
     onunassign,
     ondelete,
     onrename,
+    editingSessionId,
     oncontextmenu,
     oncreate,
     ondragend,
@@ -122,6 +124,7 @@
               {onswitch}
               {ondelete}
               {onrename}
+              forceEditing={editingSessionId === session.id}
               {oncontextmenu}
               draggable={true}
               ondragstart={(e) => handleDragStart(e, i)}
@@ -156,6 +159,7 @@
                 {onswitch}
                 {ondelete}
                 {onrename}
+              forceEditing={editingSessionId === session.id}
                 {oncontextmenu}
                 draggable={true}
                 ondragstart={(e) => handleDragStart(e, idx)}

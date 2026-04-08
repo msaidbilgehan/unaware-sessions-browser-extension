@@ -45,6 +45,7 @@
   let loading = $state(true);
   let searchQuery = $state('');
   let showKeyboardOverlay = $state(false);
+  let editingSessionId = $state<string | null>(null);
 
   // Toast state
   let toastData = $state<{
@@ -189,6 +190,7 @@
   }
 
   async function handleRename(sessionId: string, newName: string) {
+    editingSessionId = null;
     try {
       const updated = await updateSession(sessionId, { name: newName });
       sessions = sessions.map((s) => (s.id === sessionId ? updated : s));
@@ -244,7 +246,7 @@
         label: 'Rename',
         icon: 'edit-2',
         onclick: () => {
-          /* Inline edit is triggered via double-click */
+          editingSessionId = sessionId;
         },
       },
       {
@@ -375,6 +377,7 @@
         onunassign={handleUnassign}
         ondelete={handleDeleteRequest}
         onrename={handleRename}
+        {editingSessionId}
         oncontextmenu={handleContextMenu}
         oncreate={() => (view = 'new')}
         ondragend={handleReorder}

@@ -13,6 +13,7 @@
     ondelete: (sessionId: string) => void;
     onrename: (sessionId: string, newName: string) => void;
     oncontextmenu?: (e: MouseEvent, sessionId: string) => void;
+    forceEditing?: boolean;
     draggable?: boolean;
     ondragstart?: (e: DragEvent) => void;
     ondragover?: (e: DragEvent) => void;
@@ -29,6 +30,7 @@
     ondelete,
     onrename,
     oncontextmenu,
+    forceEditing = false,
     draggable = false,
     ondragstart,
     ondragover,
@@ -39,6 +41,12 @@
   let showActions = $state(false);
   let editing = $state(false);
   let expanded = $state(false);
+
+  $effect(() => {
+    if (forceEditing) {
+      editing = true;
+    }
+  });
 
   function handleDelete(e: MouseEvent) {
     e.stopPropagation();
