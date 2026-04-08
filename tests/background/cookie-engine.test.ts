@@ -142,8 +142,8 @@ describe('switchSession', () => {
 
     await switchSession(1, newSession.id);
 
-    // Tab should be reloaded
-    expect(chrome.tabs.reload).toHaveBeenCalledWith(1);
+    // Tab should be navigated to same URL (fresh navigation)
+    expect(chrome.tabs.update).toHaveBeenCalledWith(1, { url: 'https://example.com/page' });
 
     // DNR rules should be updated
     expect(chrome.declarativeNetRequest.updateSessionRules).toHaveBeenCalled();

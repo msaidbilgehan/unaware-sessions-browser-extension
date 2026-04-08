@@ -61,22 +61,23 @@ export async function restoreCookies(sessionId: string, origin: string): Promise
   const snapshot = await cookieStore.load(sessionId, origin);
   if (!snapshot) return;
 
-  for (const cookie of snapshot.cookies) {
-    const url = buildCookieUrl(cookie);
-    const isHostCookie = cookie.name.startsWith('__Host-');
-    const isSecureCookie = cookie.name.startsWith('__Secure-');
+  // Restore all cookies in parallel for speed — sequential was too slow
+  // for snapshots with hundreds of cross-domain cookies
+  const results = await Promise.allSettled(
+    snapshot.cookies.map((cookie) => {
+      const url = buildCookieUrl(cookie);
+      const isHostCookie = cookie.name.startsWith('__Host-');
+      const isSecureCookie = cookie.name.startsWith('__Secure-');
 
-    let secure = cookie.secure;
-    if (cookie.sameSite === 'no_restriction' || isHostCookie || isSecureCookie) {
-      secure = true;
-    }
+      let secure = cookie.secure;
+      if (cookie.sameSite === 'no_restriction' || isHostCookie || isSecureCookie) {
+        secure = true;
+      }
 
-    try {
-      await chrome.cookies.set({
+      return chrome.cookies.set({
         url,
         name: cookie.name,
         value: cookie.value,
-        // __Host- cookies must NOT have a domain attribute
         ...(isHostCookie ? {} : { domain: cookie.domain }),
         path: isHostCookie ? '/' : cookie.path,
         secure,
@@ -84,9 +85,12 @@ export async function restoreCookies(sessionId: string, origin: string): Promise
         sameSite: cookie.sameSite,
         ...(cookie.expirationDate ? { expirationDate: cookie.expirationDate } : {}),
       });
-    } catch (err) {
-      console.warn(`[Unaware Sessions] Failed to restore cookie "${cookie.name}":`, err);
-    }
+    }),
+  );
+
+  const failures = results.filter((r) => r.status === 'rejected');
+  if (failures.length > 0) {
+    console.warn(`[Unaware Sessions] Failed to restore ${failures.length} cookie(s)`);
   }
 }
 
@@ -173,7 +177,10 @@ export async function detectSessionForOrigin(origin: string): Promise<string | n
     // Filter snapshot to only cookies relevant to this domain
     // (snapshots may contain ALL browser cookies from saveAllCookiesForSession)
     const relevantSaved = snapshot.cookies.filter(
-      (c) => c.domain === domain || c.domain === `.${domain}` || domain.endsWith(c.domain.replace(/^\./, '')),
+      (c) =>
+        c.domain === domain ||
+        c.domain === `.${domain}` ||
+        domain.endsWith(c.domain.replace(/^\./, '')),
     );
     if (relevantSaved.length === 0) continue;
 
@@ -276,7 +283,8 @@ export async function switchSession(tabId: number, targetSessionId: string): Pro
   // 6. Queue storage restore for when content script is ready after reload
   pendingRestores.set(tabId, { sessionId: targetSessionId, origin });
 
-  // 7. Reload tab — content script will send CONTENT_SCRIPT_READY on load,
-  //    which triggers handleContentScriptReady to restore storage
-  await chrome.tabs.reload(tabId);
+  // 7. Navigate tab to same URL — fresh navigation ensures all cookies
+  //    are committed before the request fires. Using update({url}) instead
+  //    of reload() avoids stale cached state from the previous session.
+  await chrome.tabs.update(tabId, { url: tab.url });
 }

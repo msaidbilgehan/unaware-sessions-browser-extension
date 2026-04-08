@@ -62,6 +62,7 @@ const mockChrome = {
     get: vi.fn(() => Promise.resolve({ id: 1, url: 'https://example.com' })),
     query: vi.fn(() => Promise.resolve([])),
     reload: vi.fn(() => Promise.resolve()),
+    update: vi.fn(() => Promise.resolve({ id: 1 })),
     sendMessage: vi.fn(() => Promise.resolve({ success: true })),
     create: vi.fn(() => Promise.resolve({ id: 2 })),
     onCreated: createMockEvent(),
