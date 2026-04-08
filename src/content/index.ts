@@ -66,4 +66,6 @@ async function handleRestoreStorage(data: {
 }
 
 // Notify service worker that content script is ready
-chrome.runtime.sendMessage({ type: MessageType.CONTENT_SCRIPT_READY });
+chrome.runtime.sendMessage({ type: MessageType.CONTENT_SCRIPT_READY }).catch(() => {
+  // Expected to fail if no listener is registered (e.g., service worker not ready)
+});

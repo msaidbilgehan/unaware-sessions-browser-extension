@@ -3,6 +3,7 @@ import { STORAGE_KEYS } from '@shared/constants';
 import { getSession, setSession } from '@shared/storage';
 import { extractOrigin, isValidUrl } from '@shared/utils';
 import { removeRulesForTab } from './dnr-manager';
+import { cleanupPendingRestore } from './cookie-engine';
 
 let tabMap: Map<number, TabSessionEntry> = new Map();
 let hydrated = false;
@@ -58,6 +59,8 @@ export function getAllTabEntries(): Map<number, TabSessionEntry> {
 }
 
 async function handleTabRemoved(tabId: number): Promise<void> {
+  await ensureHydrated();
+  cleanupPendingRestore(tabId);
   if (tabMap.has(tabId)) {
     tabMap.delete(tabId);
     await persistTabMap();
@@ -70,6 +73,7 @@ async function handleTabUpdated(
   changeInfo: { url?: string; status?: string },
   tab: chrome.tabs.Tab,
 ): Promise<void> {
+  await ensureHydrated();
   if (changeInfo.url && tab.url) {
     const entry = tabMap.get(tabId);
     if (entry) {
@@ -83,6 +87,14 @@ async function handleTabUpdated(
 }
 
 export function initTabTracker(): void {
-  chrome.tabs.onRemoved.addListener(handleTabRemoved);
-  chrome.tabs.onUpdated.addListener(handleTabUpdated);
+  chrome.tabs.onRemoved.addListener((tabId) => {
+    handleTabRemoved(tabId).catch((err) => {
+      console.error('[Unaware Sessions] Tab removed handler failed:', err);
+    });
+  });
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    handleTabUpdated(tabId, changeInfo, tab).catch((err) => {
+      console.error('[Unaware Sessions] Tab updated handler failed:', err);
+    });
+  });
 }

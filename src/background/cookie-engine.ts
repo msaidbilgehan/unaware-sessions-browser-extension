@@ -201,6 +201,10 @@ export function handleContentScriptReady(tabId: number): void {
   });
 }
 
+export function cleanupPendingRestore(tabId: number): void {
+  pendingRestores.delete(tabId);
+}
+
 /**
  * Save cookies for ALL domains in the browser under the given session+origin key.
  * This captures cross-domain auth cookies (e.g., authenticator.cursor.sh for cursor.com).

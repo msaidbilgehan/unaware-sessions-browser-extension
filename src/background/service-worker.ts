@@ -11,7 +11,9 @@ async function hydrateState(): Promise<void> {
 }
 
 // Hydrate on every SW wake (top-level runs each time the worker starts)
-hydrateState();
+hydrateState().catch((err) => {
+  console.error('[Unaware Sessions] Failed to hydrate state:', err);
+});
 
 chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === 'install') {

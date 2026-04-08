@@ -22,13 +22,17 @@ export async function updateBadge(tabId: number): Promise<void> {
 }
 
 export function initBadgeManager(): void {
-  chrome.tabs.onActivated.addListener(async (activeInfo) => {
-    await updateBadge(activeInfo.tabId);
+  chrome.tabs.onActivated.addListener((activeInfo) => {
+    updateBadge(activeInfo.tabId).catch((err) => {
+      console.warn('[Unaware Sessions] Badge update failed:', err);
+    });
   });
 
-  chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
     if (changeInfo.status === 'complete') {
-      await updateBadge(tabId);
+      updateBadge(tabId).catch((err) => {
+        console.warn('[Unaware Sessions] Badge update failed:', err);
+      });
     }
   });
 }

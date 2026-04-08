@@ -8,10 +8,16 @@ const MENU_NEW_SESSION_ID = 'unaware-sessions-new';
 
 export function initContextMenu(): void {
   chrome.runtime.onInstalled.addListener(() => {
-    rebuildContextMenu();
+    rebuildContextMenu().catch((err) => {
+      console.error('[Unaware Sessions] Failed to build context menu:', err);
+    });
   });
 
-  chrome.contextMenus.onClicked.addListener(handleMenuClick);
+  chrome.contextMenus.onClicked.addListener((...args) => {
+    handleMenuClick(...args).catch((err) => {
+      console.error('[Unaware Sessions] Context menu click handler failed:', err);
+    });
+  });
 }
 
 export async function rebuildContextMenu(): Promise<void> {
