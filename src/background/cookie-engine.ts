@@ -148,6 +148,38 @@ export function handleContentScriptReady(tabId: number): void {
   });
 }
 
+/**
+ * Save cookies for ALL domains in the browser under the given session+origin key.
+ * This captures cross-domain auth cookies (e.g., authenticator.cursor.sh for cursor.com).
+ */
+async function saveAllCookiesForSession(sessionId: string, origin: string): Promise<void> {
+  const allCookies = await chrome.cookies.getAll({});
+
+  const snapshot: CookieSnapshot = {
+    sessionId,
+    origin,
+    timestamp: now(),
+    cookies: allCookies,
+  };
+
+  await cookieStore.save(snapshot);
+}
+
+/**
+ * Clear ALL cookies in the browser (not just one domain).
+ * Necessary for clean session switching across multi-domain auth flows.
+ */
+async function clearAllCookies(): Promise<void> {
+  const allCookies = await chrome.cookies.getAll({});
+
+  await Promise.all(
+    allCookies.map((cookie) => {
+      const url = buildCookieUrl(cookie);
+      return chrome.cookies.remove({ url, name: cookie.name });
+    }),
+  );
+}
+
 export async function switchSession(tabId: number, targetSessionId: string): Promise<void> {
   const tab = await chrome.tabs.get(tabId);
   if (!tab.url) {
@@ -157,16 +189,18 @@ export async function switchSession(tabId: number, targetSessionId: string): Pro
   const origin = new URL(tab.url).origin;
   const currentEntry = getTabEntry(tabId);
 
-  // 1. Save current session's cookies and storage
+  // 1. Save current session's ALL cookies and tab storage
+  //    Saves all browser cookies (not just this origin) to capture cross-domain
+  //    auth flows like OAuth, SSO, and multi-subdomain authentication.
   if (currentEntry) {
-    await saveCookies(currentEntry.sessionId, origin);
+    await saveAllCookiesForSession(currentEntry.sessionId, origin);
     await saveTabStorage(tabId, currentEntry.sessionId, origin);
   }
 
-  // 2. Clear cookies for this origin
-  await clearCookies(origin);
+  // 2. Clear ALL cookies (not just this origin) for clean isolation
+  await clearAllCookies();
 
-  // 3. Restore target session's cookies
+  // 3. Restore target session's cookies (includes all domains)
   await restoreCookies(targetSessionId, origin);
 
   // 4. Update tab-session mapping
