@@ -3,7 +3,6 @@ import { STORAGE_KEYS } from '@shared/constants';
 import { getSession, setSession } from '@shared/storage';
 import { extractOrigin, isValidUrl } from '@shared/utils';
 import { removeRulesForTab } from './dnr-manager';
-import { cleanupPendingRestore } from './cookie-engine';
 
 let tabMap: Map<number, TabSessionEntry> = new Map();
 let hydrated = false;
@@ -60,7 +59,6 @@ export function getAllTabEntries(): Map<number, TabSessionEntry> {
 
 async function handleTabRemoved(tabId: number): Promise<void> {
   await ensureHydrated();
-  cleanupPendingRestore(tabId);
   if (tabMap.has(tabId)) {
     tabMap.delete(tabId);
     await persistTabMap();
