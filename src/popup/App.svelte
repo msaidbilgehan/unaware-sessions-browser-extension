@@ -15,7 +15,6 @@
     duplicateSession as duplicateSessionApi,
     getSessionsForOrigin,
     saveSessionData,
-    detectSession,
     clearOriginData,
   } from '@shared/api';
   import { fly } from 'svelte/transition';
@@ -92,17 +91,6 @@
       tabCounts = counts;
       if (tab?.id) {
         currentTabEntry = await getSessionForTab(tab.id);
-
-        if (!currentTabEntry && tab.url) {
-          const origin = extractOrigin(tab.url);
-          if (origin) {
-            const detectedId = await detectSession(origin);
-            if (detectedId) {
-              await assignTab(tab.id, detectedId, origin);
-              currentTabEntry = { sessionId: detectedId, origin };
-            }
-          }
-        }
       }
       const origin = tab?.url ? extractOrigin(tab.url) : '';
       if (origin) {
