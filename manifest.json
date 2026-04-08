@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Unaware Sessions",
-  "description": "",
+  "description": "Privacy-first multi-session browser manager — entirely local",
   "version": "0.1.0",
   "icons": {
     "16": "src/assets/icons/icon-16.png",
@@ -28,16 +28,17 @@
       "matches": ["<all_urls>"],
       "js": ["src/content/index.ts"],
       "css": ["src/content/content.css"],
-      "run_at": "document_idle"
+      "run_at": "document_start"
     }
   ],
   "permissions": [
     "storage",
+    "cookies",
     "activeTab",
     "scripting",
     "tabs",
     "alarms",
-    "notifications",
+    "contextMenus",
     "declarativeNetRequest",
     "declarativeNetRequestFeedback"
   ],
