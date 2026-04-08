@@ -170,16 +170,23 @@ export async function detectSessionForOrigin(origin: string): Promise<string | n
     const snapshot = await cookieStore.load(sessionId, origin);
     if (!snapshot || snapshot.cookies.length === 0) continue;
 
+    // Filter snapshot to only cookies relevant to this domain
+    // (snapshots may contain ALL browser cookies from saveAllCookiesForSession)
+    const relevantSaved = snapshot.cookies.filter(
+      (c) => c.domain === domain || c.domain === `.${domain}` || domain.endsWith(c.domain.replace(/^\./, '')),
+    );
+    if (relevantSaved.length === 0) continue;
+
     // Count how many saved cookies match live cookies exactly
     let matches = 0;
-    for (const saved of snapshot.cookies) {
+    for (const saved of relevantSaved) {
       if (liveFingerprints.has(`${saved.name}=${saved.value}`)) {
         matches++;
       }
     }
 
-    // Score = matched cookies / max(live, saved) — prevents bias toward small snapshots
-    const score = matches / Math.max(liveCookies.length, snapshot.cookies.length);
+    // Score = matched cookies / max(live, relevant saved)
+    const score = matches / Math.max(liveCookies.length, relevantSaved.length);
 
     if (score > bestScore && matches > 0) {
       bestScore = score;
