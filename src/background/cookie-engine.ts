@@ -243,46 +243,72 @@ export async function switchSession(tabId: number, targetSessionId: string): Pro
   }
 
   const origin = new URL(tab.url).origin;
+  const domain = extractDomain(origin);
   const currentEntry = getTabEntry(tabId);
 
-  // 1. Save current session's cookies for this origin
+  // 1. Save current session's cookies for this origin only
   if (currentEntry) {
-    await saveAllCookiesForSession(currentEntry.sessionId, origin);
+    await saveCookies(currentEntry.sessionId, origin);
   }
 
-  // 2. Load target session's cookie snapshot
-  const targetSnapshot = await cookieStore.load(targetSessionId, origin);
-
-  // 3. Clear only the current origin's cookies (not ALL browser cookies).
-  //    Clearing all cookies breaks active connections on other tabs.
+  // 2. Clear cookies for this origin
   await clearCookies(origin);
 
-  // 4. Restore target session's cookies — overwrites with new values
-  if (targetSnapshot) {
-    await Promise.allSettled(
-      targetSnapshot.cookies.map((cookie) => {
-        const url = buildCookieUrl(cookie);
-        const isHostCookie = cookie.name.startsWith('__Host-');
-        const isSecureCookie = cookie.name.startsWith('__Secure-');
+  // 3. Restore target session's cookies for this origin
+  await restoreCookies(targetSessionId, origin);
 
-        let secure = cookie.secure;
-        if (cookie.sameSite === 'no_restriction' || isHostCookie || isSecureCookie) {
-          secure = true;
-        }
+  // 4. If the snapshot was saved with saveAllCookiesForSession (contains
+  //    cross-domain cookies), also restore cookies for related domains
+  //    that the target session needs (e.g., anthropic.com for claude.ai)
+  const fullSnapshot = await cookieStore.load(targetSessionId, origin);
+  if (fullSnapshot && domain) {
+    // Find domains in the snapshot that are NOT the current origin's domain
+    const extraDomains = new Set<string>();
+    for (const cookie of fullSnapshot.cookies) {
+      const cookieDomain = cookie.domain.replace(/^\./, '');
+      if (
+        cookieDomain !== domain &&
+        !cookieDomain.endsWith(`.${domain}`) &&
+        !domain.endsWith(`.${cookieDomain}`)
+      ) {
+        extraDomains.add(cookieDomain);
+      }
+    }
 
-        return chrome.cookies.set({
-          url,
-          name: cookie.name,
-          value: cookie.value,
-          ...(isHostCookie ? {} : { domain: cookie.domain }),
-          path: isHostCookie ? '/' : cookie.path,
-          secure,
-          httpOnly: cookie.httpOnly,
-          sameSite: cookie.sameSite,
-          ...(cookie.expirationDate ? { expirationDate: cookie.expirationDate } : {}),
-        });
-      }),
-    );
+    // Restore cookies for related domains (e.g., anthropic.com)
+    if (extraDomains.size > 0) {
+      const extraCookies = fullSnapshot.cookies.filter((c) => {
+        const cd = c.domain.replace(/^\./, '');
+        return cd !== domain && extraDomains.has(cd);
+      });
+
+      if (extraCookies.length > 0) {
+        await Promise.allSettled(
+          extraCookies.map((cookie) => {
+            const url = buildCookieUrl(cookie);
+            const isHostCookie = cookie.name.startsWith('__Host-');
+            const isSecureCookie = cookie.name.startsWith('__Secure-');
+
+            let secure = cookie.secure;
+            if (cookie.sameSite === 'no_restriction' || isHostCookie || isSecureCookie) {
+              secure = true;
+            }
+
+            return chrome.cookies.set({
+              url,
+              name: cookie.name,
+              value: cookie.value,
+              ...(isHostCookie ? {} : { domain: cookie.domain }),
+              path: isHostCookie ? '/' : cookie.path,
+              secure,
+              httpOnly: cookie.httpOnly,
+              sameSite: cookie.sameSite,
+              ...(cookie.expirationDate ? { expirationDate: cookie.expirationDate } : {}),
+            });
+          }),
+        );
+      }
+    }
   }
 
   // 5. Update tab-session mapping
@@ -291,10 +317,6 @@ export async function switchSession(tabId: number, targetSessionId: string): Pro
   // 6. Update DNR rules
   await updateRulesForTab(tabId, targetSessionId, origin);
 
-  // 7. Queue storage restore for when content script is ready after reload
-  pendingRestores.set(tabId, { sessionId: targetSessionId, origin });
-
-  // 8. Navigate tab to same URL — fresh navigation ensures all cookies
-  //    are committed before the request fires.
+  // 7. Navigate tab to same URL
   await chrome.tabs.update(tabId, { url: tab.url });
 }
