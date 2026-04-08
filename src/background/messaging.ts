@@ -20,7 +20,6 @@ import {
   saveAllCookiesForSession,
   saveTabStorage,
   detectSessionForOrigin,
-  clearCookies,
 } from './cookie-engine';
 import { rebuildContextMenu } from './context-menu';
 import { updateBadge } from './badge-manager';
@@ -167,9 +166,19 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
     const tab = await chrome.tabs.get(msg.tabId);
     if (!tab.url) return { success: false, error: 'Tab has no URL' };
 
-    const origin = new URL(tab.url).origin;
     await unassignTab(msg.tabId);
-    await clearCookies(origin);
+
+    // Clear ALL cookies (not just the origin) for a true fresh start.
+    // Auth flows span multiple domains (e.g., authenticator.cursor.sh for cursor.com)
+    // so clearing only the origin's cookies leaves stale auth tokens.
+    const allCookies = await chrome.cookies.getAll({});
+    await Promise.allSettled(
+      allCookies.map((cookie) => {
+        const url = `http${cookie.secure ? 's' : ''}://${cookie.domain.replace(/^\./, '')}${cookie.path}`;
+        return chrome.cookies.remove({ url, name: cookie.name });
+      }),
+    );
+
     await chrome.tabs.update(msg.tabId, { url: tab.url });
     return { success: true };
   },
