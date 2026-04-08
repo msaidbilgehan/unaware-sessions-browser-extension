@@ -10,6 +10,8 @@
     sessions: SessionProfile[];
     onswitch: (sessionId: string) => void;
     onunassign: () => void;
+    onrefresh: () => void;
+    refreshing?: boolean;
   }
 
   let {
@@ -20,6 +22,8 @@
     sessions,
     onswitch,
     onunassign,
+    onrefresh,
+    refreshing = false,
   }: Props = $props();
 
   const faviconUrl = $derived(
@@ -88,6 +92,15 @@
           </option>
         {/each}
       </select>
+      <button
+        class="refresh-btn"
+        onclick={onrefresh}
+        disabled={refreshing}
+        aria-label="Update session data"
+        title="Update session data"
+      >
+        <Icon name="download" size={14} />
+      </button>
     </div>
   {/if}
 </div>
@@ -168,5 +181,30 @@
 
   select:focus {
     border-color: var(--color-accent);
+  }
+
+  .refresh-btn {
+    background: var(--color-bg-tertiary);
+    border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-sm);
+    color: var(--color-text-tertiary);
+    cursor: pointer;
+    padding: var(--space-2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: all var(--transition-fast);
+  }
+
+  .refresh-btn:hover:not(:disabled) {
+    color: var(--color-accent);
+    border-color: var(--color-accent);
+    background: var(--color-accent-soft);
+  }
+
+  .refresh-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 </style>

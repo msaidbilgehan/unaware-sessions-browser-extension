@@ -368,12 +368,9 @@
         {sessions}
         onswitch={handleSwitch}
         onunassign={handleUnassign}
+        onrefresh={handleUpdateSessionData}
+        {refreshing}
       />
-
-      <button class="save-data-btn" onclick={handleUpdateSessionData} disabled={refreshing}>
-        <Icon name="download" size={14} />
-        {refreshing ? 'Updating...' : 'Update Session Data'}
-      </button>
 
       {#if sessions.length > 5}
         <SearchBar query={searchQuery} onchange={(q) => (searchQuery = q)} />
@@ -491,33 +488,6 @@
   .settings-btn:hover {
     color: var(--color-text-secondary);
     background: var(--color-interactive-hover);
-  }
-
-  .save-data-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: var(--space-3);
-    padding: var(--space-3) var(--space-5);
-    background: var(--color-accent-soft);
-    border: 1px solid var(--color-accent);
-    border-radius: var(--radius-md);
-    font-size: var(--text-sm);
-    font-family: var(--font-sans);
-    color: var(--color-accent);
-    cursor: pointer;
-    transition: all var(--transition-fast);
-    flex-shrink: 0;
-  }
-
-  .save-data-btn:hover:not(:disabled) {
-    background: var(--color-accent);
-    color: var(--color-text-inverse);
-  }
-
-  .save-data-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
   }
 
   .new-btn {
