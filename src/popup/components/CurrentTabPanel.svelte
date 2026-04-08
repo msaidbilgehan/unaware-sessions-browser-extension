@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { SessionProfile } from '@shared/types';
+  import Icon from '@shared/components/Icon.svelte';
 
   interface Props {
     currentOrigin: string;
@@ -22,6 +23,17 @@
   }: Props = $props();
 
   const faviconUrl = $derived(currentOrigin ? `chrome://favicon/size/16@2x/${currentOrigin}` : '');
+  let faviconFailed = $state(false);
+
+  $effect(() => {
+    // Reset failure state when origin changes
+    void currentOrigin;
+    faviconFailed = false;
+  });
+
+  function handleFaviconError() {
+    faviconFailed = true;
+  }
 
   function handleChange(e: Event) {
     const target = e.target as HTMLSelectElement;
@@ -40,8 +52,17 @@
   class:has-session={!!currentSessionColor}
 >
   <div class="origin">
-    {#if faviconUrl}
-      <img class="favicon" src={faviconUrl} alt="" width="16" height="16" />
+    {#if faviconUrl && !faviconFailed}
+      <img
+        class="favicon"
+        src={faviconUrl}
+        alt=""
+        width="16"
+        height="16"
+        onerror={handleFaviconError}
+      />
+    {:else if currentOrigin}
+      <Icon name="globe" size={16} />
     {/if}
     {#if currentSessionEmoji}
       <span class="session-emoji">{currentSessionEmoji}</span>

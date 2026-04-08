@@ -393,10 +393,12 @@
 <style>
   main {
     width: 380px;
+    max-height: 560px;
     padding: var(--space-5);
     display: flex;
     flex-direction: column;
     gap: var(--space-5);
+    overflow-y: auto;
   }
 
   .header {
