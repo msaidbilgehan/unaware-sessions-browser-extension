@@ -27,11 +27,56 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   });
 }
 
+/**
+ * Get all cookies that apply to the given origin's hostname.
+ * Walks up the domain hierarchy to capture parent-domain cookies
+ * (e.g., .google.com cookies when on www.google.com) that
+ * chrome.cookies.getAll({ domain: "www.google.com" }) would miss.
+ */
+async function getCookiesForOrigin(origin: string): Promise<chrome.cookies.Cookie[]> {
+  const hostname = extractDomain(origin);
+  if (!hostname) return [];
+
+  // Build domain levels: "www.google.com" → ["www.google.com", "google.com"]
+  const parts = hostname.split('.');
+  const domainLevels: string[] = [];
+  for (let i = 0; i < parts.length - 1; i++) {
+    domainLevels.push(parts.slice(i).join('.'));
+  }
+  // Handle single-label hostnames (e.g., localhost)
+  if (domainLevels.length === 0) {
+    domainLevels.push(hostname);
+  }
+
+  const results = await Promise.all(
+    domainLevels.map((d) => chrome.cookies.getAll({ domain: d })),
+  );
+
+  // Deduplicate and keep only cookies that apply to our hostname
+  const seen = new Set<string>();
+  const cookies: chrome.cookies.Cookie[] = [];
+
+  for (const batch of results) {
+    for (const cookie of batch) {
+      const key = `${cookie.name}\0${cookie.domain}\0${cookie.path}\0${cookie.storeId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      const bare = cookie.domain.replace(/^\./, '');
+      if (hostname === bare || hostname.endsWith(`.${bare}`)) {
+        cookies.push(cookie);
+      }
+    }
+  }
+
+  return cookies;
+}
+
 export async function saveCookies(sessionId: string, origin: string): Promise<void> {
   const domain = extractDomain(origin);
   if (!domain) return;
 
-  const cookies = await chrome.cookies.getAll({ domain });
+  const cookies = await getCookiesForOrigin(origin);
 
   const snapshot: CookieSnapshot = {
     sessionId,
@@ -47,7 +92,7 @@ export async function clearCookies(origin: string): Promise<void> {
   const domain = extractDomain(origin);
   if (!domain) return;
 
-  const cookies = await chrome.cookies.getAll({ domain });
+  const cookies = await getCookiesForOrigin(origin);
 
   await Promise.all(
     cookies.map((cookie) => {
@@ -157,7 +202,7 @@ export async function detectSessionForOrigin(origin: string): Promise<string | n
   const domain = extractDomain(origin);
   if (!domain) return null;
 
-  const liveCookies = await chrome.cookies.getAll({ domain });
+  const liveCookies = await getCookiesForOrigin(origin);
   if (liveCookies.length === 0) return null;
 
   // Build a set of "name=value" fingerprints from live cookies

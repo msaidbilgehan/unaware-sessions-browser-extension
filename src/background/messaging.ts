@@ -21,6 +21,7 @@ import {
   saveAllCookiesForSession,
   saveTabStorage,
   detectSessionForOrigin,
+  clearCookies,
 } from './cookie-engine';
 import { rebuildContextMenu } from './context-menu';
 import { updateBadge } from './badge-manager';
@@ -181,16 +182,10 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
 
     await unassignTab(msg.tabId);
 
-    // Clear ALL cookies (not just the origin) for a true fresh start.
-    // Auth flows span multiple domains (e.g., authenticator.cursor.sh for cursor.com)
-    // so clearing only the origin's cookies leaves stale auth tokens.
-    const allCookies = await chrome.cookies.getAll({});
-    await Promise.allSettled(
-      allCookies.map((cookie) => {
-        const url = `http${cookie.secure ? 's' : ''}://${cookie.domain.replace(/^\./, '')}${cookie.path}`;
-        return chrome.cookies.remove({ url, name: cookie.name });
-      }),
-    );
+    // Clear cookies for this origin only (including parent-domain cookies).
+    // Previously this cleared ALL browser cookies, forcing re-login on every site.
+    const origin = new URL(tab.url).origin;
+    await clearCookies(origin);
 
     await chrome.tabs.update(msg.tabId, { url: tab.url });
     return { success: true };

@@ -84,6 +84,92 @@ describe('clearCookies', () => {
       expect.objectContaining({ name: 'theme' }),
     );
   });
+
+  it('clears parent-domain cookies when on a subdomain', async () => {
+    const wwwCookie = {
+      name: 'pref',
+      value: 'dark',
+      domain: 'www.google.com',
+      path: '/',
+      secure: false,
+      httpOnly: false,
+      sameSite: 'lax' as const,
+      hostOnly: true,
+      session: true,
+      storeId: '0',
+    } as chrome.cookies.Cookie;
+
+    const parentCookie = {
+      name: 'SID',
+      value: 'abc123',
+      domain: '.google.com',
+      path: '/',
+      secure: true,
+      httpOnly: true,
+      sameSite: 'lax' as const,
+      hostOnly: false,
+      session: false,
+      storeId: '0',
+    } as chrome.cookies.Cookie;
+
+    // First getAll({ domain: "www.google.com" }) returns only the www cookie
+    // Second getAll({ domain: "google.com" }) returns both (parent includes subdomains)
+    (chrome.cookies.getAll as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce([wwwCookie])
+      .mockResolvedValueOnce([parentCookie, wwwCookie]);
+
+    await clearCookies('https://www.google.com');
+
+    expect(chrome.cookies.remove).toHaveBeenCalledTimes(2);
+    expect(chrome.cookies.remove).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'pref' }),
+    );
+    expect(chrome.cookies.remove).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'SID' }),
+    );
+  });
+
+  it('does not clear sibling subdomain cookies', async () => {
+    const wwwCookie = {
+      name: 'pref',
+      value: 'dark',
+      domain: 'www.google.com',
+      path: '/',
+      secure: false,
+      httpOnly: false,
+      sameSite: 'lax' as const,
+      hostOnly: true,
+      session: true,
+      storeId: '0',
+    } as chrome.cookies.Cookie;
+
+    const mailCookie = {
+      name: 'MAID',
+      value: 'xyz',
+      domain: 'mail.google.com',
+      path: '/',
+      secure: true,
+      httpOnly: false,
+      sameSite: 'lax' as const,
+      hostOnly: true,
+      session: false,
+      storeId: '0',
+    } as chrome.cookies.Cookie;
+
+    // getAll({ domain: "www.google.com" }) returns only www cookie
+    // getAll({ domain: "google.com" }) returns both subdomains
+    (chrome.cookies.getAll as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce([wwwCookie])
+      .mockResolvedValueOnce([wwwCookie, mailCookie]);
+
+    await clearCookies('https://www.google.com');
+
+    // Only www cookie should be removed, NOT mail.google.com cookie
+    expect(chrome.cookies.remove).toHaveBeenCalledTimes(1);
+    expect(chrome.cookies.remove).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'pref' }),
+    );
+  });
 });
 
 describe('restoreCookies', () => {
