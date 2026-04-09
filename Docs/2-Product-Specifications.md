@@ -304,10 +304,7 @@ interface CookieSnapshot {
     "storage",
     "cookies",
     "tabs",
-    "activeTab",
-    "scripting",
     "declarativeNetRequest",
-    "declarativeNetRequestFeedback",
     "contextMenus",
     "alarms",
     "favicon"
@@ -321,10 +318,7 @@ interface CookieSnapshot {
 | `storage` | Persist session profiles and tab mappings |
 | `cookies` | Read/write/delete cookies per domain for session swap |
 | `tabs` | Track tab lifecycle, reload tabs, update badges |
-| `activeTab` | Access current tab for session operations |
-| `scripting` | Inject content scripts dynamically |
 | `declarativeNetRequest` | Modify cookie headers on outbound requests |
-| `declarativeNetRequestFeedback` | Debug DNR rule matches |
 | `contextMenus` | "Open in Session" right-click menu |
 | `alarms` | Periodic cleanup, session auto-save |
 | `favicon` | Display site icons in popup via _favicon API |

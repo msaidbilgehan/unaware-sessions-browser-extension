@@ -34,14 +34,11 @@
   "permissions": [
     "storage",
     "cookies",
-    "activeTab",
-    "scripting",
     "tabs",
     "alarms",
     "contextMenus",
     "declarativeNetRequest",
-    "favicon",
-    "declarativeNetRequestFeedback"
+    "favicon"
   ],
   "host_permissions": ["<all_urls>"],
   "commands": {

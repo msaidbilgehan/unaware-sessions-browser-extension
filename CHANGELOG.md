@@ -30,6 +30,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed
 
+- **Cookie operations now walk the domain hierarchy:** `saveCookies`, `clearCookies`, and `detectSessionForOrigin` use `getCookiesForOrigin()` to query all ancestor domains (e.g., `.google.com` when on `www.google.com`), ensuring parent-domain cookies are included
+- **"Default (no session)" clears only origin cookies:** `CLEAR_ORIGIN_DATA` now uses `clearCookies(origin)` instead of wiping all browser cookies, preventing forced re-login on unrelated sites
+- **Removed unused permissions:** Removed `scripting` (content scripts are manifest-declared), `declarativeNetRequestFeedback` (debug-only, never used), and `activeTab` (redundant with `<all_urls>` host permission) from manifest.json
 - **Session switch now saves all cookies** (not just origin-scoped) before switching, preserving cross-domain auth cookies
 - **Session switch now saves tab storage** (localStorage/sessionStorage) before navigating
 - **`initSettings()` awaited before mount** in popup and options entry points, preventing race condition with stale defaults
@@ -38,6 +41,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Google "cookie settings" error on session switch:** `clearCookies()` only queried `chrome.cookies.getAll({ domain })` for the exact hostname, missing parent-domain cookies (e.g., `.google.com` when on `www.google.com`) — orphaned old-session cookies coexisted with new-session cookies, triggering Google's security check. Now walks the domain hierarchy via `getCookiesForOrigin()` to clear all applicable cookies
+- **"Default (no session)" nuked all browser cookies:** `CLEAR_ORIGIN_DATA` handler called `chrome.cookies.getAll({})` and removed every cookie across all domains, forcing re-login on every site — now scoped to origin-only clearing
 - **DOM storage never restored after session switch:** `pendingRestores` map was never populated — session switch now queues a pending restore before navigation, and `handleContentScriptReady` triggers the restore when the content script loads
 - **Cross-domain auth cookies lost on switch:** `switchSession` was calling `saveCookies()` (origin-only) which overwrote the full snapshot saved by `saveAllCookiesForSession()` — now uses `saveAllCookiesForSession` to preserve cross-domain cookies
 - **Empty session names via `updateSession`:** `updateSession` now validates and trims the `name` field, rejecting empty/whitespace-only names (same validation as `createSession`)

@@ -25,7 +25,7 @@ Privacy-first, open-source browser extension for isolated browsing sessions with
 ### Key Design Constraints
 
 - **Fresh navigation on session switch** — uses `chrome.tabs.update({url})` for clean cookie state
-- **Origin-scoped cookie swap** — saves/clears/restores cookies per-origin, with cross-domain cookie passthrough for auth flows
+- **Origin-scoped cookie swap** — saves/clears/restores cookies per-origin (including parent-domain cookies via domain hierarchy walk), with cross-domain cookie passthrough for auth flows
 - **One active session per origin at a time** — DOM storage is shared per-origin across all tabs
 - **MV3 only** — no MV2 support, no persistent background page
 - **Service Worker state must survive restarts** — persist to `chrome.storage.session` / `chrome.storage.local` / extension IndexedDB
@@ -75,7 +75,7 @@ npm run release:major # Major version bump + push tags
 ### Background (`src/background/`)
 
 - `session-manager.ts` — session CRUD, ordering, duplicate
-- `cookie-engine.ts` — cookie swap orchestration (save, clear, restore, switch) with DOM storage save/restore and pending restores
+- `cookie-engine.ts` — cookie swap orchestration (save, clear, restore, switch) with domain-hierarchy cookie resolution, DOM storage save/restore, and pending restores
 - `cookie-store.ts` — IndexedDB wrapper for cookie snapshots + stats
 - `storage-store.ts` — IndexedDB wrapper for storage snapshots + stats
 - `tab-tracker.ts` — tab-to-session mapping with persistence
@@ -115,7 +115,7 @@ npm run release:major # Major version bump + push tags
 
 ## Permissions Required
 
-`storage`, `cookies`, `tabs`, `activeTab`, `scripting`, `declarativeNetRequest`, `declarativeNetRequestFeedback`, `contextMenus`, `alarms`, `favicon` + `<all_urls>` host permission.
+`storage`, `cookies`, `tabs`, `declarativeNetRequest`, `contextMenus`, `alarms`, `favicon` + `<all_urls>` host permission.
 
 ## License
 

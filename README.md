@@ -337,10 +337,7 @@ tests/
 | `storage` | Persist session profiles and tab mappings |
 | `cookies` | Read/write/delete cookies per domain for session swap |
 | `tabs` | Track tab lifecycle, reload tabs, update badges |
-| `activeTab` | Access current tab for session operations |
-| `scripting` | Inject content scripts dynamically |
 | `declarativeNetRequest` | Modify cookie headers on outbound requests |
-| `declarativeNetRequestFeedback` | Debug DNR rule matches (dev only) |
 | `contextMenus` | "Open in Session" right-click menu |
 | `alarms` | Periodic state persistence and cleanup |
 
@@ -359,7 +356,7 @@ npm run test:watch
 npm run test:coverage
 ```
 
-Tests use **Vitest** with Chrome API mocks (defined in `tests/setup.ts`) and `fake-indexeddb` for IndexedDB testing. Coverage is tracked via v8. The test suite covers background services, shared utilities, content scripts, settings, and API layer (263 tests across 18 test files, 90% statement coverage).
+Tests use **Vitest** with Chrome API mocks (defined in `tests/setup.ts`) and `fake-indexeddb` for IndexedDB testing. Coverage is tracked via v8. The test suite covers background services, shared utilities, content scripts, settings, and API layer (265 tests across 18 test files, 90% statement coverage).
 
 ---
 

@@ -45,10 +45,7 @@ The extension requests the following permissions, all used exclusively for local
 | `storage` | Persist session profiles and tab mappings locally |
 | `cookies` | Read/write/delete cookies per domain for session isolation |
 | `tabs` | Track tab lifecycle, navigate tabs, update badges |
-| `activeTab` | Access current tab for session operations |
-| `scripting` | Inject content scripts for DOM storage save/restore |
 | `declarativeNetRequest` | Modify cookie headers on outbound requests for session isolation |
-| `declarativeNetRequestFeedback` | Debug DNR rule matches (development only) |
 | `contextMenus` | "Open in Session" right-click menu |
 | `alarms` | Periodic state persistence and stale rule cleanup |
 | `favicon` | Display website icons in the popup interface |
