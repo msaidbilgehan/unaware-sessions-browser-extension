@@ -180,11 +180,21 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
     const tab = await chrome.tabs.get(msg.tabId);
     if (!tab.url) return { success: false, error: 'Tab has no URL' };
 
+    const origin = new URL(tab.url).origin;
+    const currentEntry = getTabEntry(msg.tabId);
+
+    // Save the current session's cookies and storage before clearing,
+    // so the data is preserved for switching back later.
+    if (currentEntry) {
+      await Promise.all([
+        saveAllCookiesForSession(currentEntry.sessionId, origin),
+        saveTabStorage(msg.tabId, currentEntry.sessionId, origin),
+      ]);
+    }
+
     await unassignTab(msg.tabId);
 
     // Clear cookies for this origin only (including parent-domain cookies).
-    // Previously this cleared ALL browser cookies, forcing re-login on every site.
-    const origin = new URL(tab.url).origin;
     await clearCookies(origin);
 
     await chrome.tabs.update(msg.tabId, { url: tab.url });

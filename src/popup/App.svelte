@@ -159,7 +159,10 @@
   async function handleCreate(name: string, color: string, emoji?: string) {
     try {
       const session = await createSession(name, color, emoji);
-      sessions = [...sessions, session];
+      // Fetch the authoritative list from the background instead of appending
+      // locally — the storage-change listener may have already added the session
+      // via updateSessionsQuietly(), and duplicates crash the keyed {#each}.
+      sessions = await listSessions();
 
       if (currentTab?.id && currentOrigin) {
         await assignTab(currentTab.id, session.id, currentOrigin);
@@ -216,12 +219,12 @@
   async function handleUndoDelete() {
     if (!deletedSession) return;
     try {
-      const restored = await createSession(
+      await createSession(
         deletedSession.name,
         deletedSession.color,
         deletedSession.emoji,
       );
-      sessions = [...sessions, restored];
+      sessions = await listSessions();
       deletedSession = null;
       toastData = null;
       showToast('Session restored', 'success');
@@ -307,8 +310,8 @@
         icon: 'copy',
         onclick: async () => {
           try {
-            const dup = await duplicateSessionApi(sessionId);
-            sessions = [...sessions, dup];
+            await duplicateSessionApi(sessionId);
+            sessions = await listSessions();
           } catch {
             showToast('Failed to duplicate session', 'error');
           }
