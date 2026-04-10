@@ -25,9 +25,11 @@ Privacy-first, open-source browser extension for isolated browsing sessions with
 ### Key Design Constraints
 
 - **Fresh navigation on session switch** — uses `chrome.tabs.update({url})` for clean cookie state
-- **Origin-scoped cookie swap** — saves/clears/restores cookies per-origin (including parent-domain cookies via domain hierarchy walk), with cross-domain cookie passthrough for auth flows
+- **Origin-scoped cookie swap** — saves/clears/restores cookies strictly per-origin (including parent-domain cookies via domain hierarchy walk); no cross-domain cookies are saved or restored
 - **Cookie isolation modes** — `soft` (default) skips cookie clear/restore on domains where the target session has no saved data, preserving unrelated services; `strict` always clears cookies for full isolation even without target data
 - **Per-tab session switch mutex** — concurrent session switches on the same tab are serialized to prevent interleaved cookie operations
+- **Tab unassignment on cross-origin navigation** — when a tab navigates to a different origin, its session is automatically unassigned (session data belongs to the old origin; keeping it assigned on a new origin causes cross-domain confusion)
+- **IDB binary encoding** — content script encodes `ArrayBuffer`, `TypedArray`, and `Date` values into JSON-safe marker objects before `sendMessage` (Chrome extension messaging uses JSON serialization, not structured clone) and decodes them on restore
 - **One active session per origin at a time** — DOM storage is shared per-origin across all tabs
 - **MV3 only** — no MV2 support, no persistent background page
 - **Service Worker state must survive restarts** — persist to `chrome.storage.session` / `chrome.storage.local` / extension IndexedDB
@@ -80,11 +82,11 @@ npm run release:major # Major version bump + push tags
 ### Background (`src/background/`)
 
 - `session-manager.ts` — session CRUD, ordering, duplicate
-- `cookie-engine.ts` — cookie swap orchestration (save, clear, restore, switch) with domain-hierarchy cookie resolution, DOM storage save/restore, pending restores, per-tab switch mutex, soft/strict isolation mode, and restore failure tracking (ring buffer)
+- `cookie-engine.ts` — cookie swap orchestration (save, clear, restore, switch) with origin-scoped domain-hierarchy cookie resolution, DOM storage save/restore, pending restores, per-tab switch mutex, soft/strict isolation mode, and restore failure tracking (ring buffer)
 - `cookie-store.ts` — IndexedDB wrapper for cookie snapshots + stats
 - `storage-store.ts` — IndexedDB wrapper for storage snapshots + stats
-- `tab-tracker.ts` — tab-to-session mapping with persistence
-- `dnr-manager.ts` — declarativeNetRequest session rules
+- `tab-tracker.ts` — tab-to-session mapping with persistence; unassigns sessions on cross-origin tab navigation
+- `dnr-manager.ts` — declarativeNetRequest session rules with origin-scoped cookie header filtering
 - `messaging.ts` — message router (all MessageType handlers)
 - `badge-manager.ts` — tab badge with session color + abbreviation
 - `context-menu.ts` — "Open in Session" right-click menu

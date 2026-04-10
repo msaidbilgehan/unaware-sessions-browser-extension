@@ -367,7 +367,7 @@ npm run test:watch
 npm run test:coverage
 ```
 
-Tests use **Vitest** with Chrome API mocks (defined in `tests/setup.ts`) and `fake-indexeddb` for IndexedDB testing. Coverage is tracked via v8. The test suite covers background services, shared utilities, content scripts, settings, and API layer (325 tests across 20 test files, 90%+ statement coverage).
+Tests use **Vitest** with Chrome API mocks (defined in `tests/setup.ts`) and `fake-indexeddb` for IndexedDB testing. Coverage is tracked via v8. The test suite covers background services, shared utilities, content scripts, settings, and API layer (344 tests across 20 test files, 93%+ statement coverage).
 
 ---
 
