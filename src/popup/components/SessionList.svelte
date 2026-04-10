@@ -109,7 +109,7 @@
       role="button"
       tabindex="0"
       onclick={onunassign}
-      onkeydown={(e) => e.key === 'Enter' && onunassign()}
+      onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onunassign())}
     >
       <span class="default-icon">
         <Icon name="globe" size={13} />
@@ -221,10 +221,16 @@
     background: transparent;
   }
 
-  .default-item:hover {
+  .default-item:hover,
+  .default-item:focus-visible {
     background: var(--color-interactive-hover);
     color: var(--color-text-secondary);
     border-color: var(--color-border-primary);
+  }
+
+  .default-item:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
   }
 
   .default-item.active {
@@ -314,6 +320,12 @@
 
   .group-toggle:hover .group-label {
     color: var(--color-text-secondary);
+  }
+
+  .group-toggle:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
+    border-radius: var(--radius-md);
   }
 
   .toggle-icon {

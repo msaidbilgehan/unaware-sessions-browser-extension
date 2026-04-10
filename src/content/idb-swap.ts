@@ -56,6 +56,9 @@ async function snapshotDatabase(name: string): Promise<IndexedDBSnapshot | null>
         }
 
         const records: unknown[] = [];
+        // Save explicit keys for out-of-line key stores (keyPath is null)
+        const needsExplicitKeys = store.keyPath === null;
+        const keys: IDBValidKey[] = [];
         const cursorRequest = store.openCursor();
 
         cursorRequest.onsuccess = () => {
@@ -74,6 +77,9 @@ async function snapshotDatabase(name: string): Promise<IndexedDBSnapshot | null>
             }
 
             records.push(cursor.value);
+            if (needsExplicitKeys) {
+              keys.push(cursor.key);
+            }
             cursor.continue();
           } else {
             objectStores.push({
@@ -82,6 +88,7 @@ async function snapshotDatabase(name: string): Promise<IndexedDBSnapshot | null>
               autoIncrement: store.autoIncrement,
               indexes,
               records,
+              ...(needsExplicitKeys ? { keys } : {}),
             });
 
             completed++;
@@ -177,8 +184,24 @@ export async function restoreIndexedDB(snapshots: IndexedDBSnapshot[]): Promise<
 
           for (const storeSnapshot of snapshot.objectStores) {
             const store = tx.objectStore(storeSnapshot.name);
-            for (const record of storeSnapshot.records) {
-              store.put(record);
+            const hasExplicitKeys =
+              storeSnapshot.keyPath === null && Array.isArray(storeSnapshot.keys);
+
+            for (let i = 0; i < storeSnapshot.records.length; i++) {
+              try {
+                if (hasExplicitKeys && storeSnapshot.keys![i] !== undefined) {
+                  store.put(storeSnapshot.records[i], storeSnapshot.keys![i]);
+                } else {
+                  store.put(storeSnapshot.records[i]);
+                }
+              } catch (err) {
+                // Skip individual records that fail (e.g., invalid key path values)
+                // rather than aborting the entire store restore.
+                console.warn(
+                  `[Unaware Sessions] Skipping IDB record in "${storeSnapshot.name}":`,
+                  err,
+                );
+              }
             }
           }
 

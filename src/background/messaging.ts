@@ -1,5 +1,5 @@
 import { MessageType } from '@shared/types';
-import type { Message, MessageResponse } from '@shared/types';
+import type { Message, MessageResponse, FullExportData, CookieSnapshot, StorageSnapshot } from '@shared/types';
 import {
   createSession,
   deleteSession,
@@ -22,6 +22,8 @@ import {
   saveTabStorage,
   detectSessionForOrigin,
   clearCookies,
+  getCookiesForOrigin,
+  getRestoreFailures,
 } from './cookie-engine';
 import { rebuildContextMenu } from './context-menu';
 import { updateBadge } from './badge-manager';
@@ -29,7 +31,8 @@ import { cookieStore } from './cookie-store';
 import { storageStore } from './storage-store';
 import { STORAGE_KEYS } from '@shared/constants';
 import { setLocal } from '@shared/storage';
-import { estimateCookieBytes, estimateRecordBytes } from '@shared/utils';
+import { estimateCookieBytes, estimateRecordBytes, extractDomain } from '@shared/utils';
+import type { CookieDiffEntry, CookieDiffResult, CookieDiffStatus, LiveCookieInfo } from '@shared/types';
 import { refreshAllActiveSessions } from './auto-refresh';
 
 type MessageHandler = (
@@ -65,13 +68,13 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
 
   [MessageType.GET_SESSION_FOR_TAB]: async (msg) => {
     if (msg.type !== MessageType.GET_SESSION_FOR_TAB) return { success: false };
-    const entry = getTabEntry(msg.tabId);
+    const entry = await getTabEntry(msg.tabId);
     return { success: true, data: entry };
   },
 
   [MessageType.SWITCH_SESSION]: async (msg) => {
     if (msg.type !== MessageType.SWITCH_SESSION) return { success: false };
-    const outgoing = getTabEntry(msg.tabId);
+    const outgoing = await getTabEntry(msg.tabId);
     await switchSession(msg.tabId, msg.targetSessionId);
     if (outgoing) {
       await touchSessionRefresh(outgoing.sessionId);
@@ -96,7 +99,7 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
 
   [MessageType.GET_TABS_FOR_SESSION]: async (msg) => {
     if (msg.type !== MessageType.GET_TABS_FOR_SESSION) return { success: false };
-    const tabs = getTabsForSession(msg.sessionId);
+    const tabs = await getTabsForSession(msg.sessionId);
     return { success: true, data: tabs };
   },
 
@@ -111,7 +114,7 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
   },
 
   [MessageType.GET_ALL_TAB_COUNTS]: async () => {
-    const entries = getAllTabEntries();
+    const entries = await getAllTabEntries();
     const counts: Record<string, number> = {};
     for (const [, entry] of entries) {
       counts[entry.sessionId] = (counts[entry.sessionId] ?? 0) + 1;
@@ -121,7 +124,7 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
 
   [MessageType.GET_SESSION_STATS]: async (msg) => {
     if (msg.type !== MessageType.GET_SESSION_STATS) return { success: false };
-    const tabs = getTabsForSession(msg.sessionId);
+    const tabs = await getTabsForSession(msg.sessionId);
     const [cookieStats, storageStats] = await Promise.all([
       cookieStore.getStatsForSession(msg.sessionId),
       storageStore.getStatsForSession(msg.sessionId),
@@ -159,7 +162,7 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
     const tab = await chrome.tabs.get(msg.tabId);
     if (!tab.url) return { success: false, error: 'Tab has no URL' };
 
-    const entry = getTabEntry(msg.tabId);
+    const entry = await getTabEntry(msg.tabId);
     if (!entry) return { success: false, error: 'Tab is not assigned to a session' };
 
     const origin = new URL(tab.url).origin;
@@ -181,7 +184,7 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
     if (!tab.url) return { success: false, error: 'Tab has no URL' };
 
     const origin = new URL(tab.url).origin;
-    const currentEntry = getTabEntry(msg.tabId);
+    const currentEntry = await getTabEntry(msg.tabId);
 
     // Save the current session's cookies and storage before clearing,
     // so the data is preserved for switching back later.
@@ -328,6 +331,229 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
   [MessageType.REFRESH_ACTIVE_SESSIONS]: async () => {
     const refreshedCount = await refreshAllActiveSessions();
     return { success: true, data: { refreshedCount } };
+  },
+
+  // ── Full Export / Import ───────────────────────────────────────
+
+  [MessageType.EXPORT_FULL]: async () => {
+    const sessions = await listSessions();
+
+    // Collect all cookie + storage snapshots for every session in parallel
+    const [cookieResults, storageResults] = await Promise.all([
+      Promise.all(sessions.map((s) => cookieStore.getAllSnapshotsForSession(s.id))),
+      Promise.all(sessions.map((s) => storageStore.getAllSnapshotsForSession(s.id))),
+    ]);
+
+    const cookieSnapshots: CookieSnapshot[] = cookieResults.flat();
+    const storageSnapshots: StorageSnapshot[] = storageResults.flat();
+
+    const data: FullExportData = {
+      version: 1,
+      exportedAt: Date.now(),
+      sessions,
+      cookieSnapshots,
+      storageSnapshots,
+    };
+
+    return { success: true, data };
+  },
+
+  [MessageType.IMPORT_FULL]: async (msg) => {
+    if (msg.type !== MessageType.IMPORT_FULL) return { success: false };
+    const { data } = msg;
+
+    // Validate structure
+    if (data.version !== 1 || !Array.isArray(data.sessions)) {
+      return { success: false, error: 'Invalid full export format' };
+    }
+
+    let imported = 0;
+
+    // Import sessions — skip duplicates by name
+    const existingSessions = await listSessions();
+    const existingNames = new Set(existingSessions.map((s) => s.name));
+
+    for (const profile of data.sessions) {
+      if (!profile.name || !profile.color) continue;
+      if (existingNames.has(profile.name)) continue;
+
+      const session = await createSession(profile.name, profile.color, profile.emoji);
+
+      // Remap cookie snapshots from old sessionId to new sessionId
+      const oldId = profile.id;
+      const newId = session.id;
+
+      for (const snap of data.cookieSnapshots) {
+        if (snap.sessionId !== oldId) continue;
+        await cookieStore.save({ ...snap, sessionId: newId });
+      }
+
+      for (const snap of data.storageSnapshots) {
+        if (snap.sessionId !== oldId) continue;
+        await storageStore.save({ ...snap, sessionId: newId });
+      }
+
+      imported++;
+    }
+
+    await rebuildContextMenu();
+    return { success: true, data: { imported } };
+  },
+
+  // ── Debug handlers ─────────────────────────────────────────────
+
+  [MessageType.GET_LIVE_COOKIES]: async (msg) => {
+    if (msg.type !== MessageType.GET_LIVE_COOKIES) return { success: false };
+    const liveCookies = await getCookiesForOrigin(msg.origin);
+    const data: LiveCookieInfo[] = liveCookies.map((c) => ({
+      name: c.name,
+      value: c.value,
+      domain: c.domain,
+      path: c.path,
+      secure: c.secure,
+      httpOnly: c.httpOnly,
+      sameSite: c.sameSite ?? 'unspecified',
+      expirationDate: c.expirationDate,
+    }));
+    return { success: true, data };
+  },
+
+  [MessageType.GET_COOKIE_DIFF]: async (msg) => {
+    if (msg.type !== MessageType.GET_COOKIE_DIFF) return { success: false };
+    const { sessionId, origin } = msg;
+    const domain = extractDomain(origin);
+
+    // Load snapshot
+    const snapshot = await cookieStore.load(sessionId, origin);
+    const snapshotCookies = snapshot?.cookies ?? [];
+
+    // Filter snapshot to cookies relevant to this origin
+    const relevantSnapshot = domain
+      ? snapshotCookies.filter((c) => {
+          const bare = c.domain.replace(/^\./, '');
+          return bare === domain || domain.endsWith(`.${bare}`) || bare.endsWith(`.${domain}`);
+        })
+      : snapshotCookies;
+
+    // Get live browser cookies for this origin
+    const liveCookies = await getCookiesForOrigin(origin);
+
+    // Build lookup maps keyed by "name\0domain\0path"
+    const snapshotMap = new Map<string, (typeof snapshotCookies)[0]>();
+    for (const c of relevantSnapshot) {
+      snapshotMap.set(`${c.name}\0${c.domain}\0${c.path}`, c);
+    }
+
+    const liveMap = new Map<string, (typeof liveCookies)[0]>();
+    for (const c of liveCookies) {
+      liveMap.set(`${c.name}\0${c.domain}\0${c.path}`, c);
+    }
+
+    const entries: CookieDiffEntry[] = [];
+    const nowMs = Date.now() / 1000;
+
+    // Check snapshot cookies against live
+    for (const [key, snap] of snapshotMap) {
+      const live = liveMap.get(key);
+
+      if (!live) {
+        // Check if expired
+        const isExpired = snap.expirationDate != null && snap.expirationDate < nowMs;
+        const status: CookieDiffStatus = isExpired ? 'expired' : 'missing_in_browser';
+        entries.push({
+          name: snap.name,
+          domain: snap.domain,
+          path: snap.path,
+          status,
+          snapshotValue: snap.value,
+        });
+      } else if (snap.value !== live.value) {
+        entries.push({
+          name: snap.name,
+          domain: snap.domain,
+          path: snap.path,
+          status: 'value_changed',
+          snapshotValue: snap.value,
+          liveValue: live.value,
+        });
+      } else {
+        // Values match — check flags
+        const flagDiffs: string[] = [];
+        if (snap.secure !== live.secure) flagDiffs.push(`secure: ${snap.secure} → ${live.secure}`);
+        if (snap.httpOnly !== live.httpOnly) flagDiffs.push(`httpOnly: ${snap.httpOnly} → ${live.httpOnly}`);
+        if (snap.sameSite !== live.sameSite) flagDiffs.push(`sameSite: ${snap.sameSite} → ${live.sameSite}`);
+
+        if (flagDiffs.length > 0) {
+          entries.push({
+            name: snap.name,
+            domain: snap.domain,
+            path: snap.path,
+            status: 'flags_changed',
+            snapshotValue: snap.value,
+            liveValue: live.value,
+            flagDiffs,
+          });
+        } else {
+          entries.push({
+            name: snap.name,
+            domain: snap.domain,
+            path: snap.path,
+            status: 'match',
+            snapshotValue: snap.value,
+            liveValue: live.value,
+          });
+        }
+      }
+    }
+
+    // Check live cookies not in snapshot
+    for (const [key, live] of liveMap) {
+      if (!snapshotMap.has(key)) {
+        entries.push({
+          name: live.name,
+          domain: live.domain,
+          path: live.path,
+          status: 'extra_in_browser',
+          liveValue: live.value,
+        });
+      }
+    }
+
+    // Sort: problems first, then matches
+    const statusOrder: Record<CookieDiffStatus, number> = {
+      missing_in_browser: 0,
+      expired: 1,
+      value_changed: 2,
+      flags_changed: 3,
+      extra_in_browser: 4,
+      match: 5,
+    };
+    entries.sort((a, b) => statusOrder[a.status] - statusOrder[b.status]);
+
+    const summary = {
+      matched: entries.filter((e) => e.status === 'match').length,
+      valueChanged: entries.filter((e) => e.status === 'value_changed').length,
+      flagsChanged: entries.filter((e) => e.status === 'flags_changed').length,
+      missingInBrowser: entries.filter((e) => e.status === 'missing_in_browser').length,
+      extraInBrowser: entries.filter((e) => e.status === 'extra_in_browser').length,
+      expired: entries.filter((e) => e.status === 'expired').length,
+    };
+
+    const result: CookieDiffResult = {
+      origin,
+      sessionId,
+      snapshotTimestamp: snapshot?.timestamp ?? null,
+      totalSnapshot: relevantSnapshot.length,
+      totalLive: liveCookies.length,
+      entries,
+      summary,
+    };
+
+    return { success: true, data: result };
+  },
+
+  [MessageType.GET_RESTORE_FAILURES]: async () => {
+    return { success: true, data: getRestoreFailures() };
   },
 
   [MessageType.PING]: async () => {

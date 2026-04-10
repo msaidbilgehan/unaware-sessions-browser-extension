@@ -35,7 +35,10 @@
     class="overlay"
     onclick={(e) => e.stopPropagation()}
     onkeydown={(e) => e.stopPropagation()}
-    role="presentation"
+    role="dialog"
+    tabindex="-1"
+    aria-modal="true"
+    aria-label="Quick Switch"
   >
     <h3>Quick Switch</h3>
     <p class="hint">Press a number to switch</p>
@@ -56,7 +59,7 @@
   .overlay-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.5);
+    background: var(--color-bg-overlay);
     display: flex;
     align-items: center;
     justify-content: center;

@@ -73,6 +73,11 @@
     border-color: var(--color-text-tertiary);
   }
 
+  .swatch:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
+  }
+
   .swatch.active {
     border-color: var(--color-text-primary);
     box-shadow:

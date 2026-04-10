@@ -7,6 +7,7 @@
   import ImportExportTab from './components/ImportExportTab.svelte';
   import SettingsTab from './components/SettingsTab.svelte';
   import AboutTab from './components/AboutTab.svelte';
+  import DebugTab from './components/DebugTab.svelte';
   import AppLogo from '@shared/components/AppLogo.svelte';
 
   let sessions = $state<SessionProfile[]>([]);
@@ -18,6 +19,7 @@
     { id: 'settings', label: 'Settings', icon: 'settings' },
     { id: 'import-export', label: 'Data', icon: 'arrow-right-left' },
     { id: 'about', label: 'About', icon: 'info' },
+    { id: 'debug', label: 'Debug', icon: 'zap' },
   ];
 
   // Full initial load with loading spinner — called once on mount
@@ -32,10 +34,14 @@
     }
   }
 
-  // Silent update — no loading spinner, Svelte re-renders only changed parts
+  // Silent update — only replace sessions if the data actually changed,
+  // to avoid resetting child component state (expanded sessions, editing, etc.)
   async function updateSessionsQuietly() {
     try {
-      sessions = await listSessions();
+      const fresh = await listSessions();
+      if (JSON.stringify(fresh) !== JSON.stringify(sessions)) {
+        sessions = fresh;
+      }
     } catch {
       // Silently ignore
     }
@@ -91,6 +97,8 @@
       <ImportExportTab {sessions} onupdate={loadSessions} />
     {:else if activeTab === 'about'}
       <AboutTab {sessions} onupdate={loadSessions} />
+    {:else if activeTab === 'debug'}
+      <DebugTab {sessions} onupdate={loadSessions} />
     {/if}
   </div>
 </main>

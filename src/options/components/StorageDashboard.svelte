@@ -50,7 +50,10 @@
   <section>
     <h2>Storage Usage</h2>
     {#if loading}
-      <p class="loading">Loading storage data...</p>
+      <div class="loading">
+        <div class="loading-spinner"></div>
+        <p>Loading storage data...</p>
+      </div>
     {:else}
       <div class="dashboard">
         {#each sessions as session (session.id)}
@@ -104,8 +107,29 @@
   }
 
   .loading {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
     color: var(--color-text-tertiary);
     font-size: var(--text-sm);
+  }
+
+  .loading p {
+    margin: 0;
+  }
+
+  .loading-spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--color-border-primary);
+    border-top-color: var(--color-accent);
+    border-radius: var(--radius-full);
+    animation: spin 0.7s linear infinite;
+    flex-shrink: 0;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
   }
 
   .dashboard {
@@ -116,7 +140,7 @@
 
   .row {
     display: grid;
-    grid-template-columns: 120px 1fr 60px;
+    grid-template-columns: minmax(80px, 150px) 1fr auto;
     align-items: center;
     gap: var(--space-4);
   }

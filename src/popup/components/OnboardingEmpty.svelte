@@ -71,7 +71,6 @@
     margin: 0;
     font-size: var(--text-sm);
     color: var(--color-text-tertiary);
-    margin-top: calc(-1 * var(--space-2));
   }
 
   .steps {
@@ -146,5 +145,10 @@
   .create-btn:active {
     transform: translateY(0);
     box-shadow: var(--shadow-xs);
+  }
+
+  .create-btn:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
   }
 </style>

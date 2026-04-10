@@ -59,4 +59,10 @@
     color: var(--color-text-secondary);
     background: var(--color-interactive-hover);
   }
+
+  .theme-toggle:focus-visible {
+    outline: none;
+    color: var(--color-text-secondary);
+    box-shadow: var(--shadow-focus);
+  }
 </style>

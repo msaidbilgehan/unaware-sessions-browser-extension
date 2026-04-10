@@ -60,9 +60,19 @@ export interface SessionSettings {
 
 export type AutoRefreshInterval = 0 | 30 | 60 | 120 | 300;
 
+/**
+ * Cookie isolation mode per domain.
+ * - **soft**: Skip clearing cookies when the target session has no snapshot
+ *   for this origin. Unmanaged domains pass through untouched.
+ * - **strict**: Always clear cookies on session switch, even when nothing
+ *   will be restored (clean slate). Use for domains that need full isolation.
+ */
+export type IsolationMode = 'soft' | 'strict';
+
 export interface ExtensionSettings {
   autoRefreshInterval: AutoRefreshInterval;
   autoRefreshDefaultEnabled: boolean;
+  isolationModeDefault: IsolationMode;
 }
 
 // ── Tab-Session Mapping ──────────────────────────────────────────
@@ -108,6 +118,8 @@ export interface ObjectStoreSnapshot {
   autoIncrement: boolean;
   indexes: IndexSnapshot[];
   records: unknown[];
+  /** Explicit keys for out-of-line key stores (keyPath === null, autoIncrement === false). */
+  keys?: IDBValidKey[];
 }
 
 export interface IndexSnapshot {
@@ -165,6 +177,15 @@ export enum MessageType {
   // Content script lifecycle
   CONTENT_SCRIPT_READY = 'CONTENT_SCRIPT_READY',
   PING = 'PING',
+
+  // Import / Export (full)
+  EXPORT_FULL = 'EXPORT_FULL',
+  IMPORT_FULL = 'IMPORT_FULL',
+
+  // Debug
+  GET_LIVE_COOKIES = 'GET_LIVE_COOKIES',
+  GET_COOKIE_DIFF = 'GET_COOKIE_DIFF',
+  GET_RESTORE_FAILURES = 'GET_RESTORE_FAILURES',
 }
 
 export interface CreateSessionMessage {
@@ -330,6 +351,91 @@ export interface RefreshActiveSessionsMessage {
   type: MessageType.REFRESH_ACTIVE_SESSIONS;
 }
 
+// ── Full Export / Import ────────────────────────────────────────
+
+export interface FullExportData {
+  version: 1;
+  exportedAt: number;
+  sessions: SessionProfile[];
+  cookieSnapshots: CookieSnapshot[];
+  storageSnapshots: StorageSnapshot[];
+}
+
+export interface ExportFullMessage {
+  type: MessageType.EXPORT_FULL;
+}
+
+export interface ImportFullMessage {
+  type: MessageType.IMPORT_FULL;
+  data: FullExportData;
+}
+
+// ── Debug Messages ──────────────────────────────────────────────
+
+export interface GetLiveCookiesMessage {
+  type: MessageType.GET_LIVE_COOKIES;
+  origin: string;
+}
+
+export interface GetCookieDiffMessage {
+  type: MessageType.GET_COOKIE_DIFF;
+  sessionId: string;
+  origin: string;
+}
+
+export interface GetRestoreFailuresMessage {
+  type: MessageType.GET_RESTORE_FAILURES;
+}
+
+export type CookieDiffStatus = 'match' | 'value_changed' | 'flags_changed' | 'missing_in_browser' | 'extra_in_browser' | 'expired';
+
+export interface CookieDiffEntry {
+  name: string;
+  domain: string;
+  path: string;
+  status: CookieDiffStatus;
+  snapshotValue?: string;
+  liveValue?: string;
+  flagDiffs?: string[];
+}
+
+export interface CookieDiffResult {
+  origin: string;
+  sessionId: string;
+  snapshotTimestamp: number | null;
+  totalSnapshot: number;
+  totalLive: number;
+  entries: CookieDiffEntry[];
+  summary: {
+    matched: number;
+    valueChanged: number;
+    flagsChanged: number;
+    missingInBrowser: number;
+    extraInBrowser: number;
+    expired: number;
+  };
+}
+
+export interface RestoreFailureEntry {
+  timestamp: number;
+  sessionId: string;
+  origin: string;
+  cookieName: string;
+  cookieDomain: string;
+  reason: string;
+}
+
+export interface LiveCookieInfo {
+  name: string;
+  value: string;
+  domain: string;
+  path: string;
+  secure: boolean;
+  httpOnly: boolean;
+  sameSite: string;
+  expirationDate?: number;
+}
+
 export type Message =
   | CreateSessionMessage
   | DeleteSessionMessage
@@ -358,7 +464,12 @@ export type Message =
   | DeleteSessionCookieMessage
   | UpdateSessionStorageEntryMessage
   | DeleteSessionStorageEntryMessage
-  | RefreshActiveSessionsMessage;
+  | RefreshActiveSessionsMessage
+  | ExportFullMessage
+  | ImportFullMessage
+  | GetLiveCookiesMessage
+  | GetCookieDiffMessage
+  | GetRestoreFailuresMessage;
 
 // ── Response Wrapper ─────────────────────────────────────────────
 

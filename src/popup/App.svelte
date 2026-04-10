@@ -1,10 +1,13 @@
 <script lang="ts">
-  import type { SessionProfile, TabSessionEntry, AutoRefreshInterval } from '@shared/types';
-  import { extractOrigin } from '@shared/utils';
+  import type { SessionProfile, TabSessionEntry, AutoRefreshInterval, IsolationMode } from '@shared/types';
+  import { extractOrigin, extractDomain } from '@shared/utils';
   import {
     getAutoRefreshInterval,
     setAutoRefreshInterval,
+    getDomainIsolationMode,
+    setDomainIsolationMode,
     onSettingsChange,
+    onDomainIsolationChange,
   } from '@shared/settings-store';
   import { STORAGE_KEYS } from '@shared/constants';
   import {
@@ -410,6 +413,31 @@
     }
   }
 
+  // Isolation mode (per-domain: soft/strict)
+  const currentDomain = $derived(currentOrigin ? extractDomain(currentOrigin) : '');
+  let isolationMode = $state<IsolationMode>('soft');
+
+  $effect(() => {
+    if (currentDomain) {
+      isolationMode = getDomainIsolationMode(currentDomain);
+    }
+  });
+
+  $effect(() => {
+    const unsub = onDomainIsolationChange(() => {
+      if (currentDomain) {
+        isolationMode = getDomainIsolationMode(currentDomain);
+      }
+    });
+    return unsub;
+  });
+
+  async function handleIsolationToggle() {
+    if (!currentDomain) return;
+    const newMode: IsolationMode = isolationMode === 'soft' ? 'strict' : 'soft';
+    await setDomainIsolationMode(currentDomain, newMode);
+  }
+
   // Auto-refresh is handled by the service worker alarm (background/auto-refresh.ts).
   // The storage listener above picks up changes and updates the UI quietly.
 </script>
@@ -471,6 +499,8 @@
         {refreshing}
         {autoRefreshEnabled}
         onautorefreshToggle={handleAutoRefreshToggle}
+        {isolationMode}
+        onisolationToggle={handleIsolationToggle}
       />
 
       {#if sessions.length > 5}

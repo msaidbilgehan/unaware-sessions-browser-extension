@@ -1,7 +1,6 @@
 import { listSessions } from './session-manager';
 import { switchSession } from './cookie-engine';
 import { extractOrigin, isValidUrl } from '@shared/utils';
-import { assignTab } from './tab-tracker';
 
 const MENU_PARENT_ID = 'unaware-sessions-open-in';
 const MENU_NEW_SESSION_ID = 'unaware-sessions-new';
@@ -79,9 +78,6 @@ async function handleMenuClick(
   const origin = extractOrigin(linkUrl);
   if (!origin) return;
 
-  // Assign the new tab to the selected session
-  await assignTab(newTab.id, sessionId, origin);
-
-  // Switch session on the new tab (sets cookies, DNR rules)
+  // Switch session on the new tab (assigns tab, sets cookies, DNR rules)
   await switchSession(newTab.id, sessionId);
 }

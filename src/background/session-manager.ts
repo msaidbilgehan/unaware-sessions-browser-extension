@@ -6,17 +6,17 @@ import { cookieStore } from './cookie-store';
 import { storageStore } from './storage-store';
 
 let sessions: Map<string, SessionProfile> = new Map();
-let hydrated = false;
+let hydratePromise: Promise<void> | null = null;
 
 async function ensureHydrated(): Promise<void> {
-  if (hydrated) return;
-  await hydrateSessions();
+  if (hydratePromise) return hydratePromise;
+  hydratePromise = hydrateSessions();
+  return hydratePromise;
 }
 
 export async function hydrateSessions(): Promise<void> {
   const stored = await getLocal<SessionProfile[]>(STORAGE_KEYS.SESSIONS);
   sessions = new Map((stored ?? []).map((s) => [s.id, s]));
-  hydrated = true;
 }
 
 async function persistSessions(): Promise<void> {

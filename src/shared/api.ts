@@ -5,6 +5,10 @@ import type {
   SessionStats,
   TabSessionEntry,
   MessageResponse,
+  CookieDiffResult,
+  LiveCookieInfo,
+  RestoreFailureEntry,
+  FullExportData,
 } from '@shared/types';
 
 function isConnectionError(err: unknown): boolean {
@@ -198,4 +202,28 @@ export function deleteSessionStorageEntry(
     storageType,
     key,
   });
+}
+
+// ── Full Export / Import ─────────────────────────────────────────
+
+export function exportFull(): Promise<FullExportData> {
+  return sendMessage({ type: MessageType.EXPORT_FULL });
+}
+
+export function importFull(data: FullExportData): Promise<{ imported: number }> {
+  return sendMessage({ type: MessageType.IMPORT_FULL, data });
+}
+
+// ── Debug API ────────────────────────────────────────────────────
+
+export function getLiveCookies(origin: string): Promise<LiveCookieInfo[]> {
+  return sendMessage({ type: MessageType.GET_LIVE_COOKIES, origin });
+}
+
+export function getCookieDiff(sessionId: string, origin: string): Promise<CookieDiffResult> {
+  return sendMessage({ type: MessageType.GET_COOKIE_DIFF, sessionId, origin });
+}
+
+export function getRestoreFailures(): Promise<RestoreFailureEntry[]> {
+  return sendMessage({ type: MessageType.GET_RESTORE_FAILURES });
 }

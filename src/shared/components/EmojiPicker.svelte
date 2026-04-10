@@ -52,9 +52,15 @@
     transition: all var(--transition-fast);
   }
 
-  .emoji-btn:hover {
+  .emoji-btn:hover,
+  .emoji-btn:focus-visible {
     border-color: var(--color-text-tertiary);
     background: var(--color-interactive-hover);
+  }
+
+  .emoji-btn:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
   }
 
   .emoji-btn.active {

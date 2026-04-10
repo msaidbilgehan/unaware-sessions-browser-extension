@@ -5,17 +5,17 @@ import { extractOrigin, isValidUrl } from '@shared/utils';
 import { removeRulesForTab } from './dnr-manager';
 
 let tabMap: Map<number, TabSessionEntry> = new Map();
-let hydrated = false;
+let hydratePromise: Promise<void> | null = null;
 
 async function ensureHydrated(): Promise<void> {
-  if (hydrated) return;
-  await hydrateTabMap();
+  if (hydratePromise) return hydratePromise;
+  hydratePromise = hydrateTabMap();
+  return hydratePromise;
 }
 
 export async function hydrateTabMap(): Promise<void> {
   const stored = await getSession<TabSessionMap>(STORAGE_KEYS.TAB_MAP);
   tabMap = new Map(Object.entries(stored ?? {}).map(([k, v]) => [Number(k), v]));
-  hydrated = true;
 }
 
 export async function persistTabMap(): Promise<void> {
@@ -39,11 +39,13 @@ export async function unassignTab(tabId: number): Promise<void> {
   await removeRulesForTab(tabId);
 }
 
-export function getTabEntry(tabId: number): TabSessionEntry | undefined {
+export async function getTabEntry(tabId: number): Promise<TabSessionEntry | undefined> {
+  await ensureHydrated();
   return tabMap.get(tabId);
 }
 
-export function getTabsForSession(sessionId: string): number[] {
+export async function getTabsForSession(sessionId: string): Promise<number[]> {
+  await ensureHydrated();
   const tabs: number[] = [];
   for (const [tabId, entry] of tabMap) {
     if (entry.sessionId === sessionId) {
@@ -53,7 +55,8 @@ export function getTabsForSession(sessionId: string): number[] {
   return tabs;
 }
 
-export function getAllTabEntries(): Map<number, TabSessionEntry> {
+export async function getAllTabEntries(): Promise<Map<number, TabSessionEntry>> {
+  await ensureHydrated();
   return new Map(tabMap);
 }
 

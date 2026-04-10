@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { IsolationMode } from '@shared/types';
   import Icon from '@shared/components/Icon.svelte';
 
   interface Props {
@@ -10,6 +11,8 @@
     refreshing?: boolean;
     autoRefreshEnabled?: boolean;
     onautorefreshToggle?: () => void;
+    isolationMode?: IsolationMode;
+    onisolationToggle?: () => void;
   }
 
   let {
@@ -21,7 +24,11 @@
     refreshing = false,
     autoRefreshEnabled = false,
     onautorefreshToggle,
+    isolationMode = 'soft',
+    onisolationToggle,
   }: Props = $props();
+
+  const isStrict = $derived(isolationMode === 'strict');
 
   const faviconUrl = $derived(
     currentOrigin
@@ -95,6 +102,17 @@
 
     {#if currentOrigin}
       <div class="actions">
+        {#if onisolationToggle}
+          <button
+            class="action-btn"
+            class:active={isStrict}
+            onclick={onisolationToggle}
+            aria-label={isStrict ? 'Switch to soft isolation' : 'Switch to strict isolation'}
+            title={isStrict ? 'Strict isolation (clears all cookies)' : 'Soft isolation (preserves unmanaged cookies)'}
+          >
+            <Icon name={isStrict ? 'lock' : 'shield'} size={12} />
+          </button>
+        {/if}
         {#if onautorefreshToggle}
           <button
             class="action-btn"

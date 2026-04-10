@@ -133,7 +133,8 @@
   }
 
   .diff-row.dimmed {
-    opacity: 0.5;
+    opacity: 0.6;
+    background: var(--color-bg-sunken);
   }
 
   .checkbox-cell {

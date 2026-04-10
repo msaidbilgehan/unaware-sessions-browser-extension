@@ -20,7 +20,18 @@ export async function updateRulesForTab(
   if (!domain) return;
 
   const snapshot = await cookieStore.load(sessionId, origin);
-  const cookieHeader = snapshot ? serializeCookies(snapshot.cookies) : '';
+
+  // If no snapshot or no cookies, remove any existing rule so the browser's
+  // native Cookie header passes through. An empty "Cookie: " header would
+  // override the browser's real cookies and break sites like Google.
+  if (!snapshot || snapshot.cookies.length === 0) {
+    await chrome.declarativeNetRequest.updateSessionRules({
+      removeRuleIds: [ruleId],
+    });
+    return;
+  }
+
+  const cookieHeader = serializeCookies(snapshot.cookies);
 
   const rule: chrome.declarativeNetRequest.Rule = {
     id: ruleId,
@@ -74,22 +85,6 @@ export async function removeRulesForTab(tabId: number): Promise<void> {
   });
 }
 
-export async function removeRulesForSession(_sessionId: string): Promise<void> {
-  const rules = await chrome.declarativeNetRequest.getSessionRules();
-
-  const ruleIds = rules
-    .filter((r) => {
-      const tabId = r.id - DNR_RULE_ID_BASE;
-      return tabId > 0 && r.condition?.tabIds?.includes(tabId);
-    })
-    .map((r) => r.id);
-
-  if (ruleIds.length > 0) {
-    await chrome.declarativeNetRequest.updateSessionRules({
-      removeRuleIds: ruleIds,
-    });
-  }
-}
 
 export async function getRuleCount(): Promise<number> {
   const rules = await chrome.declarativeNetRequest.getSessionRules();

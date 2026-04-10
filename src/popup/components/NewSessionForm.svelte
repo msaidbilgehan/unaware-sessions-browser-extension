@@ -161,7 +161,7 @@
   }
 
   .preview-emoji {
-    font-size: 15px;
+    font-size: var(--text-lg);
     line-height: 1;
   }
 
@@ -248,5 +248,10 @@
   .create-btn:active {
     transform: translateY(0);
     box-shadow: var(--shadow-xs);
+  }
+
+  .create-btn:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
   }
 </style>

@@ -1,15 +1,51 @@
-import type { CookieSnapshot, StorageSnapshot, MessageResponse } from '@shared/types';
+import type {
+  CookieSnapshot,
+  StorageSnapshot,
+  MessageResponse,
+  RestoreFailureEntry,
+} from '@shared/types';
 import { MessageType } from '@shared/types';
 import { extractDomain, buildCookieUrl, now } from '@shared/utils';
+import { getDomainIsolationMode } from '@shared/settings-store';
 import { cookieStore } from './cookie-store';
 import { storageStore } from './storage-store';
 import { getTabEntry, assignTab } from './tab-tracker';
-import { updateRulesForTab } from './dnr-manager';
+import { updateRulesForTab, removeRulesForTab } from './dnr-manager';
 
 const MESSAGE_TIMEOUT_MS = 5000;
+const MAX_RESTORE_FAILURES = 200;
 
 // Pending storage restores keyed by tabId
 const pendingRestores: Map<number, { sessionId: string; origin: string }> = new Map();
+
+// Per-tab mutex to prevent interleaved switchSession calls.
+// If a switch is in progress on tab N, a second switch on the same tab waits
+// for the first to complete before starting.
+const switchLocks: Map<number, Promise<void>> = new Map();
+
+// Ring buffer of recent restore failures for debugging
+const restoreFailures: RestoreFailureEntry[] = [];
+
+function recordRestoreFailure(
+  sessionId: string,
+  origin: string,
+  cookieName: string,
+  cookieDomain: string,
+  reason: string,
+): void {
+  restoreFailures.push({ timestamp: now(), sessionId, origin, cookieName, cookieDomain, reason });
+  if (restoreFailures.length > MAX_RESTORE_FAILURES) {
+    restoreFailures.splice(0, restoreFailures.length - MAX_RESTORE_FAILURES);
+  }
+}
+
+export function getRestoreFailures(): RestoreFailureEntry[] {
+  return [...restoreFailures];
+}
+
+export function clearRestoreFailures(): void {
+  restoreFailures.length = 0;
+}
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -33,7 +69,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
  * (e.g., .google.com cookies when on www.google.com) that
  * chrome.cookies.getAll({ domain: "www.google.com" }) would miss.
  */
-async function getCookiesForOrigin(origin: string): Promise<chrome.cookies.Cookie[]> {
+export async function getCookiesForOrigin(origin: string): Promise<chrome.cookies.Cookie[]> {
   const hostname = extractDomain(origin);
   if (!hostname) return [];
 
@@ -133,9 +169,24 @@ export async function restoreCookies(sessionId: string, origin: string): Promise
     }),
   );
 
-  const failures = results.filter((r) => r.status === 'rejected');
-  if (failures.length > 0) {
-    console.warn(`[Unaware Sessions] Failed to restore ${failures.length} cookie(s)`);
+  let failCount = 0;
+  for (let i = 0; i < results.length; i++) {
+    const result = results[i];
+    if (result.status === 'rejected') {
+      const cookie = snapshot.cookies[i];
+      const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
+      recordRestoreFailure(sessionId, origin, cookie.name, cookie.domain, reason);
+      failCount++;
+    } else if (result.value === null) {
+      // chrome.cookies.set returns null when the cookie was rejected silently
+      const cookie = snapshot.cookies[i];
+      recordRestoreFailure(sessionId, origin, cookie.name, cookie.domain, 'Silently rejected (returned null)');
+      failCount++;
+    }
+  }
+
+  if (failCount > 0) {
+    console.warn(`[Unaware Sessions] Failed to restore ${failCount} cookie(s) for ${origin}`);
   }
 }
 
@@ -287,6 +338,26 @@ export async function saveAllCookiesForSession(sessionId: string, origin: string
 }
 
 export async function switchSession(tabId: number, targetSessionId: string): Promise<void> {
+  // Serialize switches on the same tab — wait for any in-progress switch to finish.
+  const existing = switchLocks.get(tabId);
+  if (existing) {
+    await existing.catch(() => {});
+  }
+
+  const work = doSwitchSession(tabId, targetSessionId);
+  switchLocks.set(tabId, work);
+
+  try {
+    await work;
+  } finally {
+    // Only clear if this is still the latest lock (avoids clearing a newer switch)
+    if (switchLocks.get(tabId) === work) {
+      switchLocks.delete(tabId);
+    }
+  }
+}
+
+async function doSwitchSession(tabId: number, targetSessionId: string): Promise<void> {
   const tab = await chrome.tabs.get(tabId);
   if (!tab.url) {
     throw new Error('Tab has no URL');
@@ -294,7 +365,7 @@ export async function switchSession(tabId: number, targetSessionId: string): Pro
 
   const origin = new URL(tab.url).origin;
   const domain = extractDomain(origin);
-  const currentEntry = getTabEntry(tabId);
+  const currentEntry = await getTabEntry(tabId);
 
   // 1. Save current session's data before switching (parallel — independent I/O)
   if (currentEntry) {
@@ -304,7 +375,28 @@ export async function switchSession(tabId: number, targetSessionId: string): Pro
     ]);
   }
 
-  // 2. Clear cookies for this origin
+  // 2. Check if the target session has cookie data for this origin.
+  //    In "soft" isolation mode, skip clear+restore when no snapshot exists
+  //    so unmanaged domains (e.g., Google when using Instagram sessions) pass through.
+  const targetSnapshot = await cookieStore.load(targetSessionId, origin);
+  const isolationMode = domain ? getDomainIsolationMode(domain) : 'strict';
+  const hasTargetData = targetSnapshot != null && targetSnapshot.cookies.length > 0;
+
+  if (!hasTargetData && isolationMode === 'soft') {
+    // Soft mode: no data for this domain → skip cookie operations, preserve current state.
+    // Update tab mapping for badge/tracking, but REMOVE any DNR rule so the browser's
+    // native Cookie header passes through (no header injection = no cookie override).
+    await Promise.all([
+      assignTab(tabId, targetSessionId, origin),
+      removeRulesForTab(tabId),
+    ]);
+
+    // No storage restore needed — we're passing through
+    await chrome.tabs.update(tabId, { url: tab.url });
+    return;
+  }
+
+  // Strict mode (or target has data): full clear + restore cycle
   await clearCookies(origin);
 
   // 3. Restore target session's cookies for this origin
@@ -312,8 +404,11 @@ export async function switchSession(tabId: number, targetSessionId: string): Pro
 
   // 4. If the snapshot was saved with saveAllCookiesForSession (contains
   //    cross-domain cookies), also restore cookies for related domains
-  //    that the target session needs (e.g., anthropic.com for claude.ai)
-  const fullSnapshot = await cookieStore.load(targetSessionId, origin);
+  //    that the target session needs (e.g., anthropic.com for claude.ai).
+  //    Skip domains in "soft" isolation mode — those should not be overwritten
+  //    by stale cross-domain snapshots (e.g., don't restore old Google cookies
+  //    when switching Instagram sessions).
+  const fullSnapshot = targetSnapshot;
   if (fullSnapshot && domain) {
     // Find domains in the snapshot that are NOT the current origin's domain
     const extraDomains = new Set<string>();
@@ -328,7 +423,16 @@ export async function switchSession(tabId: number, targetSessionId: string): Pro
       }
     }
 
-    // Restore cookies for related domains (e.g., anthropic.com)
+    // Remove domains that are in "soft" isolation mode — their cookies should
+    // pass through untouched. Only restore cross-domain cookies for domains
+    // that the user has explicitly set to "strict" (or that have saved data).
+    for (const extraDomain of extraDomains) {
+      if (getDomainIsolationMode(extraDomain) === 'soft') {
+        extraDomains.delete(extraDomain);
+      }
+    }
+
+    // Restore cookies for related domains (e.g., anthropic.com in strict mode)
     if (extraDomains.size > 0) {
       const extraCookies = fullSnapshot.cookies.filter((c) => {
         const cd = c.domain.replace(/^\./, '');
@@ -373,6 +477,11 @@ export async function switchSession(tabId: number, targetSessionId: string): Pro
   // 7. Queue storage restore for when the content script loads on the new page
   pendingRestores.set(tabId, { sessionId: targetSessionId, origin });
 
-  // 8. Navigate tab to same URL
-  await chrome.tabs.update(tabId, { url: tab.url });
+  // 8. Navigate tab to same URL — clean up pending entry on failure
+  try {
+    await chrome.tabs.update(tabId, { url: tab.url });
+  } catch (err) {
+    pendingRestores.delete(tabId);
+    throw err;
+  }
 }

@@ -84,7 +84,7 @@
   onmouseenter={() => (showActions = true)}
   onmouseleave={() => (showActions = false)}
   onclick={() => onswitch(session.id)}
-  onkeydown={(e) => e.key === 'Enter' && onswitch(session.id)}
+  onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onswitch(session.id))}
   oncontextmenu={handleContextMenu}
   aria-label="Switch to session {session.name}"
   title={session.name}
@@ -186,10 +186,16 @@
     border-left: 3px solid var(--session-color);
   }
 
-  .session-item:hover {
+  .session-item:hover,
+  .session-item:focus-visible {
     background: var(--color-bg-secondary);
     border-color: var(--color-border-primary);
     box-shadow: var(--shadow-sm);
+  }
+
+  .session-item:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
   }
 
   .session-item.active {
@@ -236,7 +242,7 @@
   }
 
   .emoji {
-    font-size: 15px;
+    font-size: var(--text-lg);
     line-height: 1;
     flex-shrink: 0;
   }

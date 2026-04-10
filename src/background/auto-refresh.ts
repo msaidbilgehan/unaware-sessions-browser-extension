@@ -9,7 +9,7 @@ import { touchSessionRefresh } from './session-manager';
  * Called by both the alarm handler and the REFRESH_ACTIVE_SESSIONS message handler.
  */
 export async function refreshAllActiveSessions(): Promise<number> {
-  const entries = getAllTabEntries();
+  const entries = await getAllTabEntries();
   const refreshed = new Set<string>();
 
   await Promise.allSettled(
@@ -23,8 +23,9 @@ export async function refreshAllActiveSessions(): Promise<number> {
           saveTabStorage(tabId, entry.sessionId, origin),
         ]);
         refreshed.add(entry.sessionId);
-      } catch {
+      } catch (err) {
         // Tab may have been closed or navigated to a restricted page
+        console.warn(`[Unaware Sessions] Auto-refresh failed for tab ${tabId}:`, err);
       }
     }),
   );
@@ -74,7 +75,9 @@ export async function initAutoRefresh(): Promise<void> {
       const newSettings = changes[STORAGE_KEYS.EXTENSION_SETTINGS]
         .newValue as ExtensionSettings | undefined;
       const newInterval: AutoRefreshInterval = newSettings?.autoRefreshInterval ?? 0;
-      syncAlarm(newInterval);
+      syncAlarm(newInterval).catch((err) => {
+        console.warn('[Unaware Sessions] Failed to sync alarm:', err);
+      });
     }
   });
 }

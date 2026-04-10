@@ -1,5 +1,6 @@
 <script lang="ts">
   import { fly } from 'svelte/transition';
+  import Icon from './Icon.svelte';
 
   interface Props {
     message: string;
@@ -27,7 +28,9 @@
   {#if action}
     <button class="toast-action" onclick={action.onclick}>{action.label}</button>
   {/if}
-  <button class="toast-close" onclick={ondismiss} aria-label="Dismiss">&times;</button>
+  <button class="toast-close" onclick={ondismiss} aria-label="Dismiss">
+    <Icon name="x" size={12} />
+  </button>
 </div>
 
 <style>
@@ -97,5 +100,12 @@
 
   .toast-close:hover {
     opacity: 1;
+  }
+
+  .toast-close:focus-visible,
+  .toast-action:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
+    border-radius: var(--radius-sm);
   }
 </style>

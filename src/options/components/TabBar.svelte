@@ -14,16 +14,38 @@
   }
 
   let { tabs, activeTab, onchange }: Props = $props();
+
+  function handleKeydown(e: KeyboardEvent) {
+    const currentIndex = tabs.findIndex((t) => t.id === activeTab);
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      const next = (currentIndex + 1) % tabs.length;
+      onchange(tabs[next].id);
+      focusTab(next);
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const prev = (currentIndex - 1 + tabs.length) % tabs.length;
+      onchange(tabs[prev].id);
+      focusTab(prev);
+    }
+  }
+
+  function focusTab(index: number) {
+    const tablist = document.querySelector<HTMLElement>('.tab-bar');
+    const btns = tablist?.querySelectorAll<HTMLElement>('.tab');
+    btns?.[index]?.focus();
+  }
 </script>
 
 <div class="tab-bar-wrapper">
-  <div class="tab-bar" role="tablist">
+  <div class="tab-bar" role="tablist" tabindex="-1" onkeydown={handleKeydown}>
     {#each tabs as tab}
       <button
         class="tab"
         class:active={activeTab === tab.id}
         role="tab"
         aria-selected={activeTab === tab.id}
+        tabindex={activeTab === tab.id ? 0 : -1}
         onclick={() => onchange(tab.id)}
       >
         {#if tab.icon}
@@ -69,6 +91,11 @@
   .tab:hover:not(.active) {
     color: var(--color-text-secondary);
     background: var(--color-interactive-hover);
+  }
+
+  .tab:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
   }
 
   .tab.active {

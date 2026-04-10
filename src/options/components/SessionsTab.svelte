@@ -94,8 +94,10 @@
     return result;
   });
 
-  // Load all session details on mount
+  // Load all session details on mount, and reload only when session IDs change
+  // (not on every quiet refresh that just updates names/colors/timestamps).
   let detailsLoadVersion = 0;
+  let prevSessionIds = '';
 
   async function loadAllDetails() {
     const version = ++detailsLoadVersion;
@@ -115,14 +117,18 @@
   }
 
   $effect(() => {
-    if (sessions.length > 0) {
-      loadAllDetails();
+    const currentIds = sessions.map((s) => s.id).join(',');
+    if (currentIds !== prevSessionIds) {
+      prevSessionIds = currentIds;
+      if (sessions.length > 0) {
+        loadAllDetails();
+      }
     }
   });
 
   // Auto-refresh is handled by the service worker alarm (background/auto-refresh.ts).
   // When sessions update via the storage listener in App.svelte, the $effect above
-  // reloads details automatically.
+  // only reloads details if session IDs actually changed (added/removed/reordered).
 
   async function handleToggleDomainRefresh(sessionId: string, origin: string) {
     const current = isDomainAutoRefreshEnabled(sessionId, origin);

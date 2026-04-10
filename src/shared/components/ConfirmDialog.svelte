@@ -76,7 +76,7 @@
   .backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.4);
+    background: var(--color-bg-overlay);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -132,6 +132,12 @@
 
   .cancel-btn:hover {
     background: var(--color-interactive-hover);
+  }
+
+  .cancel-btn:focus-visible,
+  .confirm-btn:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
   }
 
   .confirm-btn {

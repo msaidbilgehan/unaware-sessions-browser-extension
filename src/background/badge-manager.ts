@@ -2,7 +2,7 @@ import { getTabEntry } from './tab-tracker';
 import { getSession } from './session-manager';
 
 export async function updateBadge(tabId: number): Promise<void> {
-  const entry = getTabEntry(tabId);
+  const entry = await getTabEntry(tabId);
 
   if (!entry) {
     await chrome.action.setBadgeText({ text: '', tabId });

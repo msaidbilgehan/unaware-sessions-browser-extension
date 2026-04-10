@@ -1,6 +1,6 @@
 <script lang="ts">
-  import type { SessionProfile } from '@shared/types';
-  import { createSession } from '@shared/api';
+  import type { SessionProfile, FullExportData } from '@shared/types';
+  import { createSession, exportFull, importFull } from '@shared/api';
   import Icon from '@shared/components/Icon.svelte';
   import DragDropZone from './DragDropZone.svelte';
   import ImportDiff from './ImportDiff.svelte';
@@ -14,6 +14,9 @@
   let importError = $state('');
   let importSuccess = $state('');
   let importedProfiles = $state<SessionProfile[] | null>(null);
+  let fullExporting = $state(false);
+  let fullImportData = $state<FullExportData | null>(null);
+  let fullImporting = $state(false);
 
   function handleExport() {
     const data = JSON.stringify(sessions, null, 2);
@@ -26,25 +29,66 @@
     URL.revokeObjectURL(url);
   }
 
+  async function handleFullExport() {
+    fullExporting = true;
+    importError = '';
+    try {
+      const data = await exportFull();
+      const json = JSON.stringify(data, null, 2);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `unaware-sessions-full-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      importError = `Export failed: ${err instanceof Error ? err.message : 'Unknown error'}`;
+    } finally {
+      fullExporting = false;
+    }
+  }
+
+  function isFullExport(data: unknown): data is FullExportData {
+    return (
+      typeof data === 'object' &&
+      data !== null &&
+      'version' in data &&
+      (data as FullExportData).version === 1 &&
+      'sessions' in data &&
+      'cookieSnapshots' in data &&
+      'storageSnapshots' in data
+    );
+  }
+
   async function processFile(file: File) {
     importError = '';
     importSuccess = '';
     importedProfiles = null;
+    fullImportData = null;
 
     try {
       const text = await file.text();
-      const parsed = JSON.parse(text) as SessionProfile[];
+      const parsed = JSON.parse(text);
 
-      if (!Array.isArray(parsed)) {
-        importError = 'Invalid file: expected an array of session profiles';
+      // Detect full export format
+      if (isFullExport(parsed)) {
+        fullImportData = parsed;
         return;
       }
 
-      importedProfiles = parsed.filter((p) => p.name && p.color);
-      if (importedProfiles.length === 0) {
-        importError = 'No valid sessions found in file';
-        importedProfiles = null;
+      // Legacy format: plain array of session profiles
+      if (!Array.isArray(parsed)) {
+        importError = 'Invalid file: expected a session export file';
+        return;
       }
+
+      const profiles = (parsed as SessionProfile[]).filter((p) => p.name && p.color);
+      if (profiles.length === 0) {
+        importError = 'No valid sessions found in file';
+        return;
+      }
+      importedProfiles = profiles;
     } catch (err) {
       importError = `Import failed: ${err instanceof Error ? err.message : 'Unknown error'}`;
     }
@@ -81,6 +125,50 @@
       importError = `Import failed: ${err instanceof Error ? err.message : 'Unknown error'}`;
     }
   }
+
+  async function handleConfirmFullImport() {
+    if (!fullImportData) return;
+    fullImporting = true;
+    importError = '';
+    try {
+      const result = await importFull(fullImportData);
+      importSuccess = `Imported ${result.imported} session(s) with cookie and storage data`;
+      fullImportData = null;
+      onupdate();
+    } catch (err) {
+      importError = `Import failed: ${err instanceof Error ? err.message : 'Unknown error'}`;
+    } finally {
+      fullImporting = false;
+    }
+  }
+
+  function formatDate(ts: number): string {
+    return new Date(ts).toLocaleString();
+  }
+
+  const fullExportStats = $derived(() => {
+    if (!fullImportData) return null;
+    const totalCookies = fullImportData.cookieSnapshots.reduce(
+      (sum, s) => sum + s.cookies.length,
+      0,
+    );
+    const totalStorageEntries = fullImportData.storageSnapshots.reduce(
+      (sum, s) =>
+        sum + Object.keys(s.localStorage).length + Object.keys(s.sessionStorage).length,
+      0,
+    );
+    const origins = new Set([
+      ...fullImportData.cookieSnapshots.map((s) => s.origin),
+      ...fullImportData.storageSnapshots.map((s) => s.origin),
+    ]);
+    return {
+      sessions: fullImportData.sessions.length,
+      cookies: totalCookies,
+      storageEntries: totalStorageEntries,
+      origins: origins.size,
+      exportedAt: fullImportData.exportedAt,
+    };
+  });
 </script>
 
 <div class="data-layout">
@@ -93,15 +181,35 @@
       <div>
         <h2>Export Sessions</h2>
         <p class="description">
-          Download all session profiles as a JSON file. Cookie and storage data is not included.
+          Download session data as a JSON file.
         </p>
       </div>
     </div>
 
-    <button class="btn primary" onclick={handleExport} disabled={sessions.length === 0}>
-      <Icon name="download" size={14} />
-      Export {sessions.length} Session{sessions.length === 1 ? '' : 's'}
-    </button>
+    <div class="export-options">
+      <button class="btn" onclick={handleExport} disabled={sessions.length === 0}>
+        <Icon name="download" size={14} />
+        Profiles Only
+      </button>
+      <button
+        class="btn primary"
+        onclick={handleFullExport}
+        disabled={sessions.length === 0 || fullExporting}
+      >
+        {#if fullExporting}
+          <span class="spinner"></span>
+          Exporting...
+        {:else}
+          <Icon name="database" size={14} />
+          Full Export
+        {/if}
+      </button>
+    </div>
+
+    <div class="export-hint">
+      <p><strong>Profiles Only</strong> — Session names, colors, and emojis. Lightweight.</p>
+      <p><strong>Full Export</strong> — Includes all saved cookies and storage data. Use this to transfer sessions between browsers or back up login states.</p>
+    </div>
   </section>
 
   <!-- Import Section -->
@@ -113,7 +221,7 @@
       <div>
         <h2>Import Sessions</h2>
         <p class="description">
-          Import session profiles from a previously exported JSON file.
+          Import from a previously exported JSON file. Supports both profile-only and full exports.
         </p>
       </div>
     </div>
@@ -145,6 +253,72 @@
         onconfirm={handleConfirmImport}
         oncancel={() => (importedProfiles = null)}
       />
+    {/if}
+
+    {#if fullImportData}
+      {@const stats = fullExportStats()}
+      <div class="full-import-preview">
+        <h3>Full Import Preview</h3>
+        {#if stats}
+          <div class="stats-grid">
+            <div class="stat">
+              <span class="stat-value">{stats.sessions}</span>
+              <span class="stat-label">Sessions</span>
+            </div>
+            <div class="stat">
+              <span class="stat-value">{stats.cookies}</span>
+              <span class="stat-label">Cookies</span>
+            </div>
+            <div class="stat">
+              <span class="stat-value">{stats.storageEntries}</span>
+              <span class="stat-label">Storage entries</span>
+            </div>
+            <div class="stat">
+              <span class="stat-value">{stats.origins}</span>
+              <span class="stat-label">Origins</span>
+            </div>
+          </div>
+          <p class="export-date">
+            Exported: {formatDate(stats.exportedAt)}
+          </p>
+        {/if}
+
+        <div class="session-list-preview">
+          {#each fullImportData.sessions as profile}
+            {@const exists = sessions.some((s) => s.name === profile.name)}
+            <div class="preview-row" class:dimmed={exists}>
+              <span class="dot" style="background-color: {profile.color}"></span>
+              <span class="preview-name">
+                {profile.emoji ?? ''} {profile.name}
+              </span>
+              {#if exists}
+                <span class="preview-badge skip">exists</span>
+              {:else}
+                <span class="preview-badge new">new</span>
+              {/if}
+            </div>
+          {/each}
+        </div>
+
+        <div class="preview-actions">
+          <button class="btn cancel-btn" onclick={() => (fullImportData = null)}>
+            Cancel
+          </button>
+          <button
+            class="btn primary"
+            onclick={handleConfirmFullImport}
+            disabled={fullImporting}
+          >
+            {#if fullImporting}
+              <span class="spinner"></span>
+              Importing...
+            {:else}
+              <Icon name="database" size={14} />
+              Import All
+            {/if}
+          </button>
+        </div>
+      </div>
     {/if}
   </section>
 </div>
@@ -267,5 +441,163 @@
   .message.success {
     color: var(--color-success);
     background: var(--color-success-soft);
+  }
+
+  /* Export options */
+  .export-options {
+    display: flex;
+    gap: var(--space-3);
+  }
+
+  .export-hint {
+    padding: var(--space-4) var(--space-5);
+    background: var(--color-bg-secondary);
+    border-radius: var(--radius-lg);
+    font-size: var(--text-xs);
+    color: var(--color-text-secondary);
+    line-height: var(--leading-relaxed);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .export-hint p {
+    margin: 0;
+  }
+
+  .export-hint strong {
+    color: var(--color-text-primary);
+  }
+
+  /* Full import preview */
+  .full-import-preview {
+    background: var(--color-bg-elevated);
+    border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-lg);
+    padding: var(--space-6);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
+  }
+
+  .full-import-preview h3 {
+    margin: 0;
+    font-size: var(--text-md);
+    font-weight: var(--font-semibold);
+    color: var(--color-text-primary);
+  }
+
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: var(--space-3);
+  }
+
+  .stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-3);
+    background: var(--color-bg-secondary);
+    border-radius: var(--radius-md);
+  }
+
+  .stat-value {
+    font-size: var(--text-lg);
+    font-weight: var(--font-bold);
+    color: var(--color-text-primary);
+  }
+
+  .stat-label {
+    font-size: var(--text-xs);
+    color: var(--color-text-tertiary);
+  }
+
+  .export-date {
+    font-size: var(--text-xs);
+    color: var(--color-text-tertiary);
+    margin: 0;
+  }
+
+  .session-list-preview {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    background: var(--color-border-secondary);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+
+  .preview-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    background: var(--color-bg-elevated);
+    font-size: var(--text-sm);
+  }
+
+  .preview-row.dimmed {
+    opacity: 0.5;
+  }
+
+  .preview-name {
+    flex: 1;
+    color: var(--color-text-primary);
+  }
+
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: var(--radius-full);
+    flex-shrink: 0;
+  }
+
+  .preview-badge {
+    font-size: var(--text-xs);
+    font-weight: var(--font-medium);
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--radius-full);
+  }
+
+  .preview-badge.new {
+    color: var(--color-success);
+    background: var(--color-success-soft);
+  }
+
+  .preview-badge.skip {
+    color: var(--color-text-tertiary);
+    background: var(--color-bg-tertiary);
+  }
+
+  .preview-actions {
+    display: flex;
+    gap: var(--space-4);
+    justify-content: flex-end;
+  }
+
+  .cancel-btn {
+    background: var(--color-bg-tertiary);
+    border-color: var(--color-border-primary);
+    color: var(--color-text-secondary);
+  }
+
+  .spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--color-border-primary);
+    border-top-color: var(--color-text-inverse);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
 </style>

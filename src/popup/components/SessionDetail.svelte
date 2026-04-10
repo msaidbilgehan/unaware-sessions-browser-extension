@@ -43,7 +43,13 @@
       <div class="skel skel-stat"></div>
     </div>
   {:else if error}
-    <span class="error-text">{error}</span>
+    <div class="error-row">
+      <Icon name="alert-triangle" size={12} />
+      <span class="error-text">{error}</span>
+      <button class="retry-btn" onclick={() => { loading = true; error = ''; getSessionStats(sessionId).then((s) => { stats = s; }).catch((err) => { error = err instanceof Error ? err.message : 'Failed'; }).finally(() => { loading = false; }); }} aria-label="Retry">
+        <Icon name="refresh-cw" size={11} />
+      </button>
+    </div>
   {:else if stats}
     <div class="stat-grid">
       <div class="stat">
@@ -107,9 +113,38 @@
     height: 36px;
   }
 
+  .error-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    color: var(--color-error);
+  }
+
   .error-text {
     font-size: var(--text-xs);
     color: var(--color-error);
+    flex: 1;
+  }
+
+  .retry-btn {
+    background: none;
+    border: 1px solid var(--color-error-border);
+    color: var(--color-error);
+    cursor: pointer;
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    transition: all var(--transition-fast);
+  }
+
+  .retry-btn:hover {
+    background: var(--color-error-soft);
+  }
+
+  .retry-btn:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
   }
 
   .stat-grid {

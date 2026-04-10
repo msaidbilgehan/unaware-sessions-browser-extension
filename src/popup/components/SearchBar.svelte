@@ -101,4 +101,9 @@
     color: var(--color-text-secondary);
     background: var(--color-interactive-hover);
   }
+
+  .clear-btn:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
+  }
 </style>

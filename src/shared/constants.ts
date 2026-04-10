@@ -12,11 +12,13 @@ export const STORAGE_KEYS = {
   THEME_PREFERENCE: 'themePreference',
   EXTENSION_SETTINGS: 'extensionSettings',
   AUTO_REFRESH_DOMAINS: 'autoRefreshDomains',
+  DOMAIN_ISOLATION_MODES: 'domainIsolationModes',
 } as const;
 
 export const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
   autoRefreshInterval: 0,
   autoRefreshDefaultEnabled: false,
+  isolationModeDefault: 'soft',
 };
 
 export const DNR_RULE_ID_BASE = 1000;

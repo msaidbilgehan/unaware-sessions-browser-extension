@@ -4,11 +4,13 @@
   import {
     getAutoRefreshInterval,
     getAutoRefreshDefaultEnabled,
+    getIsolationModeDefault,
     setAutoRefreshInterval,
     setAutoRefreshDefaultEnabled,
+    setIsolationModeDefault,
     onSettingsChange,
   } from '@shared/settings-store';
-  import type { AutoRefreshInterval } from '@shared/types';
+  import type { AutoRefreshInterval, IsolationMode } from '@shared/types';
   import Icon from '@shared/components/Icon.svelte';
 
   let theme = $state<ThemePreference>(getTheme());
@@ -68,6 +70,25 @@
     { value: 'dark', label: 'Dark', icon: 'moon' },
     { value: 'system', label: 'System', icon: 'monitor' },
   ];
+
+  // Isolation mode default
+  let isolationDefault = $state<IsolationMode>(getIsolationModeDefault());
+
+  $effect(() => {
+    const unsub = onSettingsChange((settings) => {
+      isolationDefault = settings.isolationModeDefault;
+    });
+    return unsub;
+  });
+
+  const isolationOptions: { value: IsolationMode; label: string; icon: string }[] = [
+    { value: 'soft', label: 'Soft', icon: 'shield' },
+    { value: 'strict', label: 'Strict', icon: 'lock' },
+  ];
+
+  async function handleIsolationDefaultChange(mode: IsolationMode) {
+    await setIsolationModeDefault(mode);
+  }
 </script>
 
 <div class="settings-layout">
@@ -95,6 +116,53 @@
           <span>{opt.label}</span>
         </button>
       {/each}
+    </div>
+  </section>
+
+  <!-- Cookie Isolation -->
+  <section class="card">
+    <div class="card-header">
+      <div class="card-icon">
+        <Icon name="shield" size={16} />
+      </div>
+      <div>
+        <h2>Cookie Isolation</h2>
+        <p class="description">
+          Controls how cookies are handled when switching sessions on domains without saved data.
+        </p>
+      </div>
+    </div>
+
+    <div class="setting-row">
+      <span class="setting-label">Default mode</span>
+      <div class="interval-options">
+        {#each isolationOptions as opt (opt.value)}
+          <button
+            class="interval-pill"
+            class:active={isolationDefault === opt.value}
+            onclick={() => handleIsolationDefaultChange(opt.value)}
+            aria-pressed={isolationDefault === opt.value}
+          >
+            <Icon name={opt.icon} size={12} />
+            {opt.label}
+          </button>
+        {/each}
+      </div>
+    </div>
+
+    <div class="isolation-explainer">
+      <div class="explainer-row">
+        <Icon name="shield" size={14} />
+        <div>
+          <strong>Soft</strong> — Preserves cookies on domains where the target session has no saved data. Prevents breaking unrelated services (e.g., Google) when switching between domain-specific sessions.
+        </div>
+      </div>
+      <div class="explainer-row">
+        <Icon name="lock" size={14} />
+        <div>
+          <strong>Strict</strong> — Always clears cookies on switch, even when nothing will be restored. Use for domains that require full isolation between sessions.
+        </div>
+      </div>
     </div>
   </section>
 
@@ -205,6 +273,7 @@
   /* Theme options */
   .theme-options {
     display: flex;
+    flex-wrap: wrap;
     gap: var(--space-3);
   }
 
@@ -338,6 +407,11 @@
     border-color: var(--color-accent);
   }
 
+  .toggle-switch:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
+  }
+
   .toggle-thumb {
     position: absolute;
     top: 2px;
@@ -352,5 +426,38 @@
 
   .toggle-switch.on .toggle-thumb {
     transform: translateX(18px);
+  }
+
+  /* Isolation explainer */
+  .isolation-explainer {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    padding: var(--space-4) var(--space-5);
+    background: var(--color-bg-secondary);
+    border-radius: var(--radius-lg);
+    font-size: var(--text-xs);
+    color: var(--color-text-secondary);
+    line-height: var(--leading-relaxed);
+  }
+
+  .explainer-row {
+    display: flex;
+    gap: var(--space-3);
+    align-items: flex-start;
+  }
+
+  .explainer-row :global(svg) {
+    flex-shrink: 0;
+    margin-top: 1px;
+    color: var(--color-text-tertiary);
+  }
+
+  .explainer-row strong {
+    color: var(--color-text-primary);
+  }
+
+  .interval-pill :global(svg) {
+    vertical-align: -1px;
   }
 </style>

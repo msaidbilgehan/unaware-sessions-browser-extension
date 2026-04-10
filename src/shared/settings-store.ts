@@ -1,5 +1,5 @@
 import { STORAGE_KEYS, DEFAULT_EXTENSION_SETTINGS } from '@shared/constants';
-import type { ExtensionSettings, AutoRefreshInterval } from '@shared/types';
+import type { ExtensionSettings, AutoRefreshInterval, IsolationMode } from '@shared/types';
 
 let currentSettings: ExtensionSettings = { ...DEFAULT_EXTENSION_SETTINGS };
 const settingsListeners: Array<(settings: ExtensionSettings) => void> = [];
@@ -7,6 +7,10 @@ const settingsListeners: Array<(settings: ExtensionSettings) => void> = [];
 // Per-domain auto-refresh state: key = "sessionId:origin", value = enabled
 let domainRefreshMap: Record<string, boolean> = {};
 const domainListeners: Array<(map: Record<string, boolean>) => void> = [];
+
+// Per-domain isolation mode: key = domain (e.g., "google.com"), value = 'soft' | 'strict'
+let domainIsolationMap: Record<string, IsolationMode> = {};
+const isolationListeners: Array<(map: Record<string, IsolationMode>) => void> = [];
 
 // ── Getters ─────────────────────────────────────────────────────
 
@@ -29,6 +33,18 @@ export function getDomainRefreshMap(): Record<string, boolean> {
 export function isDomainAutoRefreshEnabled(sessionId: string, origin: string): boolean {
   const key = `${sessionId}:${origin}`;
   return domainRefreshMap[key] ?? currentSettings.autoRefreshDefaultEnabled;
+}
+
+export function getIsolationModeDefault(): IsolationMode {
+  return currentSettings.isolationModeDefault;
+}
+
+export function getDomainIsolationMap(): Record<string, IsolationMode> {
+  return domainIsolationMap;
+}
+
+export function getDomainIsolationMode(domain: string): IsolationMode {
+  return domainIsolationMap[domain] ?? currentSettings.isolationModeDefault;
 }
 
 // ── Settings Listeners ──────────────────────────────────────────
@@ -65,6 +81,24 @@ function notifyDomainListeners(): void {
   }
 }
 
+// ── Isolation Listeners ────────────────────────────────────────
+
+export function onDomainIsolationChange(
+  listener: (map: Record<string, IsolationMode>) => void,
+): () => void {
+  isolationListeners.push(listener);
+  return () => {
+    const index = isolationListeners.indexOf(listener);
+    if (index >= 0) isolationListeners.splice(index, 1);
+  };
+}
+
+function notifyIsolationListeners(): void {
+  for (const listener of isolationListeners) {
+    listener(domainIsolationMap);
+  }
+}
+
 // ── Settings Setters ────────────────────────────────────────────
 
 export async function setAutoRefreshInterval(interval: AutoRefreshInterval): Promise<void> {
@@ -98,12 +132,34 @@ export async function setDomainAutoRefresh(
   notifyDomainListeners();
 }
 
+// ── Isolation Setters ───────────────────────────────────────────
+
+export async function setIsolationModeDefault(mode: IsolationMode): Promise<void> {
+  currentSettings = { ...currentSettings, isolationModeDefault: mode };
+  await chrome.storage.local.set({
+    [STORAGE_KEYS.EXTENSION_SETTINGS]: currentSettings,
+  });
+  notifySettingsListeners();
+}
+
+export async function setDomainIsolationMode(
+  domain: string,
+  mode: IsolationMode,
+): Promise<void> {
+  domainIsolationMap = { ...domainIsolationMap, [domain]: mode };
+  await chrome.storage.local.set({
+    [STORAGE_KEYS.DOMAIN_ISOLATION_MODES]: domainIsolationMap,
+  });
+  notifyIsolationListeners();
+}
+
 // ── Initialization ──────────────────────────────────────────────
 
 export async function initSettings(): Promise<void> {
   const result = await chrome.storage.local.get([
     STORAGE_KEYS.EXTENSION_SETTINGS,
     STORAGE_KEYS.AUTO_REFRESH_DOMAINS,
+    STORAGE_KEYS.DOMAIN_ISOLATION_MODES,
   ]);
 
   const storedSettings = result[STORAGE_KEYS.EXTENSION_SETTINGS] as ExtensionSettings | undefined;
@@ -116,6 +172,12 @@ export async function initSettings(): Promise<void> {
     | undefined;
   domainRefreshMap = storedDomains ?? {};
 
+  const storedIsolation = result[STORAGE_KEYS.DOMAIN_ISOLATION_MODES] as
+    | Record<string, IsolationMode>
+    | undefined;
+  domainIsolationMap = storedIsolation ?? {};
+
   notifySettingsListeners();
   notifyDomainListeners();
+  notifyIsolationListeners();
 }

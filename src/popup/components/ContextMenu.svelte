@@ -17,6 +17,7 @@
 
   let { x, y, items, onclose }: Props = $props();
   let menuRef = $state<HTMLDivElement | undefined>(undefined);
+  let focusedIndex = $state(0);
 
   $effect(() => {
     function handleClick(e: MouseEvent) {
@@ -35,6 +36,32 @@
     };
   });
 
+  // Focus first menu item on open
+  $effect(() => {
+    if (menuRef) {
+      const firstItem = menuRef.querySelector<HTMLElement>('.menu-item');
+      firstItem?.focus();
+    }
+  });
+
+  function handleMenuKeydown(e: KeyboardEvent) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      focusedIndex = (focusedIndex + 1) % items.length;
+      focusItem(focusedIndex);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      focusedIndex = (focusedIndex - 1 + items.length) % items.length;
+      focusItem(focusedIndex);
+    }
+  }
+
+  function focusItem(index: number) {
+    if (!menuRef) return;
+    const btns = menuRef.querySelectorAll<HTMLElement>('.menu-item');
+    btns[index]?.focus();
+  }
+
   // Clamp to popup bounds
   const clampedX = $derived(Math.min(x, 380 - 160));
   const clampedY = $derived(Math.min(y, 500));
@@ -50,6 +77,8 @@
   style="left: {clampedX}px; top: {clampedY}px"
   bind:this={menuRef}
   role="menu"
+  tabindex="-1"
+  onkeydown={handleMenuKeydown}
 >
   {#each items as item, i}
     {#if i > 0 && item.danger}
@@ -107,8 +136,14 @@
     text-align: left;
   }
 
-  .menu-item:hover {
+  .menu-item:hover,
+  .menu-item:focus-visible {
     background: var(--color-interactive-hover);
+    outline: none;
+  }
+
+  .menu-item:focus-visible {
+    box-shadow: var(--shadow-focus);
   }
 
   .menu-icon {
