@@ -18,18 +18,18 @@ beforeEach(async () => {
 describe('tab-tracker', () => {
   it('assigns a tab to a session', async () => {
     await assignTab(1, 'session-1', 'https://example.com');
-    const entry = getTabEntry(1);
+    const entry = await getTabEntry(1);
     expect(entry).toEqual({ sessionId: 'session-1', origin: 'https://example.com' });
   });
 
   it('unassigns a tab', async () => {
     await assignTab(1, 'session-1', 'https://example.com');
     await unassignTab(1);
-    expect(getTabEntry(1)).toBeUndefined();
+    expect(await getTabEntry(1)).toBeUndefined();
   });
 
-  it('returns undefined for untracked tab', () => {
-    expect(getTabEntry(999)).toBeUndefined();
+  it('returns undefined for untracked tab', async () => {
+    expect(await getTabEntry(999)).toBeUndefined();
   });
 
   it('finds all tabs for a session', async () => {
@@ -37,7 +37,7 @@ describe('tab-tracker', () => {
     await assignTab(2, 'session-1', 'https://b.com');
     await assignTab(3, 'session-2', 'https://c.com');
 
-    const tabs = getTabsForSession('session-1');
+    const tabs = await getTabsForSession('session-1');
     expect(tabs).toEqual([1, 2]);
   });
 
@@ -48,7 +48,7 @@ describe('tab-tracker', () => {
     // Simulate SW restart
     await hydrateTabMap();
 
-    const entry = getTabEntry(1);
+    const entry = await getTabEntry(1);
     expect(entry).toEqual({ sessionId: 'session-1', origin: 'https://example.com' });
   });
 
@@ -73,7 +73,7 @@ describe('tab-tracker event handlers', () => {
     // Wait for async handler
     await new Promise((r) => setTimeout(r, 10));
 
-    expect(getTabEntry(1)).toBeUndefined();
+    expect(await getTabEntry(1)).toBeUndefined();
   });
 
   it('ignores onRemoved for untracked tabs', async () => {
@@ -83,7 +83,7 @@ describe('tab-tracker event handlers', () => {
     await new Promise((r) => setTimeout(r, 10));
 
     // Tab 1 should be unaffected
-    expect(getTabEntry(1)).toBeDefined();
+    expect(await getTabEntry(1)).toBeDefined();
   });
 
   it('updates origin when tab navigates to new origin', async () => {
@@ -96,7 +96,7 @@ describe('tab-tracker event handlers', () => {
     );
     await new Promise((r) => setTimeout(r, 10));
 
-    const entry = getTabEntry(1);
+    const entry = await getTabEntry(1);
     expect(entry?.origin).toBe('https://other.com');
     expect(entry?.sessionId).toBe('session-1');
   });
@@ -111,7 +111,7 @@ describe('tab-tracker event handlers', () => {
     );
     await new Promise((r) => setTimeout(r, 10));
 
-    const entry = getTabEntry(1);
+    const entry = await getTabEntry(1);
     expect(entry?.origin).toBe('https://example.com');
   });
 
@@ -123,7 +123,7 @@ describe('tab-tracker event handlers', () => {
     );
     await new Promise((r) => setTimeout(r, 10));
 
-    expect(getTabEntry(999)).toBeUndefined();
+    expect(await getTabEntry(999)).toBeUndefined();
   });
 
   it('ignores tab updates without URL change', async () => {
@@ -133,7 +133,8 @@ describe('tab-tracker event handlers', () => {
     await new Promise((r) => setTimeout(r, 10));
 
     // Origin unchanged
-    expect(getTabEntry(1)?.origin).toBe('https://example.com');
+    const entry = await getTabEntry(1);
+    expect(entry?.origin).toBe('https://example.com');
   });
 
   it('returns a copy of all tab entries', async () => {
@@ -141,7 +142,7 @@ describe('tab-tracker event handlers', () => {
     await assignTab(1, 's1', 'https://a.com');
     await assignTab(2, 's2', 'https://b.com');
 
-    const entries = getAllTabEntries();
+    const entries = await getAllTabEntries();
     expect(entries.size).toBe(2);
     expect(entries.get(1)?.sessionId).toBe('s1');
     expect(entries.get(2)?.sessionId).toBe('s2');

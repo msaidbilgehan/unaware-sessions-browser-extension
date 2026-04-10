@@ -7,6 +7,7 @@ import {
   checkRuleCapacity,
   cleanupStaleRules,
 } from '@background/dnr-manager';
+import { cookieStore } from '@background/cookie-store';
 import { DNR_RULE_ID_BASE, DNR_RULE_WARN_THRESHOLD } from '@shared/constants';
 
 beforeEach(() => {
@@ -25,6 +26,15 @@ function mockQueryTabs(tabs: chrome.tabs.Tab[]) {
 
 describe('dnr-manager', () => {
   it('creates a rule for a tab', async () => {
+    // Save a snapshot so DNR has cookies to inject (no snapshot = no rule)
+    await cookieStore.save({
+      sessionId: 'session-1',
+      origin: 'https://example.com',
+      timestamp: Date.now(),
+      cookies: [
+        { name: 'sid', value: '123', domain: 'example.com', path: '/' } as chrome.cookies.Cookie,
+      ],
+    });
     await updateRulesForTab(42, 'session-1', 'https://example.com');
 
     expect(chrome.declarativeNetRequest.updateSessionRules).toHaveBeenCalledWith(
@@ -74,6 +84,35 @@ describe('dnr-manager', () => {
     const capacity = await checkRuleCapacity();
     expect(capacity.warning).toBe(true);
     expect(capacity.used).toBe(DNR_RULE_WARN_THRESHOLD);
+  });
+
+  it('removes rule instead of creating one when no snapshot exists', async () => {
+    // No cookie snapshot saved — updateRulesForTab should remove the rule
+    await updateRulesForTab(99, 'no-session', 'https://example.com');
+
+    expect(chrome.declarativeNetRequest.updateSessionRules).toHaveBeenCalledWith({
+      removeRuleIds: [DNR_RULE_ID_BASE + 99],
+    });
+    // Should NOT have addRules
+    const call = (chrome.declarativeNetRequest.updateSessionRules as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
+    expect(call.addRules).toBeUndefined();
+  });
+
+  it('removes rule when snapshot has empty cookies array', async () => {
+    await cookieStore.save({
+      sessionId: 'empty-session',
+      origin: 'https://example.com',
+      timestamp: Date.now(),
+      cookies: [],
+    });
+
+    await updateRulesForTab(88, 'empty-session', 'https://example.com');
+
+    const call = (chrome.declarativeNetRequest.updateSessionRules as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
+    expect(call.removeRuleIds).toEqual([DNR_RULE_ID_BASE + 88]);
+    expect(call.addRules).toBeUndefined();
   });
 
   it('cleans up stale rules for closed tabs', async () => {

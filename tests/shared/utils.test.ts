@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { generateId, extractOrigin, extractDomain, isValidUrl, buildCookieUrl } from '@shared/utils';
+import {
+  generateId,
+  extractOrigin,
+  extractDomain,
+  isValidUrl,
+  buildCookieUrl,
+  formatRelativeTime,
+  estimateCookieBytes,
+  estimateRecordBytes,
+} from '@shared/utils';
 
 describe('generateId', () => {
   it('returns a valid UUID v4 string', () => {
@@ -94,5 +103,65 @@ describe('buildCookieUrl', () => {
       secure: true,
     } as chrome.cookies.Cookie);
     expect(url).toBe('https://sub.example.com/');
+  });
+});
+
+describe('formatRelativeTime', () => {
+  it('returns "just now" for timestamps less than 5 seconds ago', () => {
+    expect(formatRelativeTime(Date.now() - 2000)).toBe('just now');
+  });
+
+  it('returns seconds for timestamps less than 60 seconds ago', () => {
+    expect(formatRelativeTime(Date.now() - 30_000)).toBe('30s ago');
+  });
+
+  it('returns minutes for timestamps less than 60 minutes ago', () => {
+    expect(formatRelativeTime(Date.now() - 5 * 60_000)).toBe('5m ago');
+  });
+
+  it('returns hours for timestamps less than 24 hours ago', () => {
+    expect(formatRelativeTime(Date.now() - 3 * 3600_000)).toBe('3h ago');
+  });
+
+  it('returns days for timestamps less than 7 days ago', () => {
+    expect(formatRelativeTime(Date.now() - 2 * 86400_000)).toBe('2d ago');
+  });
+
+  it('returns formatted date for timestamps older than 7 days', () => {
+    const old = Date.now() - 10 * 86400_000;
+    const result = formatRelativeTime(old);
+    // Should be a locale date string, not relative
+    expect(result).not.toContain('ago');
+    expect(result).not.toBe('just now');
+  });
+
+  it('handles exactly 0 seconds difference', () => {
+    expect(formatRelativeTime(Date.now())).toBe('just now');
+  });
+});
+
+describe('estimateCookieBytes', () => {
+  it('estimates bytes for a cookie array', () => {
+    const cookies = [
+      { name: 'a', value: 'b', domain: 'c', path: '/' },
+    ] as chrome.cookies.Cookie[];
+    // 1 + 1 + 1 + 1 + 40 = 44
+    expect(estimateCookieBytes(cookies)).toBe(44);
+  });
+
+  it('returns 0 for empty array', () => {
+    expect(estimateCookieBytes([])).toBe(0);
+  });
+});
+
+describe('estimateRecordBytes', () => {
+  it('estimates bytes for a record', () => {
+    const record = { key: 'val' };
+    // 3 + 3 + 6 = 12
+    expect(estimateRecordBytes(record)).toBe(12);
+  });
+
+  it('returns 0 for empty record', () => {
+    expect(estimateRecordBytes({})).toBe(0);
   });
 });

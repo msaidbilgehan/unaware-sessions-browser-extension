@@ -27,6 +27,12 @@ const {
   deleteSessionCookie,
   updateSessionStorageEntry,
   deleteSessionStorageEntry,
+  refreshActiveSessions,
+  exportFull,
+  importFull,
+  getLiveCookies,
+  getCookieDiff,
+  getRestoreFailures,
 } = await import('@shared/api');
 
 function mockSendResponse<T>(data: T): void {
@@ -475,5 +481,94 @@ describe('deleteSessionStorageEntry', () => {
       storageType: 'localStorage',
       key: 'key1',
     });
+  });
+});
+
+// ── Full export / import ──────────────────────────────────────
+
+describe('exportFull', () => {
+  it('sends EXPORT_FULL and returns full data', async () => {
+    const data = { version: 1, exportedAt: 1, sessions: [], cookieSnapshots: [], storageSnapshots: [] };
+    mockSendResponse(data);
+
+    const result = await exportFull();
+
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
+      type: MessageType.EXPORT_FULL,
+    });
+    expect(result).toEqual(data);
+  });
+});
+
+describe('importFull', () => {
+  it('sends IMPORT_FULL with data payload', async () => {
+    const data = { version: 1 as const, exportedAt: 1, sessions: [], cookieSnapshots: [], storageSnapshots: [] };
+    mockSendResponse({ imported: 0 });
+
+    const result = await importFull(data);
+
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
+      type: MessageType.IMPORT_FULL,
+      data,
+    });
+    expect(result).toEqual({ imported: 0 });
+  });
+});
+
+describe('refreshActiveSessions', () => {
+  it('sends REFRESH_ACTIVE_SESSIONS', async () => {
+    mockSendResponse({ refreshedCount: 3 });
+
+    const result = await refreshActiveSessions();
+
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
+      type: MessageType.REFRESH_ACTIVE_SESSIONS,
+    });
+    expect(result).toEqual({ refreshedCount: 3 });
+  });
+});
+
+// ── Debug API ─────────────────────────────────────────────────
+
+describe('getLiveCookies', () => {
+  it('sends GET_LIVE_COOKIES with origin', async () => {
+    mockSendResponse([]);
+
+    const result = await getLiveCookies('https://google.com');
+
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
+      type: MessageType.GET_LIVE_COOKIES,
+      origin: 'https://google.com',
+    });
+    expect(result).toEqual([]);
+  });
+});
+
+describe('getCookieDiff', () => {
+  it('sends GET_COOKIE_DIFF with sessionId and origin', async () => {
+    const diff = { origin: 'https://a.com', sessionId: 's1', entries: [], summary: {} };
+    mockSendResponse(diff);
+
+    const result = await getCookieDiff('s1', 'https://a.com');
+
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
+      type: MessageType.GET_COOKIE_DIFF,
+      sessionId: 's1',
+      origin: 'https://a.com',
+    });
+    expect(result).toEqual(diff);
+  });
+});
+
+describe('getRestoreFailures', () => {
+  it('sends GET_RESTORE_FAILURES', async () => {
+    mockSendResponse([]);
+
+    const result = await getRestoreFailures();
+
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
+      type: MessageType.GET_RESTORE_FAILURES,
+    });
+    expect(result).toEqual([]);
   });
 });

@@ -263,6 +263,17 @@ describe('switchSession', () => {
 
     const session = await createSession('target', '#3B82F6');
 
+    // Save a cookie snapshot so the full switch path executes
+    // (soft isolation skips clear+restore when no cookie data exists)
+    await cookieStore.save({
+      sessionId: session.id,
+      origin: 'https://example.com',
+      timestamp: Date.now(),
+      cookies: [
+        { name: 'sid', value: '123', domain: 'example.com', path: '/' } as chrome.cookies.Cookie,
+      ],
+    });
+
     // Save a storage snapshot for the target session so restoreTabStorage has data to restore
     await storageStore.save({
       sessionId: session.id,

@@ -52,6 +52,7 @@ const mockChrome = {
   storage: {
     local: createMockStorage(),
     session: createMockStorage(),
+    onChanged: createMockEvent(),
   },
   cookies: {
     getAll: vi.fn(() => Promise.resolve([])),
@@ -79,7 +80,9 @@ const mockChrome = {
     openOptionsPage: vi.fn(),
   },
   alarms: {
-    create: vi.fn(),
+    create: vi.fn(() => Promise.resolve()),
+    clear: vi.fn(() => Promise.resolve(true)),
+    get: vi.fn(() => Promise.resolve(undefined)),
     onAlarm: createMockEvent(),
   },
   declarativeNetRequest: {

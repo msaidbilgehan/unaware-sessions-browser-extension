@@ -472,6 +472,183 @@ describe('messaging', () => {
     expect(loaded?.localStorage).toEqual({ keep: 'val2' });
   });
 
+  it('handles REFRESH_ACTIVE_SESSIONS', async () => {
+    const response = await sendTestMessage({
+      type: MessageType.REFRESH_ACTIVE_SESSIONS,
+    });
+
+    expect(response.success).toBe(true);
+    expect((response.data as { refreshedCount: number }).refreshedCount).toBe(0);
+  });
+
+  it('handles EXPORT_FULL', async () => {
+    // Create a session first
+    await sendTestMessage({
+      type: MessageType.CREATE_SESSION,
+      name: 'export-test',
+      color: '#3B82F6',
+    });
+
+    const response = await sendTestMessage({
+      type: MessageType.EXPORT_FULL,
+    });
+
+    expect(response.success).toBe(true);
+    const data = response.data as {
+      version: number;
+      exportedAt: number;
+      sessions: unknown[];
+      cookieSnapshots: unknown[];
+      storageSnapshots: unknown[];
+    };
+    expect(data.version).toBe(1);
+    expect(data.exportedAt).toBeGreaterThan(0);
+    expect(data.sessions).toHaveLength(1);
+    expect(data.cookieSnapshots).toEqual([]);
+    expect(data.storageSnapshots).toEqual([]);
+  });
+
+  it('handles IMPORT_FULL with valid data', async () => {
+    const response = await sendTestMessage({
+      type: MessageType.IMPORT_FULL,
+      data: {
+        version: 1,
+        exportedAt: Date.now(),
+        sessions: [
+          {
+            id: 'old-id',
+            name: 'imported',
+            color: '#EF4444',
+            createdAt: 1,
+            updatedAt: 1,
+            settings: {},
+          },
+        ],
+        cookieSnapshots: [
+          {
+            sessionId: 'old-id',
+            origin: 'https://example.com',
+            timestamp: Date.now(),
+            cookies: [{ name: 'c', value: 'v', domain: 'example.com', path: '/' }],
+          },
+        ],
+        storageSnapshots: [],
+      },
+    });
+
+    expect(response.success).toBe(true);
+    expect((response.data as { imported: number }).imported).toBe(1);
+
+    // Verify session was created
+    const listResp = await sendTestMessage({ type: MessageType.LIST_SESSIONS });
+    const sessions = listResp.data as Array<{ name: string }>;
+    expect(sessions.some((s) => s.name === 'imported')).toBe(true);
+  });
+
+  it('handles IMPORT_FULL skipping duplicate names', async () => {
+    await sendTestMessage({
+      type: MessageType.CREATE_SESSION,
+      name: 'existing',
+      color: '#3B82F6',
+    });
+
+    const response = await sendTestMessage({
+      type: MessageType.IMPORT_FULL,
+      data: {
+        version: 1,
+        exportedAt: Date.now(),
+        sessions: [
+          {
+            id: 'dup-id',
+            name: 'existing',
+            color: '#EF4444',
+            createdAt: 1,
+            updatedAt: 1,
+            settings: {},
+          },
+        ],
+        cookieSnapshots: [],
+        storageSnapshots: [],
+      },
+    });
+
+    expect(response.success).toBe(true);
+    expect((response.data as { imported: number }).imported).toBe(0);
+  });
+
+  it('handles GET_LIVE_COOKIES', async () => {
+    (chrome.cookies.getAll as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    const response = await sendTestMessage({
+      type: MessageType.GET_LIVE_COOKIES,
+      origin: 'https://example.com',
+    });
+
+    expect(response.success).toBe(true);
+    expect(response.data).toEqual([]);
+  });
+
+  it('handles GET_COOKIE_DIFF with no snapshot', async () => {
+    (chrome.cookies.getAll as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    const response = await sendTestMessage({
+      type: MessageType.GET_COOKIE_DIFF,
+      sessionId: 'no-session',
+      origin: 'https://example.com',
+    });
+
+    expect(response.success).toBe(true);
+    const diff = response.data as { totalSnapshot: number; totalLive: number };
+    expect(diff.totalSnapshot).toBe(0);
+    expect(diff.totalLive).toBe(0);
+  });
+
+  it('handles GET_COOKIE_DIFF with matching cookies', async () => {
+    const cookie = {
+      name: 'SID',
+      value: 'abc',
+      domain: '.example.com',
+      path: '/',
+      secure: true,
+      httpOnly: false,
+      sameSite: 'lax',
+      hostOnly: false,
+      session: false,
+      storeId: '0',
+    } as chrome.cookies.Cookie;
+
+    await cookieStore.save({
+      sessionId: 'diff-session',
+      origin: 'https://example.com',
+      timestamp: Date.now(),
+      cookies: [cookie],
+    });
+
+    (chrome.cookies.getAll as ReturnType<typeof vi.fn>).mockResolvedValue([cookie]);
+
+    const response = await sendTestMessage({
+      type: MessageType.GET_COOKIE_DIFF,
+      sessionId: 'diff-session',
+      origin: 'https://example.com',
+    });
+
+    expect(response.success).toBe(true);
+    const diff = response.data as {
+      summary: { matched: number };
+      entries: Array<{ status: string }>;
+    };
+    expect(diff.summary.matched).toBe(1);
+  });
+
+  it('handles GET_RESTORE_FAILURES', async () => {
+    const response = await sendTestMessage({
+      type: MessageType.GET_RESTORE_FAILURES,
+    });
+
+    expect(response.success).toBe(true);
+    expect(Array.isArray(response.data)).toBe(true);
+  });
+
   it('handles GET_SESSION_DETAILS with cookie and storage data', async () => {
     const cookieSnap: CookieSnapshot = {
       sessionId: 'msg-details',
