@@ -87,19 +87,37 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 // ── Snapshot ───────────────────────────────────────────────────────
 
 async function snapshotDatabase(name: string): Promise<IndexedDBSnapshot | null> {
+  let settled = false;
+
   return new Promise((resolve, reject) => {
+    const doResolve = (val: IndexedDBSnapshot | null) => {
+      settled = true;
+      resolve(val);
+    };
+    const doReject = (err: Error) => {
+      settled = true;
+      reject(err);
+    };
+
     const request = indexedDB.open(name);
 
-    request.onerror = () => reject(new Error(`Failed to open IDB: ${name}`));
+    request.onerror = () => doReject(new Error(`Failed to open IDB: ${name}`));
 
     request.onsuccess = () => {
       const db = request.result;
+
+      // If the outer withTimeout already rejected, close immediately to
+      // avoid leaking a connection that blocks future deleteDatabase calls.
+      if (settled) {
+        db.close();
+        return;
+      }
       const version = db.version;
       const storeNames = Array.from(db.objectStoreNames);
 
       if (storeNames.length === 0) {
         db.close();
-        resolve({ name, version, objectStores: [] });
+        doResolve({ name, version, objectStores: [] });
         return;
       }
 
@@ -144,7 +162,7 @@ async function snapshotDatabase(name: string): Promise<IndexedDBSnapshot | null>
                 `[Unaware Sessions] IDB "${name}" exceeds ${IDB_SNAPSHOT_MAX_SIZE_MB}MB — skipping`,
               );
               db.close();
-              resolve(null);
+              doResolve(null);
               return;
             }
 
@@ -169,14 +187,14 @@ async function snapshotDatabase(name: string): Promise<IndexedDBSnapshot | null>
             completed++;
             if (completed === total) {
               db.close();
-              resolve({ name, version, objectStores });
+              doResolve({ name, version, objectStores });
             }
           }
         };
 
         cursorRequest.onerror = () => {
           db.close();
-          reject(new Error(`Failed to read IDB store: ${storeName}`));
+          doReject(new Error(`Failed to read IDB store: ${storeName}`));
         };
       }
     };
@@ -217,29 +235,39 @@ export async function restoreIndexedDB(snapshots: IndexedDBSnapshot[]): Promise<
     try {
       // Delete existing database first (best-effort: incognito or restricted
       // contexts may reject deleteDatabase even on a clean session)
-      await new Promise<void>((resolve) => {
+      const deleted = await new Promise<boolean>((resolve) => {
         const deleteReq = indexedDB.deleteDatabase(snapshot.name);
-        deleteReq.onsuccess = () => resolve();
+        deleteReq.onsuccess = () => resolve(true);
         deleteReq.onerror = () => {
           console.warn(
-            `[Unaware Sessions] deleteDatabase("${snapshot.name}") failed — proceeding with restore`
+            `[Unaware Sessions] deleteDatabase("${snapshot.name}") failed — proceeding with restore`,
           );
-          resolve();
+          resolve(false);
         };
         deleteReq.onblocked = () => {
           console.warn(
-            `[Unaware Sessions] deleteDatabase("${snapshot.name}") blocked — proceeding with restore`
+            `[Unaware Sessions] deleteDatabase("${snapshot.name}") blocked — proceeding with restore`,
           );
-          resolve();
+          resolve(false);
         };
       });
 
+      // When delete failed/was blocked, the DB still exists at its current version.
+      // Bump version by 1 to force onupgradeneeded so we can recreate stores.
+      const openVersion = deleted ? snapshot.version : snapshot.version + 1;
+
       // Recreate with saved schema and data
       await new Promise<void>((resolve, reject) => {
-        const openReq = indexedDB.open(snapshot.name, snapshot.version);
+        const openReq = indexedDB.open(snapshot.name, openVersion);
 
         openReq.onupgradeneeded = () => {
           const db = openReq.result;
+
+          // Remove any pre-existing stores (blocked delete left them behind)
+          for (const existing of Array.from(db.objectStoreNames)) {
+            db.deleteObjectStore(existing);
+          }
+
           for (const storeSnapshot of snapshot.objectStores) {
             const store = db.createObjectStore(storeSnapshot.name, {
               keyPath: storeSnapshot.keyPath ?? undefined,
@@ -265,10 +293,24 @@ export async function restoreIndexedDB(snapshots: IndexedDBSnapshot[]): Promise<
             return;
           }
 
+          // Verify all expected stores exist (defensive: if onupgradeneeded
+          // was somehow skipped, transaction would throw NotFoundError)
+          for (const name of storeNames) {
+            if (!db.objectStoreNames.contains(name)) {
+              db.close();
+              reject(new Error(`Store "${name}" missing in IDB "${snapshot.name}" — schema mismatch`));
+              return;
+            }
+          }
+
           const tx = db.transaction(storeNames, 'readwrite');
 
           for (const storeSnapshot of snapshot.objectStores) {
             const store = tx.objectStore(storeSnapshot.name);
+
+            // Clear any pre-existing data before writing snapshot records
+            store.clear();
+
             const hasExplicitKeys =
               storeSnapshot.keyPath === null && Array.isArray(storeSnapshot.keys);
 

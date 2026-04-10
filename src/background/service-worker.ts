@@ -32,11 +32,15 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
-  if (alarm.name === ALARM_PERSIST_STATE) {
-    await persistTabMap();
-    await cleanupStaleRules();
-  } else if (alarm.name === ALARM_AUTO_REFRESH) {
-    await refreshAllActiveSessions();
+  try {
+    if (alarm.name === ALARM_PERSIST_STATE) {
+      await persistTabMap();
+      await cleanupStaleRules();
+    } else if (alarm.name === ALARM_AUTO_REFRESH) {
+      await refreshAllActiveSessions();
+    }
+  } catch (err) {
+    console.warn('[Unaware Sessions] Alarm handler error:', err);
   }
 });
 

@@ -5,6 +5,7 @@ import type { ExtensionSettings } from '@shared/types';
 
 const {
   initSettings,
+  resetSettingsInit,
   getSettings,
   getAutoRefreshInterval,
   getAutoRefreshDefaultEnabled,
@@ -35,6 +36,7 @@ beforeEach(async () => {
   domainUnsubs = [];
   isolationUnsubs = [];
   resetChromeMocks();
+  resetSettingsInit();
   await initSettings();
 });
 
@@ -45,14 +47,14 @@ describe('initSettings', () => {
 
   it('loads stored settings from chrome.storage.local', async () => {
     const stored: ExtensionSettings = {
-      autoRefreshInterval: 30,
+      autoRefreshInterval: 60,
       autoRefreshDefaultEnabled: true,
       isolationModeDefault: 'soft',
     };
     await chrome.storage.local.set({ [STORAGE_KEYS.EXTENSION_SETTINGS]: stored });
     await initSettings();
 
-    expect(getAutoRefreshInterval()).toBe(30);
+    expect(getAutoRefreshInterval()).toBe(60);
     expect(getAutoRefreshDefaultEnabled()).toBe(true);
   });
 
@@ -116,10 +118,10 @@ describe('setAutoRefreshInterval', () => {
     const listener = vi.fn();
     settingsUnsubs.push(onSettingsChange(listener));
 
-    await setAutoRefreshInterval(30);
+    await setAutoRefreshInterval(120);
 
     expect(listener).toHaveBeenCalledWith(
-      expect.objectContaining({ autoRefreshInterval: 30 }),
+      expect.objectContaining({ autoRefreshInterval: 120 }),
     );
   });
 
@@ -226,7 +228,7 @@ describe('onSettingsChange', () => {
     settingsUnsubs.push(onSettingsChange(listener1));
     settingsUnsubs.push(onSettingsChange(listener2));
 
-    await setAutoRefreshInterval(30);
+    await setAutoRefreshInterval(120);
 
     expect(listener1).toHaveBeenCalledOnce();
     expect(listener2).toHaveBeenCalledOnce();

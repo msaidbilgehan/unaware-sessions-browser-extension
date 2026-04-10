@@ -23,6 +23,10 @@ const pendingRestores: Map<number, { sessionId: string; origin: string }> = new 
 // for the first to complete before starting.
 const switchLocks: Map<number, Promise<void>> = new Map();
 
+export function isTabSwitching(tabId: number): boolean {
+  return switchLocks.has(tabId);
+}
+
 // Ring buffer of recent restore failures for debugging
 const restoreFailures: RestoreFailureEntry[] = [];
 

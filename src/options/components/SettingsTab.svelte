@@ -41,7 +41,6 @@
 
   const intervalOptions: { value: AutoRefreshInterval; label: string }[] = [
     { value: 0, label: 'Off' },
-    { value: 30, label: '30s' },
     { value: 60, label: '1m' },
     { value: 120, label: '2m' },
     { value: 300, label: '5m' },

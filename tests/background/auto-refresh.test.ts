@@ -3,12 +3,27 @@ import { resetChromeMocks } from '../setup';
 import { ALARM_AUTO_REFRESH, STORAGE_KEYS } from '@shared/constants';
 import { hydrateSessions, createSession } from '@background/session-manager';
 import { hydrateTabMap, assignTab } from '@background/tab-tracker';
-import { initAutoRefresh, refreshAllActiveSessions } from '@background/auto-refresh';
+import {
+  initAutoRefresh,
+  refreshAllActiveSessions,
+  resetAutoRefreshInit,
+} from '@background/auto-refresh';
+import { initSettings } from '@shared/settings-store';
 
 beforeEach(async () => {
   resetChromeMocks();
+  resetAutoRefreshInit();
   await hydrateSessions();
   await hydrateTabMap();
+  // Enable auto-refresh globally so isDomainAutoRefreshEnabled returns true
+  await chrome.storage.local.set({
+    [STORAGE_KEYS.EXTENSION_SETTINGS]: {
+      autoRefreshInterval: 60,
+      autoRefreshDefaultEnabled: true,
+      isolationModeDefault: 'soft',
+    },
+  });
+  await initSettings();
 });
 
 describe('refreshAllActiveSessions', () => {
@@ -107,6 +122,7 @@ describe('initAutoRefresh', () => {
   });
 
   it('clears alarm when no settings stored (defaults to 0)', async () => {
+    await chrome.storage.local.remove(STORAGE_KEYS.EXTENSION_SETTINGS);
     await initAutoRefresh();
 
     expect(chrome.alarms.clear).toHaveBeenCalledWith(ALARM_AUTO_REFRESH);

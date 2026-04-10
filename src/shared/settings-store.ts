@@ -153,6 +153,16 @@ export async function setDomainIsolationMode(
   notifyIsolationListeners();
 }
 
+let settingsInitialized = false;
+
+/** Reset init guard — for tests only. */
+export function resetSettingsInit(): void {
+  settingsInitialized = false;
+  currentSettings = { ...DEFAULT_EXTENSION_SETTINGS };
+  domainRefreshMap = {};
+  domainIsolationMap = {};
+}
+
 // ── Initialization ──────────────────────────────────────────────
 
 export async function initSettings(): Promise<void> {
@@ -180,4 +190,39 @@ export async function initSettings(): Promise<void> {
   notifySettingsListeners();
   notifyDomainListeners();
   notifyIsolationListeners();
+
+  // Register storage sync listener only once
+  if (settingsInitialized) return;
+  settingsInitialized = true;
+
+  // Keep in-memory state in sync when other contexts (popup, options) write to storage
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local') return;
+
+    if (STORAGE_KEYS.EXTENSION_SETTINGS in changes) {
+      const updated = changes[STORAGE_KEYS.EXTENSION_SETTINGS].newValue as
+        | ExtensionSettings
+        | undefined;
+      if (updated) {
+        currentSettings = { ...DEFAULT_EXTENSION_SETTINGS, ...updated };
+        notifySettingsListeners();
+      }
+    }
+
+    if (STORAGE_KEYS.AUTO_REFRESH_DOMAINS in changes) {
+      const updated = changes[STORAGE_KEYS.AUTO_REFRESH_DOMAINS].newValue as
+        | Record<string, boolean>
+        | undefined;
+      domainRefreshMap = updated ?? {};
+      notifyDomainListeners();
+    }
+
+    if (STORAGE_KEYS.DOMAIN_ISOLATION_MODES in changes) {
+      const updated = changes[STORAGE_KEYS.DOMAIN_ISOLATION_MODES].newValue as
+        | Record<string, IsolationMode>
+        | undefined;
+      domainIsolationMap = updated ?? {};
+      notifyIsolationListeners();
+    }
+  });
 }

@@ -58,7 +58,8 @@ export interface SessionSettings {
 
 // ── Extension Settings ──────────────────────────────────────────
 
-export type AutoRefreshInterval = 0 | 30 | 60 | 120 | 300;
+// Chrome alarms enforce minimum 1-minute period; no sub-minute values
+export type AutoRefreshInterval = 0 | 60 | 120 | 300;
 
 /**
  * Cookie isolation mode per domain.

@@ -1,8 +1,9 @@
 import { ALARM_AUTO_REFRESH, STORAGE_KEYS } from '@shared/constants';
 import type { ExtensionSettings, AutoRefreshInterval } from '@shared/types';
-import { saveCookies, saveTabStorage } from './cookie-engine';
+import { saveCookies, saveTabStorage, isTabSwitching } from './cookie-engine';
 import { getAllTabEntries } from './tab-tracker';
 import { touchSessionRefresh } from './session-manager';
+import { isDomainAutoRefreshEnabled } from '@shared/settings-store';
 
 /**
  * Save fresh cookies + DOM storage for every tracked tab.
@@ -18,6 +19,8 @@ export async function refreshAllActiveSessions(): Promise<number> {
         const tab = await chrome.tabs.get(tabId);
         if (!tab.url) return;
         const origin = new URL(tab.url).origin;
+        if (!isDomainAutoRefreshEnabled(entry.sessionId, origin)) return;
+        if (isTabSwitching(tabId)) return;
         await Promise.all([
           saveCookies(entry.sessionId, origin),
           saveTabStorage(tabId, entry.sessionId, origin),
@@ -57,11 +60,20 @@ async function syncAlarm(interval: AutoRefreshInterval): Promise<void> {
   await chrome.alarms.create(ALARM_AUTO_REFRESH, { periodInMinutes: period });
 }
 
+let autoRefreshInitialized = false;
+
+/** Reset init guard — for tests only. */
+export function resetAutoRefreshInit(): void {
+  autoRefreshInitialized = false;
+}
+
 /**
  * Initialize alarm-based auto-refresh.
  * Reads the current interval from storage and watches for changes.
  */
 export async function initAutoRefresh(): Promise<void> {
+  if (autoRefreshInitialized) return;
+  autoRefreshInitialized = true;
   // Read current interval
   const result = await chrome.storage.local.get(STORAGE_KEYS.EXTENSION_SETTINGS);
   const settings = result[STORAGE_KEYS.EXTENSION_SETTINGS] as ExtensionSettings | undefined;
