@@ -2,6 +2,12 @@
 
 **Open-source, privacy-first multi-session browser manager — entirely local.**
 
+![Sessions Tab — Overview](assets/settings-sessions.png)
+
+![Settings Tab — Theme, Isolation, Auto-refresh](assets/settings-settings.png)
+
+![Other Tabs — About, Data & Debug](assets/settings-others.png)
+
 ---
 
 ## Table of Contents
@@ -126,14 +132,6 @@ Switch between isolated sessions on any site. Each session maintains its own coo
 | ---------------- | ------------ |
 | ![Instagram — Personal](assets/instagram-personal.png) | ![Instagram — Work](assets/instagram-work.png) |
 | ![Instagram — Personal (profile)](assets/instagram-personal-2.png) | |
-
-### Options Page
-
-![Sessions Tab — Overview](assets/settings-sessions.png)
-
-![Settings Tab — Theme, Isolation, Auto-refresh](assets/settings-settings.png)
-
-![Other Tabs — About, Data & Debug](assets/settings-others.png)
 
 ---
 
