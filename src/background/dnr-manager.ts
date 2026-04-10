@@ -31,7 +31,26 @@ export async function updateRulesForTab(
     return;
   }
 
-  const cookieHeader = serializeCookies(snapshot.cookies);
+  // Only include cookies that belong to this origin's domain hierarchy.
+  // Legacy snapshots may contain cross-domain cookies that must not be
+  // sent to this origin's servers.
+  const originCookies = snapshot.cookies.filter((c) => {
+    const cookieDomain = c.domain.replace(/^\./, '');
+    return (
+      cookieDomain === domain ||
+      cookieDomain.endsWith(`.${domain}`) ||
+      domain.endsWith(`.${cookieDomain}`)
+    );
+  });
+
+  if (originCookies.length === 0) {
+    await chrome.declarativeNetRequest.updateSessionRules({
+      removeRuleIds: [ruleId],
+    });
+    return;
+  }
+
+  const cookieHeader = serializeCookies(originCookies);
 
   const rule: chrome.declarativeNetRequest.Rule = {
     id: ruleId,

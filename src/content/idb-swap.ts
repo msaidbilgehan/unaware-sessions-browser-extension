@@ -1,6 +1,73 @@
 import type { IndexedDBSnapshot, ObjectStoreSnapshot, IndexSnapshot } from '@shared/types';
 import { IDB_SNAPSHOT_TIMEOUT_MS, IDB_SNAPSHOT_MAX_SIZE_MB } from '@shared/constants';
 
+// ── JSON-safe encoding for binary/Date values ──────────────────────
+// chrome.runtime.sendMessage uses JSON serialization (not structured clone),
+// so ArrayBuffer, TypedArray, and Date are lost during the round-trip between
+// the content script and the background service worker.  We encode them into
+// JSON-safe marker objects before sending, then decode on restore.
+
+const MARKER = '__ua_t';
+
+function encodeValue(value: unknown): unknown {
+  if (value === null || value === undefined) return value;
+  if (typeof value !== 'object') return value;
+
+  if (value instanceof ArrayBuffer) {
+    return { [MARKER]: 'AB', d: Array.from(new Uint8Array(value)) };
+  }
+  if (ArrayBuffer.isView(value)) {
+    const bytes = new Uint8Array(
+      (value as ArrayBufferView).buffer,
+      (value as ArrayBufferView).byteOffset,
+      (value as ArrayBufferView).byteLength,
+    );
+    return { [MARKER]: 'TV', d: Array.from(bytes) };
+  }
+  if (value instanceof Date) {
+    return { [MARKER]: 'D', d: value.getTime() };
+  }
+  if (Array.isArray(value)) {
+    return value.map(encodeValue);
+  }
+
+  const obj = value as Record<string, unknown>;
+  const result: Record<string, unknown> = {};
+  for (const key of Object.keys(obj)) {
+    result[key] = encodeValue(obj[key]);
+  }
+  return result;
+}
+
+function decodeValue(value: unknown): unknown {
+  if (value === null || value === undefined) return value;
+  if (typeof value !== 'object') return value;
+
+  if (Array.isArray(value)) {
+    return value.map(decodeValue);
+  }
+
+  const obj = value as Record<string, unknown>;
+  const marker = obj[MARKER];
+
+  if (typeof marker === 'string') {
+    if ((marker === 'AB' || marker === 'TV') && Array.isArray(obj.d)) {
+      return new Uint8Array(obj.d as number[]).buffer;
+    }
+    if (marker === 'D' && typeof obj.d === 'number') {
+      return new Date(obj.d);
+    }
+  }
+
+  const result: Record<string, unknown> = {};
+  for (const key of Object.keys(obj)) {
+    result[key] = decodeValue(obj[key]);
+  }
+  return result;
+}
+
+// ── Helpers ────────────────────────────────────────────────────────
+
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('IDB operation timed out')), ms);
@@ -16,6 +83,8 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
     );
   });
 }
+
+// ── Snapshot ───────────────────────────────────────────────────────
 
 async function snapshotDatabase(name: string): Promise<IndexedDBSnapshot | null> {
   return new Promise((resolve, reject) => {
@@ -56,15 +125,18 @@ async function snapshotDatabase(name: string): Promise<IndexedDBSnapshot | null>
         }
 
         const records: unknown[] = [];
-        // Save explicit keys for out-of-line key stores (keyPath is null)
         const needsExplicitKeys = store.keyPath === null;
         const keys: IDBValidKey[] = [];
+        const allKeys: IDBValidKey[] = [];
         const cursorRequest = store.openCursor();
 
         cursorRequest.onsuccess = () => {
           const cursor = cursorRequest.result;
           if (cursor) {
-            const serialized = JSON.stringify(cursor.value);
+            // Encode BEFORE size estimation — the encoded form is what
+            // actually gets serialized through chrome.runtime.sendMessage.
+            const encoded = encodeValue(cursor.value);
+            const serialized = JSON.stringify(encoded);
             estimatedSize += serialized.length;
 
             if (estimatedSize > IDB_SNAPSHOT_MAX_SIZE_MB * 1024 * 1024) {
@@ -76,9 +148,11 @@ async function snapshotDatabase(name: string): Promise<IndexedDBSnapshot | null>
               return;
             }
 
-            records.push(cursor.value);
+            records.push(encoded);
+            const encodedKey = encodeValue(cursor.key) as IDBValidKey;
+            allKeys.push(encodedKey);
             if (needsExplicitKeys) {
-              keys.push(cursor.key);
+              keys.push(encodedKey);
             }
             cursor.continue();
           } else {
@@ -89,6 +163,7 @@ async function snapshotDatabase(name: string): Promise<IndexedDBSnapshot | null>
               indexes,
               records,
               ...(needsExplicitKeys ? { keys } : {}),
+              allKeys,
             });
 
             completed++;
@@ -135,6 +210,8 @@ export async function saveIndexedDB(): Promise<IndexedDBSnapshot[]> {
   return snapshots;
 }
 
+// ── Restore ───────────────────────────────────────────────────────
+
 export async function restoreIndexedDB(snapshots: IndexedDBSnapshot[]): Promise<void> {
   for (const snapshot of snapshots) {
     try {
@@ -144,8 +221,9 @@ export async function restoreIndexedDB(snapshots: IndexedDBSnapshot[]): Promise<
         deleteReq.onsuccess = () => resolve();
         deleteReq.onerror = () => reject(new Error(`Failed to delete IDB: ${snapshot.name}`));
         deleteReq.onblocked = () => {
-          console.warn(`[Unaware Sessions] IDB "${snapshot.name}" blocked during delete`);
-          resolve();
+          // Database is still open by another connection — skip this restore
+          // rather than opening the existing DB without onupgradeneeded.
+          reject(new Error(`IDB "${snapshot.name}" blocked during delete — skipping restore`));
         };
       });
 
@@ -189,14 +267,18 @@ export async function restoreIndexedDB(snapshots: IndexedDBSnapshot[]): Promise<
 
             for (let i = 0; i < storeSnapshot.records.length; i++) {
               try {
+                // Decode marker objects back to their original binary/Date types
+                const record = decodeValue(storeSnapshot.records[i]);
+
                 if (hasExplicitKeys && storeSnapshot.keys![i] !== undefined) {
-                  store.put(storeSnapshot.records[i], storeSnapshot.keys![i]);
+                  const key = decodeValue(storeSnapshot.keys![i]) as IDBValidKey;
+                  store.put(record, key);
                 } else {
-                  store.put(storeSnapshot.records[i]);
+                  store.put(record);
                 }
               } catch (err) {
-                // Skip individual records that fail (e.g., invalid key path values)
-                // rather than aborting the entire store restore.
+                // Skip individual records that fail rather than aborting
+                // the entire store restore.
                 console.warn(
                   `[Unaware Sessions] Skipping IDB record in "${storeSnapshot.name}":`,
                   err,

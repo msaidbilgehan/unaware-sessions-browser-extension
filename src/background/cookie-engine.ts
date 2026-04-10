@@ -142,10 +142,24 @@ export async function restoreCookies(sessionId: string, origin: string): Promise
   const snapshot = await cookieStore.load(sessionId, origin);
   if (!snapshot) return;
 
-  // Restore all cookies in parallel for speed — sequential was too slow
-  // for snapshots with hundreds of cross-domain cookies
+  const domain = extractDomain(origin);
+
+  // Only restore cookies that belong to this origin's domain hierarchy.
+  // Legacy snapshots may contain cross-domain cookies — filter them out.
+  const originCookies = domain
+    ? snapshot.cookies.filter((cookie) => {
+        const cookieDomain = cookie.domain.replace(/^\./, '');
+        return (
+          cookieDomain === domain ||
+          cookieDomain.endsWith(`.${domain}`) ||
+          domain.endsWith(`.${cookieDomain}`)
+        );
+      })
+    : snapshot.cookies;
+
+  // Restore origin-scoped cookies in parallel for speed
   const results = await Promise.allSettled(
-    snapshot.cookies.map((cookie) => {
+    originCookies.map((cookie) => {
       const url = buildCookieUrl(cookie);
       const isHostCookie = cookie.name.startsWith('__Host-');
       const isSecureCookie = cookie.name.startsWith('__Secure-');
@@ -173,13 +187,13 @@ export async function restoreCookies(sessionId: string, origin: string): Promise
   for (let i = 0; i < results.length; i++) {
     const result = results[i];
     if (result.status === 'rejected') {
-      const cookie = snapshot.cookies[i];
+      const cookie = originCookies[i];
       const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
       recordRestoreFailure(sessionId, origin, cookie.name, cookie.domain, reason);
       failCount++;
     } else if (result.value === null) {
       // chrome.cookies.set returns null when the cookie was rejected silently
-      const cookie = snapshot.cookies[i];
+      const cookie = originCookies[i];
       recordRestoreFailure(sessionId, origin, cookie.name, cookie.domain, 'Silently rejected (returned null)');
       failCount++;
     }
@@ -276,7 +290,6 @@ export async function detectSessionForOrigin(origin: string): Promise<string | n
     if (!snapshot || snapshot.cookies.length === 0) continue;
 
     // Filter snapshot to only cookies relevant to this domain
-    // (snapshots may contain ALL browser cookies from saveAllCookiesForSession)
     const relevantSaved = snapshot.cookies.filter(
       (c) =>
         c.domain === domain ||
@@ -320,22 +333,6 @@ export function cleanupPendingRestore(tabId: number): void {
   pendingRestores.delete(tabId);
 }
 
-/**
- * Save cookies for ALL domains in the browser under the given session+origin key.
- * This captures cross-domain auth cookies (e.g., authenticator.cursor.sh for cursor.com).
- */
-export async function saveAllCookiesForSession(sessionId: string, origin: string): Promise<void> {
-  const allCookies = await chrome.cookies.getAll({});
-
-  const snapshot: CookieSnapshot = {
-    sessionId,
-    origin,
-    timestamp: now(),
-    cookies: allCookies,
-  };
-
-  await cookieStore.save(snapshot);
-}
 
 export async function switchSession(tabId: number, targetSessionId: string): Promise<void> {
   // Serialize switches on the same tab — wait for any in-progress switch to finish.
@@ -370,7 +367,7 @@ async function doSwitchSession(tabId: number, targetSessionId: string): Promise<
   // 1. Save current session's data before switching (parallel — independent I/O)
   if (currentEntry) {
     await Promise.all([
-      saveAllCookiesForSession(currentEntry.sessionId, origin),
+      saveCookies(currentEntry.sessionId, origin),
       saveTabStorage(tabId, currentEntry.sessionId, origin),
     ]);
   }
@@ -402,82 +399,16 @@ async function doSwitchSession(tabId: number, targetSessionId: string): Promise<
   // 3. Restore target session's cookies for this origin
   await restoreCookies(targetSessionId, origin);
 
-  // 4. If the snapshot was saved with saveAllCookiesForSession (contains
-  //    cross-domain cookies), also restore cookies for related domains
-  //    that the target session needs (e.g., anthropic.com for claude.ai).
-  //    Skip domains in "soft" isolation mode — those should not be overwritten
-  //    by stale cross-domain snapshots (e.g., don't restore old Google cookies
-  //    when switching Instagram sessions).
-  const fullSnapshot = targetSnapshot;
-  if (fullSnapshot && domain) {
-    // Find domains in the snapshot that are NOT the current origin's domain
-    const extraDomains = new Set<string>();
-    for (const cookie of fullSnapshot.cookies) {
-      const cookieDomain = cookie.domain.replace(/^\./, '');
-      if (
-        cookieDomain !== domain &&
-        !cookieDomain.endsWith(`.${domain}`) &&
-        !domain.endsWith(`.${cookieDomain}`)
-      ) {
-        extraDomains.add(cookieDomain);
-      }
-    }
-
-    // Remove domains that are in "soft" isolation mode — their cookies should
-    // pass through untouched. Only restore cross-domain cookies for domains
-    // that the user has explicitly set to "strict" (or that have saved data).
-    for (const extraDomain of extraDomains) {
-      if (getDomainIsolationMode(extraDomain) === 'soft') {
-        extraDomains.delete(extraDomain);
-      }
-    }
-
-    // Restore cookies for related domains (e.g., anthropic.com in strict mode)
-    if (extraDomains.size > 0) {
-      const extraCookies = fullSnapshot.cookies.filter((c) => {
-        const cd = c.domain.replace(/^\./, '');
-        return cd !== domain && extraDomains.has(cd);
-      });
-
-      if (extraCookies.length > 0) {
-        await Promise.allSettled(
-          extraCookies.map((cookie) => {
-            const url = buildCookieUrl(cookie);
-            const isHostCookie = cookie.name.startsWith('__Host-');
-            const isSecureCookie = cookie.name.startsWith('__Secure-');
-
-            let secure = cookie.secure;
-            if (cookie.sameSite === 'no_restriction' || isHostCookie || isSecureCookie) {
-              secure = true;
-            }
-
-            return chrome.cookies.set({
-              url,
-              name: cookie.name,
-              value: cookie.value,
-              ...(isHostCookie ? {} : { domain: cookie.domain }),
-              path: isHostCookie ? '/' : cookie.path,
-              secure,
-              httpOnly: cookie.httpOnly,
-              sameSite: cookie.sameSite,
-              ...(cookie.expirationDate ? { expirationDate: cookie.expirationDate } : {}),
-            });
-          }),
-        );
-      }
-    }
-  }
-
-  // 5. Update tab-session mapping + DNR rules (parallel — independent)
+  // 4. Update tab-session mapping + DNR rules (parallel — independent)
   await Promise.all([
     assignTab(tabId, targetSessionId, origin),
     updateRulesForTab(tabId, targetSessionId, origin),
   ]);
 
-  // 7. Queue storage restore for when the content script loads on the new page
+  // 5. Queue storage restore for when the content script loads on the new page
   pendingRestores.set(tabId, { sessionId: targetSessionId, origin });
 
-  // 8. Navigate tab to same URL — clean up pending entry on failure
+  // 6. Navigate tab to same URL — clean up pending entry on failure
   try {
     await chrome.tabs.update(tabId, { url: tab.url });
   } catch (err) {

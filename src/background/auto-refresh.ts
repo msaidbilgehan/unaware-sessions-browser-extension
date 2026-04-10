@@ -1,6 +1,6 @@
 import { ALARM_AUTO_REFRESH, STORAGE_KEYS } from '@shared/constants';
 import type { ExtensionSettings, AutoRefreshInterval } from '@shared/types';
-import { saveAllCookiesForSession, saveTabStorage } from './cookie-engine';
+import { saveCookies, saveTabStorage } from './cookie-engine';
 import { getAllTabEntries } from './tab-tracker';
 import { touchSessionRefresh } from './session-manager';
 
@@ -19,7 +19,7 @@ export async function refreshAllActiveSessions(): Promise<number> {
         if (!tab.url) return;
         const origin = new URL(tab.url).origin;
         await Promise.all([
-          saveAllCookiesForSession(entry.sessionId, origin),
+          saveCookies(entry.sessionId, origin),
           saveTabStorage(tabId, entry.sessionId, origin),
         ]);
         refreshed.add(entry.sessionId);

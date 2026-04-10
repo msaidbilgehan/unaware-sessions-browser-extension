@@ -3,6 +3,7 @@ import { STORAGE_KEYS } from '@shared/constants';
 import { getSession, setSession } from '@shared/storage';
 import { extractOrigin, isValidUrl } from '@shared/utils';
 import { removeRulesForTab } from './dnr-manager';
+import { cleanupPendingRestore } from './cookie-engine';
 
 let tabMap: Map<number, TabSessionEntry> = new Map();
 let hydratePromise: Promise<void> | null = null;
@@ -62,6 +63,7 @@ export async function getAllTabEntries(): Promise<Map<number, TabSessionEntry>> 
 
 async function handleTabRemoved(tabId: number): Promise<void> {
   await ensureHydrated();
+  cleanupPendingRestore(tabId);
   if (tabMap.has(tabId)) {
     tabMap.delete(tabId);
     await persistTabMap();
@@ -80,8 +82,13 @@ async function handleTabUpdated(
     if (entry) {
       const newOrigin = extractOrigin(tab.url);
       if (newOrigin && isValidUrl(tab.url) && newOrigin !== entry.origin) {
-        tabMap.set(tabId, { ...entry, origin: newOrigin });
+        // Origin changed — unassign session. The session data belongs to
+        // the old origin; keeping it assigned on a different origin causes
+        // cross-domain confusion (session appearing under wrong "THIS SITE").
+        tabMap.delete(tabId);
         await persistTabMap();
+        await removeRulesForTab(tabId);
+        cleanupPendingRestore(tabId);
       }
     }
   }

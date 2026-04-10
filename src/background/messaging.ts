@@ -18,7 +18,7 @@ import {
 import {
   switchSession,
   handleContentScriptReady,
-  saveAllCookiesForSession,
+  saveCookies,
   saveTabStorage,
   detectSessionForOrigin,
   clearCookies,
@@ -166,7 +166,7 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
     if (!entry) return { success: false, error: 'Tab is not assigned to a session' };
 
     const origin = new URL(tab.url).origin;
-    await saveAllCookiesForSession(entry.sessionId, origin);
+    await saveCookies(entry.sessionId, origin);
     await saveTabStorage(msg.tabId, entry.sessionId, origin);
     await touchSessionRefresh(entry.sessionId);
     return { success: true };
@@ -190,7 +190,7 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
     // so the data is preserved for switching back later.
     if (currentEntry) {
       await Promise.all([
-        saveAllCookiesForSession(currentEntry.sessionId, origin),
+        saveCookies(currentEntry.sessionId, origin),
         saveTabStorage(msg.tabId, currentEntry.sessionId, origin),
       ]);
     }

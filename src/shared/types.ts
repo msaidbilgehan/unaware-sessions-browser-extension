@@ -120,6 +120,8 @@ export interface ObjectStoreSnapshot {
   records: unknown[];
   /** Explicit keys for out-of-line key stores (keyPath === null, autoIncrement === false). */
   keys?: IDBValidKey[];
+  /** Cursor keys for ALL records — used as fallback when inline keyPath values become invalid after structured-clone round-trips. */
+  allKeys?: IDBValidKey[];
 }
 
 export interface IndexSnapshot {
