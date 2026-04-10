@@ -86,7 +86,7 @@ describe('tab-tracker event handlers', () => {
     expect(await getTabEntry(1)).toBeDefined();
   });
 
-  it('updates origin when tab navigates to new origin', async () => {
+  it('unassigns session when tab navigates to a different origin', async () => {
     await assignTab(1, 'session-1', 'https://example.com');
 
     mockChrome.tabs.onUpdated._fire(
@@ -96,9 +96,12 @@ describe('tab-tracker event handlers', () => {
     );
     await new Promise((r) => setTimeout(r, 10));
 
+    // Session should be unassigned — it belongs to example.com, not other.com
     const entry = await getTabEntry(1);
-    expect(entry?.origin).toBe('https://other.com');
-    expect(entry?.sessionId).toBe('session-1');
+    expect(entry).toBeUndefined();
+
+    // DNR rules should be cleaned up
+    expect(chrome.declarativeNetRequest.updateSessionRules).toHaveBeenCalled();
   });
 
   it('does not update origin for same-origin navigation', async () => {

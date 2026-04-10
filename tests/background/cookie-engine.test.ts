@@ -6,7 +6,6 @@ import {
   restoreCookies,
   switchSession,
   saveTabStorage,
-  saveAllCookiesForSession,
   detectSessionForOrigin,
   handleContentScriptReady,
   cleanupPendingRestore,
@@ -300,29 +299,13 @@ describe('switchSession', () => {
     expect((chrome.tabs.sendMessage as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsAfterSecond);
   });
 
-  it('saves all cookies (not just origin) before switching (regression: cross-domain)', async () => {
-    const crossDomainCookies = [
-      ...MOCK_COOKIES,
-      {
-        name: 'auth',
-        value: 'cross-token',
-        domain: '.auth-provider.com',
-        path: '/',
-        secure: true,
-        httpOnly: false,
-        sameSite: 'lax' as const,
-        hostOnly: false,
-        session: false,
-        storeId: '0',
-      } as chrome.cookies.Cookie,
-    ];
-
+  it('saves only origin-scoped cookies before switching (no cross-domain pollution)', async () => {
     (chrome.tabs.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       id: 4,
       url: 'https://example.com/page',
     });
-    // getAll({}) returns all cookies including cross-domain
-    (chrome.cookies.getAll as ReturnType<typeof vi.fn>).mockResolvedValue(crossDomainCookies);
+    // getCookiesForOrigin returns only origin-scoped cookies (no cross-domain)
+    (chrome.cookies.getAll as ReturnType<typeof vi.fn>).mockResolvedValue(MOCK_COOKIES);
     (chrome.tabs.sendMessage as ReturnType<typeof vi.fn>).mockRejectedValue(
       new Error('No content script'),
     );
@@ -333,11 +316,11 @@ describe('switchSession', () => {
 
     await switchSession(4, targetSession.id);
 
-    // Verify the saved snapshot contains ALL cookies (including cross-domain)
+    // Verify the saved snapshot only contains origin-scoped cookies
     const savedSnapshot = await cookieStore.load(currentSession.id, 'https://example.com');
     expect(savedSnapshot).toBeDefined();
-    expect(savedSnapshot?.cookies).toHaveLength(3);
-    expect(savedSnapshot?.cookies.some((c) => c.domain === '.auth-provider.com')).toBe(true);
+    expect(savedSnapshot?.cookies).toHaveLength(2);
+    expect(savedSnapshot?.cookies.some((c) => c.domain === '.auth-provider.com')).toBe(false);
   });
 });
 
@@ -385,32 +368,6 @@ describe('saveTabStorage', () => {
   }, 10000);
 });
 
-describe('saveAllCookiesForSession', () => {
-  it('saves all browser cookies under the session origin key', async () => {
-    const allCookies = [
-      ...MOCK_COOKIES,
-      {
-        name: 'auth',
-        value: 'token',
-        domain: '.other.com',
-        path: '/',
-        secure: true,
-        httpOnly: false,
-        sameSite: 'lax' as const,
-        hostOnly: false,
-        session: false,
-        storeId: '0',
-      } as chrome.cookies.Cookie,
-    ];
-    (chrome.cookies.getAll as ReturnType<typeof vi.fn>).mockResolvedValueOnce(allCookies);
-
-    await saveAllCookiesForSession('session-1', 'https://example.com');
-
-    const snapshot = await cookieStore.load('session-1', 'https://example.com');
-    expect(snapshot).toBeDefined();
-    expect(snapshot?.cookies).toHaveLength(3);
-  });
-});
 
 describe('detectSessionForOrigin', () => {
   it('returns null when no domain can be extracted', async () => {
@@ -497,6 +454,96 @@ describe('cleanupPendingRestore', () => {
   it('removes pending restore for a tab', () => {
     // Should not throw even if no pending entry
     cleanupPendingRestore(42);
+  });
+});
+
+describe('restoreCookies origin filtering', () => {
+  it('filters out cross-domain cookies from legacy snapshots', async () => {
+    // Manually save a snapshot with cross-domain cookies (simulating legacy data)
+    await cookieStore.save({
+      sessionId: 'filter-session',
+      origin: 'https://example.com',
+      timestamp: Date.now(),
+      cookies: [
+        {
+          name: 'sid',
+          value: '123',
+          domain: '.example.com',
+          path: '/',
+          secure: true,
+          httpOnly: false,
+          sameSite: 'lax',
+          hostOnly: false,
+          session: false,
+          storeId: '0',
+        } as chrome.cookies.Cookie,
+        {
+          name: 'gid',
+          value: 'google-leak',
+          domain: '.google.com',
+          path: '/',
+          secure: true,
+          httpOnly: false,
+          sameSite: 'lax',
+          hostOnly: false,
+          session: false,
+          storeId: '0',
+        } as chrome.cookies.Cookie,
+      ],
+    });
+
+    await restoreCookies('filter-session', 'https://example.com');
+
+    // Only the example.com cookie should be restored, NOT google.com
+    const setCalls = (chrome.cookies.set as ReturnType<typeof vi.fn>).mock.calls;
+    expect(setCalls).toHaveLength(1);
+    expect(setCalls[0][0].name).toBe('sid');
+  });
+
+  it('includes parent-domain cookies for subdomain origins', async () => {
+    await cookieStore.save({
+      sessionId: 'parent-session',
+      origin: 'https://www.example.com',
+      timestamp: Date.now(),
+      cookies: [
+        {
+          name: 'sub',
+          value: 'a',
+          domain: 'www.example.com',
+          path: '/',
+          secure: true,
+          httpOnly: false,
+          sameSite: 'lax',
+          hostOnly: true,
+          session: false,
+          storeId: '0',
+        } as chrome.cookies.Cookie,
+        {
+          name: 'parent',
+          value: 'b',
+          domain: '.example.com',
+          path: '/',
+          secure: true,
+          httpOnly: false,
+          sameSite: 'lax',
+          hostOnly: false,
+          session: false,
+          storeId: '0',
+        } as chrome.cookies.Cookie,
+      ],
+    });
+
+    await restoreCookies('parent-session', 'https://www.example.com');
+
+    const setCalls = (chrome.cookies.set as ReturnType<typeof vi.fn>).mock.calls;
+    expect(setCalls).toHaveLength(2);
+    const names = setCalls.map((c: unknown[]) => (c[0] as { name: string }).name).sort();
+    expect(names).toEqual(['parent', 'sub']);
+  });
+
+  it('returns early when no snapshot exists', async () => {
+    await restoreCookies('nonexistent', 'https://example.com');
+    expect(chrome.cookies.set).not.toHaveBeenCalled();
   });
 });
 

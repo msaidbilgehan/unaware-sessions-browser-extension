@@ -389,3 +389,285 @@ describe('save then restore round-trip', () => {
     expect(records).toContainEqual({ id: 2, name: 'Bob', active: false });
   });
 });
+
+describe('out-of-line key stores (keyPath === null)', () => {
+  it('snapshots explicit keys for out-of-line key stores', async () => {
+    // Create a store with no keyPath — requires explicit keys on put()
+    await new Promise<void>((resolve, reject) => {
+      const req = indexedDB.open('outofline-db', 1);
+      req.onupgradeneeded = () => {
+        req.result.createObjectStore('data');
+      };
+      req.onsuccess = () => {
+        const db = req.result;
+        const tx = db.transaction('data', 'readwrite');
+        const store = tx.objectStore('data');
+        store.put({ value: 'alpha' }, 'key-a');
+        store.put({ value: 'beta' }, 'key-b');
+        tx.oncomplete = () => {
+          db.close();
+          resolve();
+        };
+        tx.onerror = () => {
+          db.close();
+          reject(new Error('Failed'));
+        };
+      };
+      req.onerror = () => reject(new Error('Failed to open'));
+    });
+
+    const snapshots = await saveIndexedDB();
+
+    expect(snapshots).toHaveLength(1);
+    const store = snapshots[0].objectStores[0];
+    expect(store.keyPath).toBeNull();
+    expect(store.keys).toBeDefined();
+    expect(store.keys).toHaveLength(2);
+    expect(store.records).toHaveLength(2);
+    expect(store.allKeys).toHaveLength(2);
+  });
+
+  it('restores out-of-line key stores with explicit keys', async () => {
+    const snapshot: IndexedDBSnapshot = {
+      name: 'outofline-restore',
+      version: 1,
+      objectStores: [
+        {
+          name: 'data',
+          keyPath: null,
+          autoIncrement: false,
+          indexes: [],
+          records: [{ value: 'alpha' }, { value: 'beta' }],
+          keys: ['key-a', 'key-b'],
+        },
+      ],
+    };
+
+    await restoreIndexedDB([snapshot]);
+
+    // Verify records were restored with correct keys
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const req = indexedDB.open('outofline-restore');
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(new Error('Failed'));
+    });
+
+    const tx = db.transaction('data', 'readonly');
+    const store = tx.objectStore('data');
+
+    const valA = await new Promise<unknown>((resolve) => {
+      const r = store.get('key-a');
+      r.onsuccess = () => resolve(r.result);
+    });
+    const valB = await new Promise<unknown>((resolve) => {
+      const r = store.get('key-b');
+      r.onsuccess = () => resolve(r.result);
+    });
+
+    expect(valA).toEqual({ value: 'alpha' });
+    expect(valB).toEqual({ value: 'beta' });
+    db.close();
+  });
+
+  it('round-trips out-of-line key stores through save-restore', async () => {
+    await new Promise<void>((resolve, reject) => {
+      const req = indexedDB.open('outofline-rt', 1);
+      req.onupgradeneeded = () => {
+        req.result.createObjectStore('items');
+      };
+      req.onsuccess = () => {
+        const db = req.result;
+        const tx = db.transaction('items', 'readwrite');
+        tx.objectStore('items').put({ x: 10 }, 'mykey');
+        tx.oncomplete = () => {
+          db.close();
+          resolve();
+        };
+        tx.onerror = () => {
+          db.close();
+          reject(new Error('Failed'));
+        };
+      };
+      req.onerror = () => reject(new Error('Failed'));
+    });
+
+    const snapshots = await saveIndexedDB();
+    await deleteDB('outofline-rt');
+    await restoreIndexedDB(snapshots);
+
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const req = indexedDB.open('outofline-rt');
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(new Error('Failed'));
+    });
+
+    const tx = db.transaction('items', 'readonly');
+    const val = await new Promise<unknown>((resolve) => {
+      const r = tx.objectStore('items').get('mykey');
+      r.onsuccess = () => resolve(r.result);
+    });
+
+    expect(val).toEqual({ x: 10 });
+    db.close();
+  });
+});
+
+describe('encode/decode binary values (JSON round-trip safety)', () => {
+  it('encodes and decodes records with Date values through save-restore', async () => {
+    const timestamp = Date.now();
+    await createTestDB('date-db', [
+      {
+        name: 'events',
+        keyPath: 'id',
+        records: [{ id: 1, createdAt: new Date(timestamp) }],
+      },
+    ]);
+
+    const snapshots = await saveIndexedDB();
+
+    // Simulate JSON round-trip (what chrome.runtime.sendMessage does)
+    const jsonRoundTripped = JSON.parse(JSON.stringify(snapshots)) as IndexedDBSnapshot[];
+
+    await deleteDB('date-db');
+    await restoreIndexedDB(jsonRoundTripped);
+
+    const records = await readAllRecords('date-db', 'events');
+    expect(records).toHaveLength(1);
+    const record = records[0] as { id: number; createdAt: Date };
+    expect(record.id).toBe(1);
+    // After encode → JSON → decode, the Date should be restored
+    expect(record.createdAt).toBeInstanceOf(Date);
+    expect(record.createdAt.getTime()).toBe(timestamp);
+  });
+
+  it('preserves records with allKeys field after JSON round-trip', async () => {
+    await createTestDB('allkeys-db', [
+      {
+        name: 'items',
+        keyPath: 'id',
+        records: [{ id: 1, v: 'a' }, { id: 2, v: 'b' }],
+      },
+    ]);
+
+    const snapshots = await saveIndexedDB();
+    const store = snapshots[0].objectStores[0];
+
+    // allKeys should be populated for all records
+    expect(store.allKeys).toBeDefined();
+    expect(store.allKeys).toHaveLength(2);
+
+    // JSON round-trip should preserve encoded keys
+    const jsonRoundTripped = JSON.parse(JSON.stringify(snapshots)) as IndexedDBSnapshot[];
+    await deleteDB('allkeys-db');
+    await restoreIndexedDB(jsonRoundTripped);
+
+    const records = await readAllRecords('allkeys-db', 'items');
+    expect(records).toHaveLength(2);
+  });
+
+  it('preserves nested objects with mixed types through JSON round-trip', async () => {
+    await createTestDB('nested-db', [
+      {
+        name: 'data',
+        keyPath: 'id',
+        records: [
+          {
+            id: 1,
+            meta: {
+              count: 42,
+              label: 'test',
+              nested: { deep: true },
+            },
+            tags: ['a', 'b', 'c'],
+          },
+        ],
+      },
+    ]);
+
+    const snapshots = await saveIndexedDB();
+    const jsonRoundTripped = JSON.parse(JSON.stringify(snapshots)) as IndexedDBSnapshot[];
+    await deleteDB('nested-db');
+    await restoreIndexedDB(jsonRoundTripped);
+
+    const records = await readAllRecords('nested-db', 'data');
+    expect(records).toHaveLength(1);
+    const rec = records[0] as Record<string, unknown>;
+    expect(rec.id).toBe(1);
+    expect((rec.meta as Record<string, unknown>).count).toBe(42);
+    expect((rec.meta as Record<string, unknown>).label).toBe('test');
+    expect(rec.tags).toEqual(['a', 'b', 'c']);
+  });
+});
+
+describe('restoreIndexedDB error handling', () => {
+  it('skips records with invalid key path values gracefully', async () => {
+    const snapshot: IndexedDBSnapshot = {
+      name: 'invalid-key-db',
+      version: 1,
+      objectStores: [
+        {
+          name: 'store',
+          keyPath: 'id',
+          autoIncrement: false,
+          indexes: [],
+          // First record has valid key, second has undefined key path value
+          records: [
+            { id: 1, value: 'valid' },
+            { notId: 'missing-key-field', value: 'invalid' },
+          ],
+        },
+      ],
+    };
+
+    // Should not throw — skips the invalid record
+    await restoreIndexedDB([snapshot]);
+
+    const records = await readAllRecords('invalid-key-db', 'store');
+    // Only the valid record should be restored
+    expect(records).toHaveLength(1);
+    expect(records[0]).toEqual({ id: 1, value: 'valid' });
+  });
+
+  it('continues restoring other databases when one fails', async () => {
+    const snapshots: IndexedDBSnapshot[] = [
+      {
+        name: 'good-db',
+        version: 1,
+        objectStores: [
+          {
+            name: 'data',
+            keyPath: 'id',
+            autoIncrement: false,
+            indexes: [],
+            records: [{ id: 1, v: 'ok' }],
+          },
+        ],
+      },
+      {
+        name: 'bad-db',
+        version: 1,
+        objectStores: [
+          {
+            name: 'data',
+            keyPath: 'id',
+            autoIncrement: false,
+            indexes: [],
+            // All invalid records
+            records: [{ noKey: true }, { noKey: true }],
+          },
+        ],
+      },
+    ];
+
+    await restoreIndexedDB(snapshots);
+
+    // Good DB should be fully restored
+    const goodRecords = await readAllRecords('good-db', 'data');
+    expect(goodRecords).toHaveLength(1);
+    expect(goodRecords[0]).toEqual({ id: 1, v: 'ok' });
+
+    // Bad DB should exist but have no records (all skipped)
+    const badRecords = await readAllRecords('bad-db', 'data');
+    expect(badRecords).toHaveLength(0);
+  });
+});

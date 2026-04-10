@@ -115,6 +115,73 @@ describe('dnr-manager', () => {
     expect(call.addRules).toBeUndefined();
   });
 
+  it('filters out cross-domain cookies from legacy snapshots in DNR header', async () => {
+    // Snapshot contains cookies from both example.com AND google.com (legacy pollution)
+    await cookieStore.save({
+      sessionId: 'legacy-session',
+      origin: 'https://example.com',
+      timestamp: Date.now(),
+      cookies: [
+        { name: 'sid', value: '123', domain: '.example.com', path: '/' } as chrome.cookies.Cookie,
+        { name: 'gid', value: 'leak', domain: '.google.com', path: '/' } as chrome.cookies.Cookie,
+      ],
+    });
+
+    await updateRulesForTab(50, 'legacy-session', 'https://example.com');
+
+    const call = (chrome.declarativeNetRequest.updateSessionRules as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
+    expect(call.addRules).toBeDefined();
+
+    // The Cookie header should ONLY contain example.com cookies, not google.com
+    const cookieHeader = call.addRules[0].action.requestHeaders[0].value;
+    expect(cookieHeader).toBe('sid=123');
+    expect(cookieHeader).not.toContain('gid=leak');
+  });
+
+  it('removes rule when all cookies are cross-domain (no origin cookies)', async () => {
+    // Snapshot contains ONLY cross-domain cookies — no origin cookies
+    await cookieStore.save({
+      sessionId: 'all-cross',
+      origin: 'https://example.com',
+      timestamp: Date.now(),
+      cookies: [
+        { name: 'gid', value: 'leak', domain: '.google.com', path: '/' } as chrome.cookies.Cookie,
+        { name: 'fb', value: 'other', domain: '.facebook.com', path: '/' } as chrome.cookies.Cookie,
+      ],
+    });
+
+    await updateRulesForTab(55, 'all-cross', 'https://example.com');
+
+    const call = (chrome.declarativeNetRequest.updateSessionRules as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
+    // Should remove rule (no origin cookies to inject)
+    expect(call.removeRuleIds).toEqual([DNR_RULE_ID_BASE + 55]);
+    expect(call.addRules).toBeUndefined();
+  });
+
+  it('includes parent-domain cookies in DNR header', async () => {
+    // Cookies on parent domain should be included for subdomain origins
+    await cookieStore.save({
+      sessionId: 'parent-domain',
+      origin: 'https://www.example.com',
+      timestamp: Date.now(),
+      cookies: [
+        { name: 'sub', value: 'a', domain: 'www.example.com', path: '/' } as chrome.cookies.Cookie,
+        { name: 'parent', value: 'b', domain: '.example.com', path: '/' } as chrome.cookies.Cookie,
+      ],
+    });
+
+    await updateRulesForTab(60, 'parent-domain', 'https://www.example.com');
+
+    const call = (chrome.declarativeNetRequest.updateSessionRules as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
+    expect(call.addRules).toBeDefined();
+    const cookieHeader = call.addRules[0].action.requestHeaders[0].value;
+    expect(cookieHeader).toContain('sub=a');
+    expect(cookieHeader).toContain('parent=b');
+  });
+
   it('cleans up stale rules for closed tabs', async () => {
     const staleRules = [
       {

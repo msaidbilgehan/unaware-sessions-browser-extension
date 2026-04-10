@@ -640,6 +640,262 @@ describe('messaging', () => {
     expect(diff.summary.matched).toBe(1);
   });
 
+  it('handles GET_COOKIE_DIFF with value_changed cookies', async () => {
+    const snapCookie = {
+      name: 'SID',
+      value: 'old-value',
+      domain: '.example.com',
+      path: '/',
+      secure: true,
+      httpOnly: false,
+      sameSite: 'lax',
+      hostOnly: false,
+      session: false,
+      storeId: '0',
+    } as chrome.cookies.Cookie;
+
+    await cookieStore.save({
+      sessionId: 'diff-val',
+      origin: 'https://example.com',
+      timestamp: Date.now(),
+      cookies: [snapCookie],
+    });
+
+    const liveCookie = { ...snapCookie, value: 'new-value' };
+    (chrome.cookies.getAll as ReturnType<typeof vi.fn>).mockResolvedValue([liveCookie]);
+
+    const response = await sendTestMessage({
+      type: MessageType.GET_COOKIE_DIFF,
+      sessionId: 'diff-val',
+      origin: 'https://example.com',
+    });
+
+    expect(response.success).toBe(true);
+    const diff = response.data as {
+      summary: { valueChanged: number };
+      entries: Array<{ status: string; snapshotValue: string; liveValue: string }>;
+    };
+    expect(diff.summary.valueChanged).toBe(1);
+    expect(diff.entries[0].status).toBe('value_changed');
+    expect(diff.entries[0].snapshotValue).toBe('old-value');
+    expect(diff.entries[0].liveValue).toBe('new-value');
+  });
+
+  it('handles GET_COOKIE_DIFF with flags_changed cookies', async () => {
+    const snapCookie = {
+      name: 'SID',
+      value: 'same',
+      domain: '.example.com',
+      path: '/',
+      secure: true,
+      httpOnly: false,
+      sameSite: 'lax' as const,
+      hostOnly: false,
+      session: false,
+      storeId: '0',
+    } as chrome.cookies.Cookie;
+
+    await cookieStore.save({
+      sessionId: 'diff-flags',
+      origin: 'https://example.com',
+      timestamp: Date.now(),
+      cookies: [snapCookie],
+    });
+
+    const liveCookie = { ...snapCookie, secure: false };
+    (chrome.cookies.getAll as ReturnType<typeof vi.fn>).mockResolvedValue([liveCookie]);
+
+    const response = await sendTestMessage({
+      type: MessageType.GET_COOKIE_DIFF,
+      sessionId: 'diff-flags',
+      origin: 'https://example.com',
+    });
+
+    expect(response.success).toBe(true);
+    const diff = response.data as {
+      summary: { flagsChanged: number };
+      entries: Array<{ status: string; flagDiffs?: string[] }>;
+    };
+    expect(diff.summary.flagsChanged).toBe(1);
+    expect(diff.entries[0].status).toBe('flags_changed');
+    expect(diff.entries[0].flagDiffs).toContain('secure: true → false');
+  });
+
+  it('handles GET_COOKIE_DIFF with missing_in_browser cookies', async () => {
+    const snapCookie = {
+      name: 'SID',
+      value: 'val',
+      domain: '.example.com',
+      path: '/',
+      secure: true,
+      httpOnly: false,
+      sameSite: 'lax',
+      hostOnly: false,
+      session: false,
+      storeId: '0',
+    } as chrome.cookies.Cookie;
+
+    await cookieStore.save({
+      sessionId: 'diff-missing',
+      origin: 'https://example.com',
+      timestamp: Date.now(),
+      cookies: [snapCookie],
+    });
+
+    // No live cookies — the snapshot cookie is missing in browser
+    (chrome.cookies.getAll as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    const response = await sendTestMessage({
+      type: MessageType.GET_COOKIE_DIFF,
+      sessionId: 'diff-missing',
+      origin: 'https://example.com',
+    });
+
+    expect(response.success).toBe(true);
+    const diff = response.data as {
+      summary: { missingInBrowser: number };
+      entries: Array<{ status: string }>;
+    };
+    expect(diff.summary.missingInBrowser).toBe(1);
+    expect(diff.entries[0].status).toBe('missing_in_browser');
+  });
+
+  it('handles GET_COOKIE_DIFF with expired cookies', async () => {
+    const snapCookie = {
+      name: 'SID',
+      value: 'val',
+      domain: '.example.com',
+      path: '/',
+      secure: true,
+      httpOnly: false,
+      sameSite: 'lax',
+      hostOnly: false,
+      session: false,
+      storeId: '0',
+      // Expired 1 hour ago
+      expirationDate: Date.now() / 1000 - 3600,
+    } as chrome.cookies.Cookie;
+
+    await cookieStore.save({
+      sessionId: 'diff-expired',
+      origin: 'https://example.com',
+      timestamp: Date.now(),
+      cookies: [snapCookie],
+    });
+
+    (chrome.cookies.getAll as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    const response = await sendTestMessage({
+      type: MessageType.GET_COOKIE_DIFF,
+      sessionId: 'diff-expired',
+      origin: 'https://example.com',
+    });
+
+    expect(response.success).toBe(true);
+    const diff = response.data as {
+      summary: { expired: number };
+      entries: Array<{ status: string }>;
+    };
+    expect(diff.summary.expired).toBe(1);
+    expect(diff.entries[0].status).toBe('expired');
+  });
+
+  it('handles GET_COOKIE_DIFF with extra_in_browser cookies', async () => {
+    // Empty snapshot
+    await cookieStore.save({
+      sessionId: 'diff-extra',
+      origin: 'https://example.com',
+      timestamp: Date.now(),
+      cookies: [],
+    });
+
+    const liveCookie = {
+      name: 'NEW',
+      value: 'val',
+      domain: '.example.com',
+      path: '/',
+      secure: true,
+      httpOnly: false,
+      sameSite: 'lax',
+      hostOnly: false,
+      session: false,
+      storeId: '0',
+    } as chrome.cookies.Cookie;
+
+    (chrome.cookies.getAll as ReturnType<typeof vi.fn>).mockResolvedValue([liveCookie]);
+
+    const response = await sendTestMessage({
+      type: MessageType.GET_COOKIE_DIFF,
+      sessionId: 'diff-extra',
+      origin: 'https://example.com',
+    });
+
+    expect(response.success).toBe(true);
+    const diff = response.data as {
+      summary: { extraInBrowser: number };
+      entries: Array<{ status: string; liveValue: string }>;
+    };
+    expect(diff.summary.extraInBrowser).toBe(1);
+    expect(diff.entries[0].status).toBe('extra_in_browser');
+    expect(diff.entries[0].liveValue).toBe('val');
+  });
+
+  it('handles GET_COOKIE_DIFF entries sorted by severity', async () => {
+    const snapCookies = [
+      {
+        name: 'MATCH',
+        value: 'same',
+        domain: '.example.com',
+        path: '/',
+        secure: true,
+        httpOnly: false,
+        sameSite: 'lax',
+        hostOnly: false,
+        session: false,
+        storeId: '0',
+      } as chrome.cookies.Cookie,
+      {
+        name: 'CHANGED',
+        value: 'old',
+        domain: '.example.com',
+        path: '/',
+        secure: true,
+        httpOnly: false,
+        sameSite: 'lax',
+        hostOnly: false,
+        session: false,
+        storeId: '0',
+      } as chrome.cookies.Cookie,
+    ];
+
+    await cookieStore.save({
+      sessionId: 'diff-sort',
+      origin: 'https://example.com',
+      timestamp: Date.now(),
+      cookies: snapCookies,
+    });
+
+    const liveCookies = [
+      { ...snapCookies[0] }, // match
+      { ...snapCookies[1], value: 'new' }, // value changed
+    ];
+    (chrome.cookies.getAll as ReturnType<typeof vi.fn>).mockResolvedValue(liveCookies);
+
+    const response = await sendTestMessage({
+      type: MessageType.GET_COOKIE_DIFF,
+      sessionId: 'diff-sort',
+      origin: 'https://example.com',
+    });
+
+    expect(response.success).toBe(true);
+    const diff = response.data as {
+      entries: Array<{ status: string; name: string }>;
+    };
+    // value_changed should come before match in sort order
+    expect(diff.entries[0].status).toBe('value_changed');
+    expect(diff.entries[1].status).toBe('match');
+  });
+
   it('handles GET_RESTORE_FAILURES', async () => {
     const response = await sendTestMessage({
       type: MessageType.GET_RESTORE_FAILURES,
