@@ -9,6 +9,7 @@
 - [Project Overview](#project-overview)
 - [Motivation](#motivation)
 - [Features](#features)
+- [Screenshots](#screenshots)
 - [Architecture Overview](#architecture-overview)
 - [Tech Stack](#tech-stack)
 - [Installation](#installation)
@@ -98,6 +99,41 @@ Unaware Sessions fills the gap: lightweight session isolation that works inside 
 - **One session per origin at a time** — DOM storage is shared per-origin, so concurrent sessions on the same domain aren't possible at the extension level
 - **Page reload on session switch** — required to cleanly swap DOM storage without race conditions
 - **Manifest V3 only** — mandatory for Chrome Web Store distribution
+
+---
+
+## Screenshots
+
+### Popup — Session Switching
+
+Switch between isolated sessions on any site. Each session maintains its own cookies, localStorage, and IndexedDB.
+
+#### ChatGPT
+
+| Personal Session | Work Session |
+| ---------------- | ------------ |
+| ![ChatGPT — Personal](assets/chatgpt-personal.png) | ![ChatGPT — Work](assets/chatgpt-work.png) |
+
+#### Claude
+
+| Personal Session | Work Session |
+| ---------------- | ------------ |
+| ![Claude — Personal](assets/claude-personal.png) | ![Claude — Work](assets/claude-work.png) |
+
+#### Instagram
+
+| Personal Session | Work Session |
+| ---------------- | ------------ |
+| ![Instagram — Personal](assets/instagram-personal.png) | ![Instagram — Work](assets/instagram-work.png) |
+| ![Instagram — Personal (profile)](assets/instagram-personal-2.png) | |
+
+### Options Page
+
+![Sessions Tab — Overview](assets/settings-sessions.png)
+
+![Settings Tab — Theme, Isolation, Auto-refresh](assets/settings-settings.png)
+
+![Other Tabs — About, Data & Debug](assets/settings-others.png)
 
 ---
 
