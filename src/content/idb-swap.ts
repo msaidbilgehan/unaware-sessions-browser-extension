@@ -215,15 +215,22 @@ export async function saveIndexedDB(): Promise<IndexedDBSnapshot[]> {
 export async function restoreIndexedDB(snapshots: IndexedDBSnapshot[]): Promise<void> {
   for (const snapshot of snapshots) {
     try {
-      // Delete existing database first
-      await new Promise<void>((resolve, reject) => {
+      // Delete existing database first (best-effort: incognito or restricted
+      // contexts may reject deleteDatabase even on a clean session)
+      await new Promise<void>((resolve) => {
         const deleteReq = indexedDB.deleteDatabase(snapshot.name);
         deleteReq.onsuccess = () => resolve();
-        deleteReq.onerror = () => reject(new Error(`Failed to delete IDB: ${snapshot.name}`));
+        deleteReq.onerror = () => {
+          console.warn(
+            `[Unaware Sessions] deleteDatabase("${snapshot.name}") failed — proceeding with restore`
+          );
+          resolve();
+        };
         deleteReq.onblocked = () => {
-          // Database is still open by another connection — skip this restore
-          // rather than opening the existing DB without onupgradeneeded.
-          reject(new Error(`IDB "${snapshot.name}" blocked during delete — skipping restore`));
+          console.warn(
+            `[Unaware Sessions] deleteDatabase("${snapshot.name}") blocked — proceeding with restore`
+          );
+          resolve();
         };
       });
 
