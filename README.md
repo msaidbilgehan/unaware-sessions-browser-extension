@@ -53,9 +53,12 @@ Unaware Sessions fills the gap: lightweight session isolation that works inside 
 - Open any link in any session context via right-click context menu
 - Tab badge indicators showing which session a tab belongs to
 - Switch a tab's session identity with automatic page reload
+- Cookie isolation modes: **soft** (default, preserves unmanaged domains) or **strict** (full isolation)
+- Per-domain isolation mode overrides via settings
 
 ### Management
 
+- Full backup/restore: export all sessions + cookies + storage as timestamped JSON
 - Import / export session profiles as JSON with visual diff preview
 - Drag-and-drop file import
 - Session list with active tab counts, color indicators, and pinning
@@ -76,6 +79,13 @@ Unaware Sessions fills the gap: lightweight session isolation that works inside 
 - Quick-switch overlay — press `?` then a number key to jump to a session
 - First-run onboarding flow
 - Full ARIA labels, focus rings, `prefers-reduced-motion`, and `prefers-contrast` support
+- Keyboard-navigable tab bar in options page (arrow keys, ARIA tab roles)
+
+### Debugging
+
+- Debug tab in options page with cookie diff viewer (snapshot vs live browser cookies)
+- Restore failure log: recent cookie restoration failures with detailed context
+- Per-cookie status breakdown: matched, value changed, flags changed, missing, extra, expired
 
 ### Privacy
 
@@ -266,9 +276,9 @@ src/
   options/
     index.html
     main.ts                  # Svelte mount + theme init
-    App.svelte               # Tabbed options page
+    App.svelte               # Tabbed options page (Sessions, Settings, Import/Export, Debug, About)
     components/
-      TabBar.svelte          # Tab navigation
+      TabBar.svelte          # Tab navigation with keyboard nav + ARIA
       SessionsTab.svelte     # Session management with inline edit
       SettingsTab.svelte     # Theme + auto-refresh settings
       ImportExportTab.svelte # Import with drag-drop + visual diff
@@ -276,6 +286,7 @@ src/
       StorageDashboard.svelte # Per-session storage usage bars
       DragDropZone.svelte    # Drag-and-drop file import zone
       ImportDiff.svelte      # Visual diff preview before import
+      DebugTab.svelte        # Cookie diff viewer + restore failure log
   shared/
     types.ts                 # All TypeScript interfaces + message types
     api.ts                   # Typed messaging API (popup + options)
@@ -356,7 +367,7 @@ npm run test:watch
 npm run test:coverage
 ```
 
-Tests use **Vitest** with Chrome API mocks (defined in `tests/setup.ts`) and `fake-indexeddb` for IndexedDB testing. Coverage is tracked via v8. The test suite covers background services, shared utilities, content scripts, settings, and API layer (265 tests across 18 test files, 90% statement coverage).
+Tests use **Vitest** with Chrome API mocks (defined in `tests/setup.ts`) and `fake-indexeddb` for IndexedDB testing. Coverage is tracked via v8. The test suite covers background services, shared utilities, content scripts, settings, and API layer (325 tests across 20 test files, 90%+ statement coverage).
 
 ---
 

@@ -20,16 +20,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **New icons:** `github`, `heart`, `external-link` added to Icon.svelte
 - **Release scripts:** `npm run release`, `release:minor`, `release:major` for semver versioning
 - **Auto-refresh button title in SessionsTab:** Visible "Auto-refresh" text label on per-domain toggle
-- **New tests:** 144 new unit tests across 8 new/expanded test files (263 total, 90% statement coverage)
-  - `tests/shared/api.test.ts` — 32 tests covering all API message wrappers
-  - `tests/shared/settings-store.test.ts` — 25 tests covering settings persistence and listeners
-  - `tests/content/idb-swap.test.ts` — 15 tests covering IndexedDB snapshot/restore round-trip
-  - `tests/content/index.test.ts` — 12 tests covering content script message handlers
-  - `tests/background/service-worker.test.ts` — 6 tests covering initialization and event handlers
-  - Expanded: cookie-engine (+14), messaging (+15), tab-tracker (+7), cookie-store (+5), storage-store (+5), badge-manager (+3), session-manager (+5)
+- **Cookie isolation modes:** `soft` (default) preserves cookies on domains without saved session data; `strict` always clears cookies for full isolation — configurable globally and per-domain via Settings tab
+- **Full backup/restore:** "Full Export" packages all sessions, cookie snapshots, and storage snapshots into a single timestamped JSON file; "Full Import" with stats preview and session name deduplication
+- **Debug tab in options page:** Cookie diff viewer comparing saved snapshots against live browser cookies with per-cookie status (matched, value changed, flags changed, missing, extra, expired); restore failure log showing recent cookie restoration failures with timestamp, session, origin, and failure reason
+- **Per-tab session switch mutex:** Concurrent session switches on the same tab are serialized to prevent interleaved cookie operations
+- **Restore failure tracking:** Ring buffer (max 200 entries) in cookie engine records failed cookie restorations with detailed context for Debug tab inspection
+- **TabBar keyboard navigation:** Arrow key navigation with circular wrap, ARIA `role="tab"` and `aria-selected` attributes, `tabindex` management, focus-visible styling
+- **New message types:** `EXPORT_FULL`, `IMPORT_FULL`, `GET_LIVE_COOKIES`, `GET_COOKIE_DIFF`, `GET_RESTORE_FAILURES`
+- **New API functions:** `exportFull()`, `importFull()`, `getLiveCookies()`, `getCookieDiff()`, `getRestoreFailures()`
+- **New types:** `IsolationMode` (`soft` | `strict`), `FullExportData`, `CookieDiffEntry`, `CookieDiffResult`, `RestoreFailureEntry`, `LiveCookieInfo`
+- **New tests:** 62 new unit tests across 2 new + expanded test files (325 total, 90%+ statement coverage)
+  - `tests/background/auto-refresh.test.ts` — 10 tests covering alarm creation, storage listeners, session refresh deduplication
+  - `tests/background/cold-start.test.ts` — 8 tests covering concurrent hydration, cold-start data availability, switch mutex serialization
+  - Expanded: messaging (+3 for EXPORT_FULL/IMPORT_FULL/REFRESH_ACTIVE_SESSIONS), api, settings-store, utils, cookie-engine, dnr-manager, tab-tracker
 
 ### Changed
 
+- **Settings tab expanded:** Added cookie isolation section with soft/strict mode toggle and educational explainer
+- **ImportExportTab redesigned:** Dual export paths (profile-only vs full export), auto-detection of full vs legacy import format, stats preview for full imports
+- **`switchSession` respects isolation mode:** In soft mode, skips cookie clear/restore on domains with no target session data; removes DNR rules and lets browser cookies pass through
+- **`getCookiesForOrigin()` exported as public** from cookie-engine for use in debug APIs
+- **Tab tracker and session manager APIs now async:** `getTabEntry()` and `getTabsForSession()` awaited consistently
+- **Options page quiet updates:** `updateSessionsQuietly()` only replaces state when data actually changed, preventing unnecessary re-renders
 - **Cookie operations now walk the domain hierarchy:** `saveCookies`, `clearCookies`, and `detectSessionForOrigin` use `getCookiesForOrigin()` to query all ancestor domains (e.g., `.google.com` when on `www.google.com`), ensuring parent-domain cookies are included
 - **"Default (no session)" clears only origin cookies:** `CLEAR_ORIGIN_DATA` now uses `clearCookies(origin)` instead of wiping all browser cookies, preventing forced re-login on unrelated sites
 - **Removed unused permissions:** Removed `scripting` (content scripts are manifest-declared), `declarativeNetRequestFeedback` (debug-only, never used), and `activeTab` (redundant with `<all_urls>` host permission) from manifest.json

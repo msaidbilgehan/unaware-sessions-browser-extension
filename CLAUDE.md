@@ -26,6 +26,8 @@ Privacy-first, open-source browser extension for isolated browsing sessions with
 
 - **Fresh navigation on session switch** — uses `chrome.tabs.update({url})` for clean cookie state
 - **Origin-scoped cookie swap** — saves/clears/restores cookies per-origin (including parent-domain cookies via domain hierarchy walk), with cross-domain cookie passthrough for auth flows
+- **Cookie isolation modes** — `soft` (default) skips cookie clear/restore on domains where the target session has no saved data, preserving unrelated services; `strict` always clears cookies for full isolation even without target data
+- **Per-tab session switch mutex** — concurrent session switches on the same tab are serialized to prevent interleaved cookie operations
 - **One active session per origin at a time** — DOM storage is shared per-origin across all tabs
 - **MV3 only** — no MV2 support, no persistent background page
 - **Service Worker state must survive restarts** — persist to `chrome.storage.session` / `chrome.storage.local` / extension IndexedDB
@@ -63,6 +65,9 @@ npm run release:major # Major version bump + push tags
 - **CSS custom properties** — all colors, spacing, radii, shadows use design tokens from `theme.css`
 - **Shared API layer** — `src/shared/api.ts` is the single source for popup/options to communicate with the service worker; retries once (200 ms delay) on MV3 service worker wake-up connection errors before surfacing to callers
 - **"Other sessions" auto-expand** — `SessionList.svelte` expands the collapsed "Other sessions" group automatically when no site-specific sessions exist, so all sessions remain reachable from any origin
+- **Soft isolation by default** — cookie isolation defaults to `soft` mode (skip clear/restore on unmanaged domains); configurable per-domain or globally via settings
+- **Per-tab concurrency mutex** — `switchSession` serializes concurrent switches on the same tab to prevent interleaved cookie operations
+- **Restore failure ring buffer** — `cookie-engine.ts` records the last 200 cookie restoration failures for debug inspection via the Debug tab
 
 ## File Naming
 
@@ -75,7 +80,7 @@ npm run release:major # Major version bump + push tags
 ### Background (`src/background/`)
 
 - `session-manager.ts` — session CRUD, ordering, duplicate
-- `cookie-engine.ts` — cookie swap orchestration (save, clear, restore, switch) with domain-hierarchy cookie resolution, DOM storage save/restore, and pending restores
+- `cookie-engine.ts` — cookie swap orchestration (save, clear, restore, switch) with domain-hierarchy cookie resolution, DOM storage save/restore, pending restores, per-tab switch mutex, soft/strict isolation mode, and restore failure tracking (ring buffer)
 - `cookie-store.ts` — IndexedDB wrapper for cookie snapshots + stats
 - `storage-store.ts` — IndexedDB wrapper for storage snapshots + stats
 - `tab-tracker.ts` — tab-to-session mapping with persistence
@@ -87,12 +92,12 @@ npm run release:major # Major version bump + push tags
 
 ### Shared (`src/shared/`)
 
-- `types.ts` — all TypeScript interfaces, MessageType enum, Message union
-- `api.ts` — typed message wrappers for popup/options (createSession, switchSession, getSessionStats, etc.)
+- `types.ts` — all TypeScript interfaces, MessageType enum, Message union, `IsolationMode` type (`soft` | `strict`), full export/import types, debug types (cookie diff, restore failures)
+- `api.ts` — typed message wrappers for popup/options (createSession, switchSession, getSessionStats, exportFull, importFull, debug APIs, etc.)
 - `theme.css` — CSS custom properties design system (light/dark tokens, spacing, radii, shadows)
 - `theme-store.ts` — theme preference manager (light/dark/system with chrome.storage persistence)
-- `settings-store.ts` — extension settings manager (auto-refresh interval, domain preferences, listener pattern)
-- `constants.ts` — extension-wide constants (storage keys, colors, emojis, GitHub/OpenCollective URLs)
+- `settings-store.ts` — extension settings manager (auto-refresh interval, domain preferences, per-domain isolation mode overrides, listener pattern)
+- `constants.ts` — extension-wide constants (storage keys including domain isolation modes, colors, emojis, GitHub/OpenCollective URLs)
 - `components/` — shared Svelte components (Icon, ThemeToggle, ConfirmDialog, Toast, InlineEdit, ColorPicker, EmojiPicker, AppLogo)
 
 ### Popup (`src/popup/`)
@@ -102,8 +107,8 @@ npm run release:major # Major version bump + push tags
 
 ### Options (`src/options/`)
 
-- `App.svelte` — tabbed layout (Sessions, Settings, Import/Export, About)
-- `components/` — TabBar, SessionsTab (domain folders, inline cookie/storage editing, per-domain auto-refresh), SettingsTab (theme + data refresh), ImportExportTab, AboutTab (GitHub, OpenCollective, data management), StorageDashboard, DragDropZone, ImportDiff
+- `App.svelte` — tabbed layout (Sessions, Settings, Import/Export, Debug, About)
+- `components/` — TabBar (with keyboard nav + ARIA tabs), SessionsTab (domain folders, inline cookie/storage editing, per-domain auto-refresh), SettingsTab (theme + data refresh + cookie isolation mode), ImportExportTab (profile-only + full export/import with stats preview), DebugTab (cookie diff viewer + restore failure log), AboutTab (GitHub, OpenCollective, data management), StorageDashboard, DragDropZone, ImportDiff
 
 ## Key Documentation
 
