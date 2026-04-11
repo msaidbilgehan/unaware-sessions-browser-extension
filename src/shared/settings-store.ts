@@ -36,6 +36,14 @@ export function isDomainAutoRefreshEnabled(sessionId: string, origin: string): b
   return domainRefreshMap[key] ?? currentSettings.autoRefreshDefaultEnabled;
 }
 
+/**
+ * Effective auto-refresh state: global interval is active AND per-domain is enabled.
+ * Use this in UI to show whether a domain is actually being refreshed.
+ */
+export function isAutoRefreshEffective(sessionId: string, origin: string): boolean {
+  return currentSettings.autoRefreshInterval > 0 && isDomainAutoRefreshEnabled(sessionId, origin);
+}
+
 export function getIsolationModeDefault(): IsolationMode {
   return currentSettings.isolationModeDefault;
 }

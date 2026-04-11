@@ -9,7 +9,12 @@
     currentSessionName: string | undefined;
     onrefresh: () => void;
     refreshing?: boolean;
-    autoRefreshEnabled?: boolean;
+    /** Global auto-refresh interval is active (> 0) */
+    globalAutoRefreshOn?: boolean;
+    /** Per-domain auto-refresh is enabled for this session:origin */
+    domainAutoRefreshOn?: boolean;
+    /** Effective state: global ON and domain ON */
+    autoRefreshEffective?: boolean;
     onautorefreshToggle?: () => void;
     isolationMode?: IsolationMode;
     onisolationToggle?: () => void;
@@ -22,7 +27,9 @@
     currentSessionName,
     onrefresh,
     refreshing = false,
-    autoRefreshEnabled = false,
+    globalAutoRefreshOn = false,
+    domainAutoRefreshOn = false,
+    autoRefreshEffective = false,
     onautorefreshToggle,
     isolationMode = 'soft',
     onisolationToggle,
@@ -116,10 +123,20 @@
         {#if onautorefreshToggle}
           <button
             class="action-btn auto-refresh-toggle"
-            class:active={autoRefreshEnabled}
+            class:active={autoRefreshEffective}
+            class:domain-on={domainAutoRefreshOn && !globalAutoRefreshOn}
             onclick={onautorefreshToggle}
-            aria-label={autoRefreshEnabled ? 'Disable auto-refresh' : 'Enable auto-refresh'}
-            title={autoRefreshEnabled ? 'Auto-refresh on' : 'Auto-refresh off'}
+            disabled={!globalAutoRefreshOn}
+            aria-label={!globalAutoRefreshOn
+              ? 'Auto-refresh disabled globally (enable in Settings)'
+              : domainAutoRefreshOn
+                ? 'Disable auto-refresh for this domain'
+                : 'Enable auto-refresh for this domain'}
+            title={!globalAutoRefreshOn
+              ? 'Auto-refresh off globally'
+              : domainAutoRefreshOn
+                ? 'Auto-refresh active for this domain'
+                : 'Auto-refresh off for this domain'}
           >
             <Icon name="refresh-cw" size={12} />
           </button>
@@ -274,6 +291,7 @@
     background: var(--color-accent-soft);
   }
 
+  /* Effective: global ON + domain ON — green pulse */
   .action-btn.auto-refresh-toggle.active {
     color: var(--color-success);
     border-color: var(--color-success);
@@ -291,6 +309,14 @@
     border-radius: var(--radius-full);
     background: var(--color-success);
     animation: pulse 2s ease-in-out infinite;
+  }
+
+  /* Domain ON but global OFF — dimmed, shows state is preserved but dormant */
+  .action-btn.auto-refresh-toggle.domain-on {
+    color: var(--color-text-tertiary);
+    border-color: var(--color-border-primary);
+    background: var(--color-bg-tertiary);
+    opacity: 0.55;
   }
 
   .action-btn.primary:hover:not(:disabled) {

@@ -175,7 +175,7 @@
       <div>
         <h2>Auto-Refresh</h2>
         <p class="description">
-          Automatically refresh session data at the selected interval while the popup or settings page is visible.
+          Periodically save session cookies and storage for all tracked tabs. When set to Off, all per-domain auto-refresh toggles are paused.
         </p>
       </div>
     </div>

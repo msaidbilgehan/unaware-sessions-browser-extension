@@ -15,7 +15,11 @@
   import {
     isDomainAutoRefreshEnabled,
     setDomainAutoRefresh,
+    getAutoRefreshInterval,
+    onSettingsChange,
+    onDomainRefreshChange,
   } from '@shared/settings-store';
+  import type { AutoRefreshInterval } from '@shared/types';
   import Icon from '@shared/components/Icon.svelte';
   import InlineEdit from '@shared/components/InlineEdit.svelte';
   import ColorPicker from '@shared/components/ColorPicker.svelte';
@@ -35,6 +39,35 @@
   let colorEditId = $state<string | null>(null);
   let confirmData = $state<{ session: SessionProfile } | null>(null);
   let originConfirm = $state<{ sessionId: string; origin: string } | null>(null);
+
+  // Global auto-refresh interval — used to dim per-domain toggles when global is off
+  let globalInterval = $state<AutoRefreshInterval>(getAutoRefreshInterval());
+  const globalAutoRefreshOn = $derived(globalInterval > 0);
+
+  // Reactive per-domain refresh map — triggers re-render when toggled
+  let domainRefreshVersion = $state(0);
+
+  $effect(() => {
+    const unsub = onSettingsChange((s) => {
+      globalInterval = s.autoRefreshInterval;
+      // autoRefreshDefaultEnabled affects isDomainAutoRefreshEnabled for sessions
+      // with no explicit entry — bump version so per-domain toggles re-render.
+      domainRefreshVersion++;
+    });
+    return unsub;
+  });
+
+  $effect(() => {
+    const unsub = onDomainRefreshChange(() => {
+      domainRefreshVersion++;
+    });
+    return unsub;
+  });
+
+  function isDomainRefreshOn(sessionId: string, origin: string): boolean {
+    void domainRefreshVersion; // read reactive dependency
+    return isDomainAutoRefreshEnabled(sessionId, origin);
+  }
 
   // Domain folder state
   let collapsedDomains = new SvelteSet<string>();
@@ -139,7 +172,7 @@
   // only reloads details if session IDs actually changed (added/removed/reordered).
 
   async function handleToggleDomainRefresh(sessionId: string, origin: string) {
-    const current = isDomainAutoRefreshEnabled(sessionId, origin);
+    const current = isDomainRefreshOn(sessionId, origin);
     await setDomainAutoRefresh(sessionId, origin, !current);
   }
 
@@ -428,11 +461,15 @@
                             </span>
                             <button
                               class="auto-refresh-btn"
-                              class:active={isDomainAutoRefreshEnabled(session.id, detail.origin)}
+                              class:active={globalAutoRefreshOn && isDomainRefreshOn(session.id, detail.origin)}
+                              class:dormant={!globalAutoRefreshOn && isDomainRefreshOn(session.id, detail.origin)}
+                              disabled={!globalAutoRefreshOn}
                               onclick={() => handleToggleDomainRefresh(session.id, detail.origin)}
-                              title={isDomainAutoRefreshEnabled(session.id, detail.origin)
-                                ? 'Disable auto-refresh'
-                                : 'Enable auto-refresh'}
+                              title={!globalAutoRefreshOn
+                                ? 'Auto-refresh off globally (enable in Settings)'
+                                : isDomainRefreshOn(session.id, detail.origin)
+                                  ? 'Disable auto-refresh'
+                                  : 'Enable auto-refresh'}
                             >
                               <Icon name="refresh-cw" size={11} />
                             </button>
@@ -1021,6 +1058,23 @@
     border-radius: var(--radius-full);
     background: var(--color-success);
     animation: pulse 2s ease-in-out infinite;
+  }
+
+  .auto-refresh-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+  }
+
+  .auto-refresh-btn:disabled:hover {
+    color: var(--color-text-tertiary);
+    background: none;
+  }
+
+  .auto-refresh-btn.dormant {
+    color: var(--color-text-tertiary);
+    border-color: var(--color-border-secondary);
+    background: var(--color-bg-tertiary);
+    opacity: 0.55;
   }
 
   /* Details panel */

@@ -8,10 +8,12 @@
   import { extractOrigin, extractDomain } from '@shared/utils';
   import {
     getAutoRefreshInterval,
-    setAutoRefreshInterval,
+    isDomainAutoRefreshEnabled,
+    setDomainAutoRefresh,
     getDomainIsolationMode,
     setDomainIsolationMode,
     onSettingsChange,
+    onDomainRefreshChange,
     onDomainIsolationChange,
   } from '@shared/settings-store';
   import { STORAGE_KEYS } from '@shared/constants';
@@ -412,25 +414,51 @@
     };
   });
 
-  // Auto-refresh
+  // Auto-refresh — hierarchical toggle: global interval is the master switch,
+  // per-domain toggles control individual session:origin pairs.
   let autoRefreshInterval = $state<AutoRefreshInterval>(getAutoRefreshInterval());
-  let savedInterval: AutoRefreshInterval = 60;
-  const autoRefreshEnabled = $derived(autoRefreshInterval > 0);
+  const globalAutoRefreshOn = $derived(autoRefreshInterval > 0);
+
+  // Per-domain auto-refresh state for the current tab's session:origin
+  let domainAutoRefreshOn = $state(false);
+
+  // Effective state: global is on AND this domain is on
+  const autoRefreshEffective = $derived(globalAutoRefreshOn && domainAutoRefreshOn);
 
   $effect(() => {
     const unsub = onSettingsChange((s) => {
       autoRefreshInterval = s.autoRefreshInterval;
+      // Re-evaluate per-domain state: autoRefreshDefaultEnabled may have changed,
+      // which affects isDomainAutoRefreshEnabled for sessions with no explicit entry.
+      if (currentTabEntry && currentOrigin) {
+        domainAutoRefreshOn = isDomainAutoRefreshEnabled(currentTabEntry.sessionId, currentOrigin);
+      }
     });
     return unsub;
   });
 
-  async function handleAutoRefreshToggle() {
-    if (autoRefreshInterval > 0) {
-      savedInterval = autoRefreshInterval;
-      await setAutoRefreshInterval(0);
+  // Recompute per-domain state when session, origin, or domain map changes
+  $effect(() => {
+    if (currentTabEntry && currentOrigin) {
+      domainAutoRefreshOn = isDomainAutoRefreshEnabled(currentTabEntry.sessionId, currentOrigin);
     } else {
-      await setAutoRefreshInterval(savedInterval);
+      domainAutoRefreshOn = false;
     }
+  });
+
+  $effect(() => {
+    const unsub = onDomainRefreshChange(() => {
+      if (currentTabEntry && currentOrigin) {
+        domainAutoRefreshOn = isDomainAutoRefreshEnabled(currentTabEntry.sessionId, currentOrigin);
+      }
+    });
+    return unsub;
+  });
+
+  // Toggle per-domain auto-refresh for the current session:origin
+  async function handleAutoRefreshToggle() {
+    if (!currentTabEntry || !currentOrigin) return;
+    await setDomainAutoRefresh(currentTabEntry.sessionId, currentOrigin, !domainAutoRefreshOn);
   }
 
   // Isolation mode (per-domain: soft/strict)
@@ -517,7 +545,9 @@
         currentSessionName={currentSession?.name}
         onrefresh={handleUpdateSessionData}
         {refreshing}
-        {autoRefreshEnabled}
+        {globalAutoRefreshOn}
+        {domainAutoRefreshOn}
+        {autoRefreshEffective}
         onautorefreshToggle={handleAutoRefreshToggle}
         {isolationMode}
         onisolationToggle={handleIsolationToggle}
