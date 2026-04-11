@@ -1,6 +1,8 @@
 <script lang="ts">
   import Icon from '@shared/components/Icon.svelte';
   import { GITHUB_URL, OPENCOLLECTIVE_URL } from '@shared/constants';
+
+  const extensionVersion = chrome.runtime.getManifest().version;
 </script>
 
 <div class="about-layout">
@@ -13,7 +15,7 @@
       <div>
         <h2>Unaware Sessions</h2>
         <div class="badges">
-          <span class="badge version">v0.1.0</span>
+          <span class="badge version">v{extensionVersion}</span>
           <span class="badge privacy">
             <Icon name="lock" size={9} />
             100% Local
