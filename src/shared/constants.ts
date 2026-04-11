@@ -19,7 +19,10 @@ export const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
   autoRefreshInterval: 0,
   autoRefreshDefaultEnabled: false,
   isolationModeDefault: 'soft',
+  logLevel: 'off',
 };
+
+export const LOG_BUFFER_MAX_SIZE = 2000;
 
 export const DNR_RULE_ID_BASE = 1000;
 export const DNR_RULE_LIMIT = 5000;

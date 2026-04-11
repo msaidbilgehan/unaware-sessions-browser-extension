@@ -50,6 +50,7 @@ describe('initSettings', () => {
       autoRefreshInterval: 60,
       autoRefreshDefaultEnabled: true,
       isolationModeDefault: 'soft',
+      logLevel: 'off',
     };
     await chrome.storage.local.set({ [STORAGE_KEYS.EXTENSION_SETTINGS]: stored });
     await initSettings();

@@ -58,6 +58,9 @@ const mockChrome = {
     getAll: vi.fn(() => Promise.resolve([])),
     set: vi.fn(() => Promise.resolve(null)),
     remove: vi.fn(() => Promise.resolve(null)),
+    getAllCookieStores: vi.fn(() =>
+      Promise.resolve([{ id: '0', tabIds: [1, 2, 3, 4, 5] }]),
+    ),
   },
   tabs: {
     get: vi.fn(() => Promise.resolve({ id: 1, url: 'https://example.com' })),

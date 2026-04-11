@@ -1,9 +1,12 @@
 import { ALARM_AUTO_REFRESH, STORAGE_KEYS } from '@shared/constants';
 import type { ExtensionSettings, AutoRefreshInterval } from '@shared/types';
-import { saveCookies, saveTabStorage, isTabSwitching } from './cookie-engine';
+import { saveCookies, saveTabStorage, isTabSwitching, getCookieStoreIdForTab } from './cookie-engine';
 import { getAllTabEntries } from './tab-tracker';
 import { touchSessionRefresh } from './session-manager';
 import { isDomainAutoRefreshEnabled } from '@shared/settings-store';
+import { createLogger } from '@shared/logger';
+
+const log = createLogger('auto-refresh');
 
 /**
  * Save fresh cookies + DOM storage for every tracked tab.
@@ -13,6 +16,8 @@ export async function refreshAllActiveSessions(): Promise<number> {
   const entries = await getAllTabEntries();
   const refreshed = new Set<string>();
 
+  log.debug(`Auto-refresh: processing ${entries.size} tracked tab(s)`);
+
   await Promise.allSettled(
     Array.from(entries).map(async ([tabId, entry]) => {
       try {
@@ -21,14 +26,14 @@ export async function refreshAllActiveSessions(): Promise<number> {
         const origin = new URL(tab.url).origin;
         if (!isDomainAutoRefreshEnabled(entry.sessionId, origin)) return;
         if (isTabSwitching(tabId)) return;
+        const storeId = await getCookieStoreIdForTab(tabId);
         await Promise.all([
-          saveCookies(entry.sessionId, origin),
+          saveCookies(entry.sessionId, origin, storeId),
           saveTabStorage(tabId, entry.sessionId, origin),
         ]);
         refreshed.add(entry.sessionId);
       } catch (err) {
-        // Tab may have been closed or navigated to a restricted page
-        console.warn(`[Unaware Sessions] Auto-refresh failed for tab ${tabId}:`, err);
+        log.warn(`Auto-refresh failed for tab ${tabId}`, err);
       }
     }),
   );
@@ -37,6 +42,7 @@ export async function refreshAllActiveSessions(): Promise<number> {
     await touchSessionRefresh(sessionId);
   }
 
+  log.info(`Auto-refresh complete: ${refreshed.size} session(s) refreshed`);
   return refreshed.size;
 }
 
@@ -88,7 +94,7 @@ export async function initAutoRefresh(): Promise<void> {
         .newValue as ExtensionSettings | undefined;
       const newInterval: AutoRefreshInterval = newSettings?.autoRefreshInterval ?? 0;
       syncAlarm(newInterval).catch((err) => {
-        console.warn('[Unaware Sessions] Failed to sync alarm:', err);
+        log.warn('Failed to sync alarm', err);
       });
     }
   });

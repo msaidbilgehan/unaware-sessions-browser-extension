@@ -97,7 +97,8 @@ class StorageStore {
         }
       };
 
-      tx.oncomplete = () => resolve({ entryCount, storageBytes, idbCount, origins: [...originSet] });
+      tx.oncomplete = () =>
+        resolve({ entryCount, storageBytes, idbCount, origins: [...originSet] });
       tx.onerror = () => reject(new Error(`Failed to get storage stats: ${tx.error?.message}`));
     });
   }
@@ -125,6 +126,45 @@ class StorageStore {
       tx.oncomplete = () => resolve([...sessionIdSet]);
       tx.onerror = () =>
         reject(new Error(`Failed to get sessions for origin: ${tx.error?.message}`));
+    });
+  }
+
+  async getAllSessionOrigins(): Promise<Record<string, string[]>> {
+    const db = await this.open();
+
+    return new Promise((resolve, reject) => {
+      const map = new Map<string, Set<string>>();
+      const tx = db.transaction(STORAGE_STORE_NAME, 'readonly');
+      const cursorRequest = tx.objectStore(STORAGE_STORE_NAME).openKeyCursor();
+
+      cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result;
+        if (cursor) {
+          const key = cursor.key as string;
+          const sep = key.indexOf(':');
+          if (sep > 0) {
+            const sessionId = key.slice(0, sep);
+            const origin = key.slice(sep + 1);
+            let set = map.get(sessionId);
+            if (!set) {
+              set = new Set();
+              map.set(sessionId, set);
+            }
+            set.add(origin);
+          }
+          cursor.continue();
+        }
+      };
+
+      tx.oncomplete = () => {
+        const result: Record<string, string[]> = {};
+        for (const [sid, origins] of map) {
+          result[sid] = [...origins];
+        }
+        resolve(result);
+      };
+      tx.onerror = () =>
+        reject(new Error(`Failed to get all session origins: ${tx.error?.message}`));
     });
   }
 

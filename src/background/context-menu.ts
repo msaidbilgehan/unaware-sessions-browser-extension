@@ -1,6 +1,9 @@
 import { listSessions } from './session-manager';
 import { switchSession } from './cookie-engine';
 import { extractOrigin, isValidUrl } from '@shared/utils';
+import { createLogger } from '@shared/logger';
+
+const log = createLogger('context-menu');
 
 const MENU_PARENT_ID = 'unaware-sessions-open-in';
 const MENU_NEW_SESSION_ID = 'unaware-sessions-new';
@@ -8,13 +11,13 @@ const MENU_NEW_SESSION_ID = 'unaware-sessions-new';
 export function initContextMenu(): void {
   chrome.runtime.onInstalled.addListener(() => {
     rebuildContextMenu().catch((err) => {
-      console.error('[Unaware Sessions] Failed to build context menu:', err);
+      log.error('Failed to build context menu', err);
     });
   });
 
   chrome.contextMenus.onClicked.addListener((...args) => {
     handleMenuClick(...args).catch((err) => {
-      console.error('[Unaware Sessions] Context menu click handler failed:', err);
+      log.error('Context menu click handler failed', err);
     });
   });
 }

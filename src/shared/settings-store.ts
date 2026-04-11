@@ -1,5 +1,6 @@
 import { STORAGE_KEYS, DEFAULT_EXTENSION_SETTINGS } from '@shared/constants';
-import type { ExtensionSettings, AutoRefreshInterval, IsolationMode } from '@shared/types';
+import type { ExtensionSettings, AutoRefreshInterval, IsolationMode, LogLevel } from '@shared/types';
+import { setLogLevel as applyLogLevel } from '@shared/logger';
 
 let currentSettings: ExtensionSettings = { ...DEFAULT_EXTENSION_SETTINGS };
 const settingsListeners: Array<(settings: ExtensionSettings) => void> = [];
@@ -45,6 +46,10 @@ export function getDomainIsolationMap(): Record<string, IsolationMode> {
 
 export function getDomainIsolationMode(domain: string): IsolationMode {
   return domainIsolationMap[domain] ?? currentSettings.isolationModeDefault;
+}
+
+export function getLogLevel(): LogLevel {
+  return currentSettings.logLevel;
 }
 
 // ── Settings Listeners ──────────────────────────────────────────
@@ -153,6 +158,17 @@ export async function setDomainIsolationMode(
   notifyIsolationListeners();
 }
 
+// ── Log Level Setter ───────────────────────────────────────────
+
+export async function setLogLevel(level: LogLevel): Promise<void> {
+  currentSettings = { ...currentSettings, logLevel: level };
+  applyLogLevel(level);
+  await chrome.storage.local.set({
+    [STORAGE_KEYS.EXTENSION_SETTINGS]: currentSettings,
+  });
+  notifySettingsListeners();
+}
+
 let settingsInitialized = false;
 
 /** Reset init guard — for tests only. */
@@ -176,6 +192,9 @@ export async function initSettings(): Promise<void> {
   currentSettings = storedSettings
     ? { ...DEFAULT_EXTENSION_SETTINGS, ...storedSettings }
     : { ...DEFAULT_EXTENSION_SETTINGS };
+
+  // Sync logger level from persisted settings
+  applyLogLevel(currentSettings.logLevel);
 
   const storedDomains = result[STORAGE_KEYS.AUTO_REFRESH_DOMAINS] as
     | Record<string, boolean>
@@ -205,6 +224,7 @@ export async function initSettings(): Promise<void> {
         | undefined;
       if (updated) {
         currentSettings = { ...DEFAULT_EXTENSION_SETTINGS, ...updated };
+        applyLogLevel(currentSettings.logLevel);
         notifySettingsListeners();
       }
     }

@@ -6,19 +6,25 @@ import { initContextMenu } from './context-menu';
 import { initBadgeManager } from './badge-manager';
 import { cleanupStaleRules } from './dnr-manager';
 import { initAutoRefresh, refreshAllActiveSessions } from './auto-refresh';
+import { initSettings } from '@shared/settings-store';
+import { createLogger } from '@shared/logger';
+
+const log = createLogger('service-worker');
 
 async function hydrateState(): Promise<void> {
+  // Init settings first so the logger level is available for all subsequent modules
+  await initSettings();
   await Promise.all([hydrateSessions(), hydrateTabMap()]);
 }
 
 // Hydrate on every SW wake (top-level runs each time the worker starts)
 hydrateState().catch((err) => {
-  console.error('[Unaware Sessions] Failed to hydrate state:', err);
+  log.error('Failed to hydrate state', err);
 });
 
 chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === 'install') {
-    console.log('[Unaware Sessions] Extension installed');
+    log.info('Extension installed');
   }
 
   // Set up periodic state persistence alarm
@@ -28,19 +34,21 @@ chrome.runtime.onInstalled.addListener((details) => {
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  console.log('[Unaware Sessions] Browser startup — state hydrated');
+  log.info('Browser startup — state hydrated');
 });
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   try {
     if (alarm.name === ALARM_PERSIST_STATE) {
+      log.debug('Alarm: persisting tab map and cleaning stale rules');
       await persistTabMap();
       await cleanupStaleRules();
     } else if (alarm.name === ALARM_AUTO_REFRESH) {
+      log.debug('Alarm: auto-refreshing active sessions');
       await refreshAllActiveSessions();
     }
   } catch (err) {
-    console.warn('[Unaware Sessions] Alarm handler error:', err);
+    log.warn('Alarm handler error', err);
   }
 });
 
@@ -50,5 +58,5 @@ initTabTracker();
 initContextMenu();
 initBadgeManager();
 initAutoRefresh().catch((err) => {
-  console.error('[Unaware Sessions] Failed to init auto-refresh:', err);
+  log.error('Failed to init auto-refresh', err);
 });

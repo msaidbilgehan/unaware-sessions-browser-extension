@@ -9,6 +9,7 @@ import type {
   LiveCookieInfo,
   RestoreFailureEntry,
   FullExportData,
+  LogEntry,
 } from '@shared/types';
 
 function isConnectionError(err: unknown): boolean {
@@ -114,12 +115,20 @@ export function getSessionsForOrigin(origin: string): Promise<string[]> {
   return sendMessage({ type: MessageType.GET_SESSIONS_FOR_ORIGIN, origin });
 }
 
+export function getAllSessionOrigins(): Promise<Record<string, string[]>> {
+  return sendMessage({ type: MessageType.GET_ALL_SESSION_ORIGINS });
+}
+
 export function saveSessionData(tabId: number): Promise<void> {
   return sendMessage({ type: MessageType.SAVE_SESSION_DATA, tabId });
 }
 
-export function detectSession(origin: string): Promise<string | null> {
-  return sendMessage({ type: MessageType.DETECT_SESSION, origin });
+export function detectSession(origin: string, tabId?: number): Promise<string | null> {
+  return sendMessage({
+    type: MessageType.DETECT_SESSION,
+    origin,
+    ...(tabId != null ? { tabId } : {}),
+  });
 }
 
 export function clearOriginData(tabId: number): Promise<void> {
@@ -226,4 +235,14 @@ export function getCookieDiff(sessionId: string, origin: string): Promise<Cookie
 
 export function getRestoreFailures(): Promise<RestoreFailureEntry[]> {
   return sendMessage({ type: MessageType.GET_RESTORE_FAILURES });
+}
+
+// ── Logging API ─────────────────────────────────────────────────
+
+export function getExtensionLogs(): Promise<LogEntry[]> {
+  return sendMessage({ type: MessageType.GET_LOGS });
+}
+
+export function clearExtensionLogs(): Promise<void> {
+  return sendMessage({ type: MessageType.CLEAR_LOGS });
 }

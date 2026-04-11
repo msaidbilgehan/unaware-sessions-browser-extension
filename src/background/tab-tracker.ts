@@ -2,8 +2,11 @@ import type { TabSessionEntry, TabSessionMap } from '@shared/types';
 import { STORAGE_KEYS } from '@shared/constants';
 import { getSession, setSession } from '@shared/storage';
 import { extractOrigin, isValidUrl } from '@shared/utils';
+import { createLogger } from '@shared/logger';
 import { removeRulesForTab } from './dnr-manager';
 import { cleanupPendingRestore } from './cookie-engine';
+
+const log = createLogger('tab-tracker');
 
 let tabMap: Map<number, TabSessionEntry> = new Map();
 let hydratePromise: Promise<void> | null = null;
@@ -29,6 +32,7 @@ export async function persistTabMap(): Promise<void> {
 
 export async function assignTab(tabId: number, sessionId: string, origin: string): Promise<void> {
   await ensureHydrated();
+  log.debug(`Assigning tab ${tabId} to session ${sessionId}`, { origin });
   tabMap.set(tabId, { sessionId, origin });
   await persistTabMap();
 }
@@ -85,6 +89,7 @@ async function handleTabUpdated(
         // Origin changed — unassign session. The session data belongs to
         // the old origin; keeping it assigned on a different origin causes
         // cross-domain confusion (session appearing under wrong "THIS SITE").
+        log.info(`Tab ${tabId} navigated cross-origin: ${entry.origin} -> ${newOrigin}, unassigning session ${entry.sessionId}`);
         tabMap.delete(tabId);
         await persistTabMap();
         await removeRulesForTab(tabId);
@@ -97,12 +102,12 @@ async function handleTabUpdated(
 export function initTabTracker(): void {
   chrome.tabs.onRemoved.addListener((tabId) => {
     handleTabRemoved(tabId).catch((err) => {
-      console.error('[Unaware Sessions] Tab removed handler failed:', err);
+      log.error('Tab removed handler failed', err);
     });
   });
   chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     handleTabUpdated(tabId, changeInfo, tab).catch((err) => {
-      console.error('[Unaware Sessions] Tab updated handler failed:', err);
+      log.error('Tab updated handler failed', err);
     });
   });
 }

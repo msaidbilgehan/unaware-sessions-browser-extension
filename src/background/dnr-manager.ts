@@ -1,6 +1,9 @@
 import { DNR_RULE_ID_BASE, DNR_RULE_LIMIT, DNR_RULE_WARN_THRESHOLD } from '@shared/constants';
 import { extractDomain } from '@shared/utils';
+import { createLogger } from '@shared/logger';
 import { cookieStore } from './cookie-store';
+
+const log = createLogger('dnr-manager');
 
 function buildRuleId(tabId: number): number {
   return DNR_RULE_ID_BASE + tabId;
@@ -91,9 +94,7 @@ export async function updateRulesForTab(
   // Check capacity after adding rules
   const capacity = await checkRuleCapacity();
   if (capacity.warning) {
-    console.warn(
-      `[Unaware Sessions] DNR rule limit warning: ${capacity.used}/${capacity.limit} rules used`,
-    );
+    log.warn(`DNR rule limit warning: ${capacity.used}/${capacity.limit} rules used`);
   }
 }
 

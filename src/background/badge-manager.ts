@@ -1,5 +1,8 @@
 import { getTabEntry } from './tab-tracker';
 import { getSession } from './session-manager';
+import { createLogger } from '@shared/logger';
+
+const log = createLogger('badge-manager');
 
 export async function updateBadge(tabId: number): Promise<void> {
   const entry = await getTabEntry(tabId);
@@ -24,14 +27,14 @@ export async function updateBadge(tabId: number): Promise<void> {
 export function initBadgeManager(): void {
   chrome.tabs.onActivated.addListener((activeInfo) => {
     updateBadge(activeInfo.tabId).catch((err) => {
-      console.warn('[Unaware Sessions] Badge update failed:', err);
+      log.warn('Badge update failed', err);
     });
   });
 
   chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
     if (changeInfo.status === 'complete') {
       updateBadge(tabId).catch((err) => {
-        console.warn('[Unaware Sessions] Badge update failed:', err);
+        log.warn('Badge update failed', err);
       });
     }
   });

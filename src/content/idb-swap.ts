@@ -230,11 +230,102 @@ export async function saveIndexedDB(): Promise<IndexedDBSnapshot[]> {
 
 // ── Restore ───────────────────────────────────────────────────────
 
+/**
+ * Write snapshot records into an already-open database.
+ * Opens a readwrite transaction, clears each store, and puts records.
+ */
+function writeRecords(db: IDBDatabase, snapshot: IndexedDBSnapshot): Promise<void> {
+  const storeNames = snapshot.objectStores.map((s) => s.name);
+
+  if (storeNames.length === 0) {
+    db.close();
+    return Promise.resolve();
+  }
+
+  // Verify all expected stores exist
+  for (const name of storeNames) {
+    if (!db.objectStoreNames.contains(name)) {
+      db.close();
+      return Promise.reject(
+        new Error(`Store "${name}" missing in IDB "${snapshot.name}" — schema mismatch`),
+      );
+    }
+  }
+
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeNames, 'readwrite');
+
+    for (const storeSnapshot of snapshot.objectStores) {
+      const store = tx.objectStore(storeSnapshot.name);
+      store.clear();
+
+      const hasExplicitKeys = storeSnapshot.keyPath === null && Array.isArray(storeSnapshot.keys);
+
+      for (let i = 0; i < storeSnapshot.records.length; i++) {
+        try {
+          const record = decodeValue(storeSnapshot.records[i]);
+          if (hasExplicitKeys && storeSnapshot.keys![i] !== undefined) {
+            const key = decodeValue(storeSnapshot.keys![i]) as IDBValidKey;
+            store.put(record, key);
+          } else {
+            store.put(record);
+          }
+        } catch (err) {
+          console.warn(`[Unaware Sessions] Skipping IDB record in "${storeSnapshot.name}":`, err);
+        }
+      }
+    }
+
+    tx.oncomplete = () => {
+      db.close();
+      resolve();
+    };
+    tx.onerror = () => {
+      db.close();
+      reject(new Error(`Failed to restore IDB store data: ${snapshot.name}`));
+    };
+  });
+}
+
 export async function restoreIndexedDB(snapshots: IndexedDBSnapshot[]): Promise<void> {
   for (const snapshot of snapshots) {
     try {
-      // Delete existing database first (best-effort: incognito or restricted
-      // contexts may reject deleteDatabase even on a clean session)
+      // ── Strategy 1: Direct-write (fast, non-blocking) ──────────
+      // Open at the CURRENT version (no upgrade needed, coexists with page
+      // connections). If the stores we need already exist, clear and write
+      // records directly. This is the common case — same schema, page has
+      // active connections (e.g., keyval-store on claude.ai).
+      // IMPORTANT: attempt this BEFORE deleteDatabase — a failed delete
+      // poisons subsequent opens in the same browser IDB state.
+      let directOk = false;
+      try {
+        directOk = await new Promise<boolean>((resolve, reject) => {
+          const req = indexedDB.open(snapshot.name);
+          req.onsuccess = () => {
+            const db = req.result;
+            const needed = snapshot.objectStores.map((s) => s.name);
+            const allExist =
+              needed.length > 0 && needed.every((n) => db.objectStoreNames.contains(n));
+            if (!allExist) {
+              db.close();
+              resolve(false);
+              return;
+            }
+            writeRecords(db, snapshot).then(
+              () => resolve(true),
+              (err) => reject(err),
+            );
+          };
+          req.onerror = () => resolve(false);
+        });
+      } catch (err) {
+        console.warn(`[Unaware Sessions] Direct restore of IDB "${snapshot.name}" failed:`, err);
+      }
+      if (directOk) continue;
+
+      // ── Strategy 2: Delete + recreate schema (clean slate) ─────
+      // Direct-write failed (stores missing or schema mismatch).
+      // Delete the entire DB and recreate from the snapshot schema.
       const deleted = await new Promise<boolean>((resolve) => {
         const deleteReq = indexedDB.deleteDatabase(snapshot.name);
         deleteReq.onsuccess = () => resolve(true);
@@ -252,11 +343,8 @@ export async function restoreIndexedDB(snapshots: IndexedDBSnapshot[]): Promise<
         };
       });
 
-      // When delete failed/was blocked, the DB still exists at its current version.
-      // Bump version by 1 to force onupgradeneeded so we can recreate stores.
       const openVersion = deleted ? snapshot.version : snapshot.version + 1;
 
-      // Recreate with saved schema and data
       await new Promise<void>((resolve, reject) => {
         const openReq = indexedDB.open(snapshot.name, openVersion);
 
@@ -284,67 +372,7 @@ export async function restoreIndexedDB(snapshots: IndexedDBSnapshot[]): Promise<
         };
 
         openReq.onsuccess = () => {
-          const db = openReq.result;
-          const storeNames = snapshot.objectStores.map((s) => s.name);
-
-          if (storeNames.length === 0) {
-            db.close();
-            resolve();
-            return;
-          }
-
-          // Verify all expected stores exist (defensive: if onupgradeneeded
-          // was somehow skipped, transaction would throw NotFoundError)
-          for (const name of storeNames) {
-            if (!db.objectStoreNames.contains(name)) {
-              db.close();
-              reject(new Error(`Store "${name}" missing in IDB "${snapshot.name}" — schema mismatch`));
-              return;
-            }
-          }
-
-          const tx = db.transaction(storeNames, 'readwrite');
-
-          for (const storeSnapshot of snapshot.objectStores) {
-            const store = tx.objectStore(storeSnapshot.name);
-
-            // Clear any pre-existing data before writing snapshot records
-            store.clear();
-
-            const hasExplicitKeys =
-              storeSnapshot.keyPath === null && Array.isArray(storeSnapshot.keys);
-
-            for (let i = 0; i < storeSnapshot.records.length; i++) {
-              try {
-                // Decode marker objects back to their original binary/Date types
-                const record = decodeValue(storeSnapshot.records[i]);
-
-                if (hasExplicitKeys && storeSnapshot.keys![i] !== undefined) {
-                  const key = decodeValue(storeSnapshot.keys![i]) as IDBValidKey;
-                  store.put(record, key);
-                } else {
-                  store.put(record);
-                }
-              } catch (err) {
-                // Skip individual records that fail rather than aborting
-                // the entire store restore.
-                console.warn(
-                  `[Unaware Sessions] Skipping IDB record in "${storeSnapshot.name}":`,
-                  err,
-                );
-              }
-            }
-          }
-
-          tx.oncomplete = () => {
-            db.close();
-            resolve();
-          };
-
-          tx.onerror = () => {
-            db.close();
-            reject(new Error(`Failed to restore IDB store data: ${snapshot.name}`));
-          };
+          writeRecords(openReq.result, snapshot).then(resolve, reject);
         };
 
         openReq.onerror = () => {

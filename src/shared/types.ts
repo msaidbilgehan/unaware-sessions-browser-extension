@@ -70,10 +70,17 @@ export type AutoRefreshInterval = 0 | 60 | 120 | 300;
  */
 export type IsolationMode = 'soft' | 'strict';
 
+/**
+ * Log level controls which messages the logger records.
+ * Ordered from least to most verbose: off < error < warn < info < debug.
+ */
+export type LogLevel = 'off' | 'error' | 'warn' | 'info' | 'debug';
+
 export interface ExtensionSettings {
   autoRefreshInterval: AutoRefreshInterval;
   autoRefreshDefaultEnabled: boolean;
   isolationModeDefault: IsolationMode;
+  logLevel: LogLevel;
 }
 
 // ── Tab-Session Mapping ──────────────────────────────────────────
@@ -156,6 +163,7 @@ export enum MessageType {
   GET_ALL_TAB_COUNTS = 'GET_ALL_TAB_COUNTS',
   GET_SESSION_STATS = 'GET_SESSION_STATS',
   GET_SESSIONS_FOR_ORIGIN = 'GET_SESSIONS_FOR_ORIGIN',
+  GET_ALL_SESSION_ORIGINS = 'GET_ALL_SESSION_ORIGINS',
 
   // Session data capture
   SAVE_SESSION_DATA = 'SAVE_SESSION_DATA',
@@ -189,6 +197,10 @@ export enum MessageType {
   GET_LIVE_COOKIES = 'GET_LIVE_COOKIES',
   GET_COOKIE_DIFF = 'GET_COOKIE_DIFF',
   GET_RESTORE_FAILURES = 'GET_RESTORE_FAILURES',
+
+  // Logging
+  GET_LOGS = 'GET_LOGS',
+  CLEAR_LOGS = 'CLEAR_LOGS',
 }
 
 export interface CreateSessionMessage {
@@ -290,6 +302,10 @@ export interface GetSessionsForOriginMessage {
   origin: string;
 }
 
+export interface GetAllSessionOriginsMessage {
+  type: MessageType.GET_ALL_SESSION_ORIGINS;
+}
+
 export interface SaveSessionDataMessage {
   type: MessageType.SAVE_SESSION_DATA;
   tabId: number;
@@ -298,6 +314,7 @@ export interface SaveSessionDataMessage {
 export interface DetectSessionMessage {
   type: MessageType.DETECT_SESSION;
   origin: string;
+  tabId?: number;
 }
 
 export interface ClearOriginDataMessage {
@@ -390,7 +407,21 @@ export interface GetRestoreFailuresMessage {
   type: MessageType.GET_RESTORE_FAILURES;
 }
 
-export type CookieDiffStatus = 'match' | 'value_changed' | 'flags_changed' | 'missing_in_browser' | 'extra_in_browser' | 'expired';
+export interface GetLogsMessage {
+  type: MessageType.GET_LOGS;
+}
+
+export interface ClearLogsMessage {
+  type: MessageType.CLEAR_LOGS;
+}
+
+export type CookieDiffStatus =
+  | 'match'
+  | 'value_changed'
+  | 'flags_changed'
+  | 'missing_in_browser'
+  | 'extra_in_browser'
+  | 'expired';
 
 export interface CookieDiffEntry {
   name: string;
@@ -439,6 +470,16 @@ export interface LiveCookieInfo {
   expirationDate?: number;
 }
 
+// ── Logging ─────────────────────────────────────────────────────
+
+export interface LogEntry {
+  timestamp: number;
+  level: 'error' | 'warn' | 'info' | 'debug';
+  source: string;
+  message: string;
+  data?: unknown;
+}
+
 export type Message =
   | CreateSessionMessage
   | DeleteSessionMessage
@@ -458,6 +499,7 @@ export type Message =
   | DuplicateSessionMessage
   | ReorderSessionsMessage
   | GetSessionsForOriginMessage
+  | GetAllSessionOriginsMessage
   | SaveSessionDataMessage
   | DetectSessionMessage
   | ClearOriginDataMessage
@@ -472,7 +514,9 @@ export type Message =
   | ImportFullMessage
   | GetLiveCookiesMessage
   | GetCookieDiffMessage
-  | GetRestoreFailuresMessage;
+  | GetRestoreFailuresMessage
+  | GetLogsMessage
+  | ClearLogsMessage;
 
 // ── Response Wrapper ─────────────────────────────────────────────
 

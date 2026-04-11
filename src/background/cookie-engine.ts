@@ -7,13 +7,31 @@ import type {
 import { MessageType } from '@shared/types';
 import { extractDomain, buildCookieUrl, now } from '@shared/utils';
 import { getDomainIsolationMode } from '@shared/settings-store';
+import { createLogger } from '@shared/logger';
 import { cookieStore } from './cookie-store';
 import { storageStore } from './storage-store';
 import { getTabEntry, assignTab } from './tab-tracker';
 import { updateRulesForTab, removeRulesForTab } from './dnr-manager';
 
+const log = createLogger('cookie-engine');
+
 const MESSAGE_TIMEOUT_MS = 5000;
 const MAX_RESTORE_FAILURES = 200;
+
+/**
+ * Resolve the cookie store ID that a tab belongs to.
+ * Chrome separates normal ("0") and incognito ("1") cookie stores;
+ * operations must target the correct store to avoid cross-context mixing.
+ */
+export async function getCookieStoreIdForTab(tabId: number): Promise<string | undefined> {
+  const stores = await chrome.cookies.getAllCookieStores();
+  for (const store of stores) {
+    if (store.tabIds.includes(tabId)) {
+      return store.id;
+    }
+  }
+  return undefined;
+}
 
 // Pending storage restores keyed by tabId
 const pendingRestores: Map<number, { sessionId: string; origin: string }> = new Map();
@@ -72,8 +90,15 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
  * Walks up the domain hierarchy to capture parent-domain cookies
  * (e.g., .google.com cookies when on www.google.com) that
  * chrome.cookies.getAll({ domain: "www.google.com" }) would miss.
+ *
+ * When `storeId` is provided, only cookies from that specific cookie store
+ * are returned (e.g., "0" for normal, "1" for incognito). Without it,
+ * cookies from ALL stores are returned (legacy/debug behavior).
  */
-export async function getCookiesForOrigin(origin: string): Promise<chrome.cookies.Cookie[]> {
+export async function getCookiesForOrigin(
+  origin: string,
+  storeId?: string,
+): Promise<chrome.cookies.Cookie[]> {
   const hostname = extractDomain(origin);
   if (!hostname) return [];
 
@@ -89,7 +114,9 @@ export async function getCookiesForOrigin(origin: string): Promise<chrome.cookie
   }
 
   const results = await Promise.all(
-    domainLevels.map((d) => chrome.cookies.getAll({ domain: d })),
+    domainLevels.map((d) =>
+      chrome.cookies.getAll(storeId != null ? { domain: d, storeId } : { domain: d }),
+    ),
   );
 
   // Deduplicate and keep only cookies that apply to our hostname
@@ -112,11 +139,16 @@ export async function getCookiesForOrigin(origin: string): Promise<chrome.cookie
   return cookies;
 }
 
-export async function saveCookies(sessionId: string, origin: string): Promise<void> {
+export async function saveCookies(
+  sessionId: string,
+  origin: string,
+  storeId?: string,
+): Promise<void> {
   const domain = extractDomain(origin);
   if (!domain) return;
 
-  const cookies = await getCookiesForOrigin(origin);
+  const cookies = await getCookiesForOrigin(origin, storeId);
+  log.debug(`Saved ${cookies.length} cookies for session ${sessionId} on ${origin}`, { storeId });
 
   const snapshot: CookieSnapshot = {
     sessionId,
@@ -128,21 +160,29 @@ export async function saveCookies(sessionId: string, origin: string): Promise<vo
   await cookieStore.save(snapshot);
 }
 
-export async function clearCookies(origin: string): Promise<void> {
+export async function clearCookies(origin: string, storeId?: string): Promise<void> {
   const domain = extractDomain(origin);
   if (!domain) return;
 
-  const cookies = await getCookiesForOrigin(origin);
+  const cookies = await getCookiesForOrigin(origin, storeId);
 
   await Promise.all(
     cookies.map((cookie) => {
       const url = buildCookieUrl(cookie);
-      return chrome.cookies.remove({ url, name: cookie.name });
+      return chrome.cookies.remove({
+        url,
+        name: cookie.name,
+        ...(storeId != null ? { storeId } : {}),
+      });
     }),
   );
 }
 
-export async function restoreCookies(sessionId: string, origin: string): Promise<void> {
+export async function restoreCookies(
+  sessionId: string,
+  origin: string,
+  storeId?: string,
+): Promise<void> {
   const snapshot = await cookieStore.load(sessionId, origin);
   if (!snapshot) return;
 
@@ -183,6 +223,7 @@ export async function restoreCookies(sessionId: string, origin: string): Promise
         httpOnly: cookie.httpOnly,
         sameSite: cookie.sameSite,
         ...(cookie.expirationDate ? { expirationDate: cookie.expirationDate } : {}),
+        ...(storeId != null ? { storeId } : {}),
       });
     }),
   );
@@ -198,13 +239,19 @@ export async function restoreCookies(sessionId: string, origin: string): Promise
     } else if (result.value === null) {
       // chrome.cookies.set returns null when the cookie was rejected silently
       const cookie = originCookies[i];
-      recordRestoreFailure(sessionId, origin, cookie.name, cookie.domain, 'Silently rejected (returned null)');
+      recordRestoreFailure(
+        sessionId,
+        origin,
+        cookie.name,
+        cookie.domain,
+        'Silently rejected (returned null)',
+      );
       failCount++;
     }
   }
 
   if (failCount > 0) {
-    console.warn(`[Unaware Sessions] Failed to restore ${failCount} cookie(s) for ${origin}`);
+    log.warn(`Failed to restore ${failCount} cookie(s) for ${origin}`);
   }
 }
 
@@ -235,7 +282,7 @@ export async function saveTabStorage(
       await storageStore.save(snapshot);
     }
   } catch (err) {
-    console.warn('[Unaware Sessions] Failed to save tab storage:', err);
+    log.warn('Failed to save tab storage', err);
   }
 }
 
@@ -258,7 +305,7 @@ async function restoreTabStorage(tabId: number, sessionId: string, origin: strin
       MESSAGE_TIMEOUT_MS,
     );
   } catch (err) {
-    console.warn('[Unaware Sessions] Failed to restore tab storage:', err);
+    log.warn('Failed to restore tab storage', err);
   }
 }
 
@@ -267,11 +314,14 @@ async function restoreTabStorage(tabId: number, sessionId: string, origin: strin
  * Compares live browser cookies against each session's saved cookie snapshot.
  * Returns the session ID with the highest cookie match ratio, or null if no match.
  */
-export async function detectSessionForOrigin(origin: string): Promise<string | null> {
+export async function detectSessionForOrigin(
+  origin: string,
+  storeId?: string,
+): Promise<string | null> {
   const domain = extractDomain(origin);
   if (!domain) return null;
 
-  const liveCookies = await getCookiesForOrigin(origin);
+  const liveCookies = await getCookiesForOrigin(origin, storeId);
   if (liveCookies.length === 0) return null;
 
   // Build a set of "name=value" fingerprints from live cookies
@@ -282,9 +332,7 @@ export async function detectSessionForOrigin(origin: string): Promise<string | n
   if (sessionIds.length === 0) return null;
 
   // Load all snapshots in parallel instead of sequential N+1 queries
-  const snapshots = await Promise.all(
-    sessionIds.map((sid) => cookieStore.load(sid, origin)),
-  );
+  const snapshots = await Promise.all(sessionIds.map((sid) => cookieStore.load(sid, origin)));
 
   let bestSessionId: string | null = null;
   let bestScore = 0;
@@ -329,7 +377,7 @@ export function handleContentScriptReady(tabId: number): void {
 
   pendingRestores.delete(tabId);
   restoreTabStorage(tabId, pending.sessionId, pending.origin).catch((err) => {
-    console.warn('[Unaware Sessions] Failed to restore storage on ready:', err);
+    log.warn('Failed to restore storage on ready', err);
   });
 }
 
@@ -337,21 +385,18 @@ export function cleanupPendingRestore(tabId: number): void {
   pendingRestores.delete(tabId);
 }
 
-
 export async function switchSession(tabId: number, targetSessionId: string): Promise<void> {
-  // Serialize switches on the same tab — wait for any in-progress switch to finish.
-  const existing = switchLocks.get(tabId);
-  if (existing) {
-    await existing.catch(() => {});
-  }
+  // Chain switches on the same tab — each new switch waits for the TAIL of the
+  // chain (not the head), so 3+ concurrent calls serialize correctly.
+  const previous = switchLocks.get(tabId) ?? Promise.resolve();
 
-  const work = doSwitchSession(tabId, targetSessionId);
+  const work = previous.catch(() => {}).then(() => doSwitchSession(tabId, targetSessionId));
   switchLocks.set(tabId, work);
 
   try {
     await work;
   } finally {
-    // Only clear if this is still the latest lock (avoids clearing a newer switch)
+    // Only clear if this is still the latest link in the chain
     if (switchLocks.get(tabId) === work) {
       switchLocks.delete(tabId);
     }
@@ -368,10 +413,20 @@ async function doSwitchSession(tabId: number, targetSessionId: string): Promise<
   const domain = extractDomain(origin);
   const currentEntry = await getTabEntry(tabId);
 
+  // Resolve cookie store for this tab (normal vs incognito)
+  const storeId = await getCookieStoreIdForTab(tabId);
+
+  log.info(`Switching tab ${tabId} to session ${targetSessionId}`, {
+    origin,
+    storeId,
+    fromSession: currentEntry?.sessionId ?? null,
+  });
+
   // 1. Save current session's data before switching (parallel — independent I/O)
   if (currentEntry) {
+    log.debug(`Saving outgoing session ${currentEntry.sessionId} data for ${origin}`);
     await Promise.all([
-      saveCookies(currentEntry.sessionId, origin),
+      saveCookies(currentEntry.sessionId, origin, storeId),
       saveTabStorage(tabId, currentEntry.sessionId, origin),
     ]);
   }
@@ -384,13 +439,11 @@ async function doSwitchSession(tabId: number, targetSessionId: string): Promise<
   const hasTargetData = targetSnapshot != null && targetSnapshot.cookies.length > 0;
 
   if (!hasTargetData && isolationMode === 'soft') {
+    log.debug(`Soft mode pass-through for ${origin} — no target data, skipping cookies`);
     // Soft mode: no data for this domain → skip cookie operations, preserve current state.
     // Update tab mapping for badge/tracking, but REMOVE any DNR rule so the browser's
     // native Cookie header passes through (no header injection = no cookie override).
-    await Promise.all([
-      assignTab(tabId, targetSessionId, origin),
-      removeRulesForTab(tabId),
-    ]);
+    await Promise.all([assignTab(tabId, targetSessionId, origin), removeRulesForTab(tabId)]);
 
     // No storage restore needed — we're passing through
     await chrome.tabs.update(tabId, { url: tab.url });
@@ -398,10 +451,12 @@ async function doSwitchSession(tabId: number, targetSessionId: string): Promise<
   }
 
   // Strict mode (or target has data): full clear + restore cycle
-  await clearCookies(origin);
+  log.debug(`${isolationMode} mode: clearing cookies for ${origin} (storeId=${storeId})`);
+  await clearCookies(origin, storeId);
 
   // 3. Restore target session's cookies for this origin
-  await restoreCookies(targetSessionId, origin);
+  log.debug(`Restoring cookies for session ${targetSessionId} on ${origin}`);
+  await restoreCookies(targetSessionId, origin, storeId);
 
   // 4. Update tab-session mapping + DNR rules (parallel — independent)
   await Promise.all([

@@ -147,6 +147,45 @@ class CookieStore {
     });
   }
 
+  async getAllSessionOrigins(): Promise<Record<string, string[]>> {
+    const db = await this.open();
+
+    return new Promise((resolve, reject) => {
+      const map = new Map<string, Set<string>>();
+      const tx = db.transaction(COOKIE_STORE_NAME, 'readonly');
+      const cursorRequest = tx.objectStore(COOKIE_STORE_NAME).openKeyCursor();
+
+      cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result;
+        if (cursor) {
+          const key = cursor.key as string;
+          const sep = key.indexOf(':');
+          if (sep > 0) {
+            const sessionId = key.slice(0, sep);
+            const origin = key.slice(sep + 1);
+            let set = map.get(sessionId);
+            if (!set) {
+              set = new Set();
+              map.set(sessionId, set);
+            }
+            set.add(origin);
+          }
+          cursor.continue();
+        }
+      };
+
+      tx.oncomplete = () => {
+        const result: Record<string, string[]> = {};
+        for (const [sid, origins] of map) {
+          result[sid] = [...origins];
+        }
+        resolve(result);
+      };
+      tx.onerror = () =>
+        reject(new Error(`Failed to get all session origins: ${tx.error?.message}`));
+    });
+  }
+
   async getAllSnapshotsForSession(sessionId: string): Promise<CookieSnapshot[]> {
     const db = await this.open();
     const prefix = `${sessionId}:`;

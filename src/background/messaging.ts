@@ -1,5 +1,14 @@
 import { MessageType } from '@shared/types';
-import type { Message, MessageResponse, FullExportData, CookieSnapshot, StorageSnapshot } from '@shared/types';
+import type {
+  Message,
+  MessageResponse,
+  FullExportData,
+  CookieSnapshot,
+  StorageSnapshot,
+} from '@shared/types';
+import { createLogger } from '@shared/logger';
+
+const log = createLogger('messaging');
 import {
   createSession,
   deleteSession,
@@ -24,6 +33,7 @@ import {
   clearCookies,
   getCookiesForOrigin,
   getRestoreFailures,
+  getCookieStoreIdForTab,
 } from './cookie-engine';
 import { rebuildContextMenu } from './context-menu';
 import { updateBadge } from './badge-manager';
@@ -32,8 +42,14 @@ import { storageStore } from './storage-store';
 import { STORAGE_KEYS } from '@shared/constants';
 import { setLocal } from '@shared/storage';
 import { estimateCookieBytes, estimateRecordBytes, extractDomain } from '@shared/utils';
-import type { CookieDiffEntry, CookieDiffResult, CookieDiffStatus, LiveCookieInfo } from '@shared/types';
+import type {
+  CookieDiffEntry,
+  CookieDiffResult,
+  CookieDiffStatus,
+  LiveCookieInfo,
+} from '@shared/types';
 import { refreshAllActiveSessions } from './auto-refresh';
+import { getLogs, clearLogs } from '@shared/logger';
 
 type MessageHandler = (
   message: Message,
@@ -113,6 +129,27 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
     return { success: true, data: merged };
   },
 
+  [MessageType.GET_ALL_SESSION_ORIGINS]: async () => {
+    const [cookieMap, storageMap] = await Promise.all([
+      cookieStore.getAllSessionOrigins(),
+      storageStore.getAllSessionOrigins(),
+    ]);
+    const merged: Record<string, string[]> = {};
+    for (const map of [cookieMap, storageMap]) {
+      for (const [sid, origins] of Object.entries(map)) {
+        const existing = merged[sid];
+        if (existing) {
+          const set = new Set(existing);
+          for (const o of origins) set.add(o);
+          merged[sid] = [...set];
+        } else {
+          merged[sid] = origins;
+        }
+      }
+    }
+    return { success: true, data: merged };
+  },
+
   [MessageType.GET_ALL_TAB_COUNTS]: async () => {
     const entries = await getAllTabEntries();
     const counts: Record<string, number> = {};
@@ -166,7 +203,8 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
     if (!entry) return { success: false, error: 'Tab is not assigned to a session' };
 
     const origin = new URL(tab.url).origin;
-    await saveCookies(entry.sessionId, origin);
+    const storeId = await getCookieStoreIdForTab(msg.tabId);
+    await saveCookies(entry.sessionId, origin, storeId);
     await saveTabStorage(msg.tabId, entry.sessionId, origin);
     await touchSessionRefresh(entry.sessionId);
     return { success: true };
@@ -174,7 +212,8 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
 
   [MessageType.DETECT_SESSION]: async (msg) => {
     if (msg.type !== MessageType.DETECT_SESSION) return { success: false };
-    const sessionId = await detectSessionForOrigin(msg.origin);
+    const storeId = msg.tabId != null ? await getCookieStoreIdForTab(msg.tabId) : undefined;
+    const sessionId = await detectSessionForOrigin(msg.origin, storeId);
     return { success: true, data: sessionId };
   },
 
@@ -185,12 +224,13 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
 
     const origin = new URL(tab.url).origin;
     const currentEntry = await getTabEntry(msg.tabId);
+    const storeId = await getCookieStoreIdForTab(msg.tabId);
 
     // Save the current session's cookies and storage before clearing,
     // so the data is preserved for switching back later.
     if (currentEntry) {
       await Promise.all([
-        saveCookies(currentEntry.sessionId, origin),
+        saveCookies(currentEntry.sessionId, origin, storeId),
         saveTabStorage(msg.tabId, currentEntry.sessionId, origin),
       ]);
     }
@@ -198,7 +238,7 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
     await unassignTab(msg.tabId);
 
     // Clear cookies for this origin only (including parent-domain cookies).
-    await clearCookies(origin);
+    await clearCookies(origin, storeId);
 
     await chrome.tabs.update(msg.tabId, { url: tab.url });
     return { success: true };
@@ -480,8 +520,10 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
         // Values match — check flags
         const flagDiffs: string[] = [];
         if (snap.secure !== live.secure) flagDiffs.push(`secure: ${snap.secure} → ${live.secure}`);
-        if (snap.httpOnly !== live.httpOnly) flagDiffs.push(`httpOnly: ${snap.httpOnly} → ${live.httpOnly}`);
-        if (snap.sameSite !== live.sameSite) flagDiffs.push(`sameSite: ${snap.sameSite} → ${live.sameSite}`);
+        if (snap.httpOnly !== live.httpOnly)
+          flagDiffs.push(`httpOnly: ${snap.httpOnly} → ${live.httpOnly}`);
+        if (snap.sameSite !== live.sameSite)
+          flagDiffs.push(`sameSite: ${snap.sameSite} → ${live.sameSite}`);
 
         if (flagDiffs.length > 0) {
           entries.push({
@@ -556,6 +598,15 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
     return { success: true, data: getRestoreFailures() };
   },
 
+  [MessageType.GET_LOGS]: async () => {
+    return { success: true, data: getLogs() };
+  },
+
+  [MessageType.CLEAR_LOGS]: async () => {
+    clearLogs();
+    return { success: true };
+  },
+
   [MessageType.PING]: async () => {
     return { success: true, data: { status: 'alive' } };
   },
@@ -573,13 +624,17 @@ export function initMessaging(): void {
     (message: Message, sender: chrome.runtime.MessageSender, sendResponse) => {
       const handler = handlers[message.type];
       if (!handler) {
+        log.warn(`Unknown message type: ${message.type}`);
         sendResponse({ success: false, error: `Unknown message type: ${message.type}` });
         return false;
       }
 
+      log.debug(`Handling ${message.type}`, { sender: sender.tab?.id ?? 'extension' });
+
       handler(message, sender)
         .then(sendResponse)
         .catch((err: Error) => {
+          log.error(`Handler ${message.type} failed: ${err.message}`);
           sendResponse({ success: false, error: err.message });
         });
 
