@@ -51,7 +51,7 @@ export const IDB_SNAPSHOT_TIMEOUT_MS = 5000;
 export const IDB_SNAPSHOT_MAX_SIZE_MB = 50;
 
 export const GITHUB_URL =
-  'https://github.com/msaidbilgehan/unaware-sessions-browser-extension/tree/master';
+  'https://github.com/msaidbilgehan/unaware-sessions-browser-extension/';
 export const OPENCOLLECTIVE_URL = 'https://opencollective.com/unaware-sessions-browser-ext';
 
 export const DEFAULT_SESSION_EMOJIS = [
