@@ -66,13 +66,11 @@ npm run release:major # Major version bump + push tags
 - **Content scripts run at `document_start`** — critical for storage isolation before page scripts execute
 - **CSS custom properties** — all colors, spacing, radii, shadows use design tokens from `theme.css`
 - **Shared API layer** — `src/shared/api.ts` is the single source for popup/options to communicate with the service worker; retries once (200 ms delay) on MV3 service worker wake-up connection errors before surfacing to callers
-- **"Other sessions" auto-expand** — `SessionList.svelte` expands the collapsed "Other sessions" group automatically when no site-specific sessions exist, so all sessions remain reachable from any origin
 - **Soft isolation by default** — cookie isolation defaults to `soft` mode (skip clear/restore on unmanaged domains); configurable per-domain or globally via settings
 - **Per-tab concurrency mutex** — `switchSession` serializes concurrent switches on the same tab to prevent interleaved cookie operations
 - **Restore failure ring buffer** — `cookie-engine.ts` records the last 200 cookie restoration failures for debug inspection via the Debug tab
 - **Session search matches domains** — search/filter in both popup and options SessionsTab matches session names AND associated origin domains (e.g., searching "claude" finds sessions with claude.ai data)
-- **Popup uses natural document scroll** — no inner scroll containers; Chrome's popup viewport is the single scroll owner, styled thin by the global `* { scrollbar-width: thin }` rule
-- **Auto-refresh uses green status indicator** — active auto-refresh toggles use `--color-success` (green) with a pulsing dot, visually distinct from blue accent action buttons
+- **Svelte 5 `$effect` only tracks `$state`/`$derived` reads** — plain module-level variables (e.g., `currentSettings.autoRefreshDefaultEnabled`, `domainRefreshMap`) are not reactive; when they change via a storage listener, manually re-evaluate any derived state inside the same listener callback rather than relying on `$effect` to re-run automatically
 
 ## File Naming
 
@@ -127,6 +125,18 @@ npm run release:major # Major version bump + push tags
 ## Permissions Required
 
 `storage`, `cookies`, `tabs`, `declarativeNetRequest`, `contextMenus`, `alarms`, `favicon` + `<all_urls>` host permission.
+
+## Quality Gate
+
+Before marking any task complete, run in this order:
+
+```bash
+npm run type-check   # TypeScript — zero errors required
+npm run lint         # ESLint — zero violations required
+npm run test         # Vitest — all 344+ tests must pass
+```
+
+Test files live in `tests/` mirroring `src/` structure (`*.test.ts`). Add tests for new background/shared logic; Svelte component tests are not required but encouraged for non-trivial state.
 
 ## License
 
