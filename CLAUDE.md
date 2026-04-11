@@ -70,6 +70,9 @@ npm run release:major # Major version bump + push tags
 - **Soft isolation by default** — cookie isolation defaults to `soft` mode (skip clear/restore on unmanaged domains); configurable per-domain or globally via settings
 - **Per-tab concurrency mutex** — `switchSession` serializes concurrent switches on the same tab to prevent interleaved cookie operations
 - **Restore failure ring buffer** — `cookie-engine.ts` records the last 200 cookie restoration failures for debug inspection via the Debug tab
+- **Session search matches domains** — search/filter in both popup and options SessionsTab matches session names AND associated origin domains (e.g., searching "claude" finds sessions with claude.ai data)
+- **Popup uses natural document scroll** — no inner scroll containers; Chrome's popup viewport is the single scroll owner, styled thin by the global `* { scrollbar-width: thin }` rule
+- **Auto-refresh uses green status indicator** — active auto-refresh toggles use `--color-success` (green) with a pulsing dot, visually distinct from blue accent action buttons
 
 ## File Naming
 
@@ -98,19 +101,20 @@ npm run release:major # Major version bump + push tags
 - `api.ts` — typed message wrappers for popup/options (createSession, switchSession, getSessionStats, exportFull, importFull, debug APIs, etc.)
 - `theme.css` — CSS custom properties design system (light/dark tokens, spacing, radii, shadows)
 - `theme-store.ts` — theme preference manager (light/dark/system with chrome.storage persistence)
-- `settings-store.ts` — extension settings manager (auto-refresh interval, domain preferences, per-domain isolation mode overrides, listener pattern)
+- `settings-store.ts` — extension settings manager (auto-refresh interval, domain preferences, per-domain isolation mode overrides, log level, listener pattern)
 - `constants.ts` — extension-wide constants (storage keys including domain isolation modes, colors, emojis, GitHub/OpenCollective URLs)
+- `logger.ts` — structured logger with configurable log levels (off/error/warn/info/debug), in-memory ring buffer, stored in chrome.storage.local
 - `components/` — shared Svelte components (Icon, ThemeToggle, ConfirmDialog, Toast, InlineEdit, ColorPicker, EmojiPicker, AppLogo)
 
 ### Popup (`src/popup/`)
 
-- `App.svelte` — main popup (380px): header with logo + theme toggle + GitHub/OpenCollective links, origin panel with auto-refresh toggle, grouped session list, keyboard shortcuts
-- `components/` — SessionList (domain-grouped with "Default" option), SessionItem, CurrentTabPanel (origin + refresh + auto-refresh toggle), NewSessionForm, SearchBar, ContextMenu, SessionDetail, KeyboardOverlay, OnboardingEmpty
+- `App.svelte` — main popup (380px): header with logo + theme toggle, origin panel with auto-refresh toggle, grouped session list, keyboard shortcuts; natural document scroll (no inner scroll container — Chrome popup viewport is the single scroll owner)
+- `components/` — SessionList (domain-grouped with "Default" option, search by session name or domain), SessionItem, CurrentTabPanel (origin + refresh + auto-refresh toggle with green status indicator), NewSessionForm, SearchBar, ContextMenu, SessionDetail, KeyboardOverlay, OnboardingEmpty
 
 ### Options (`src/options/`)
 
-- `App.svelte` — tabbed layout (Sessions, Settings, Import/Export, Debug, About)
-- `components/` — TabBar (with keyboard nav + ARIA tabs), SessionsTab (domain folders, inline cookie/storage editing, per-domain auto-refresh), SettingsTab (theme + data refresh + cookie isolation mode), ImportExportTab (profile-only + full export/import with stats preview), DebugTab (cookie diff viewer + restore failure log), AboutTab (GitHub, OpenCollective, data management), StorageDashboard, DragDropZone, ImportDiff
+- `App.svelte` — tabbed layout (Sessions, Settings, Data, About, Debug)
+- `components/` — TabBar (with keyboard nav + ARIA tabs), SessionsTab (domain folders, inline cookie/storage editing, per-domain auto-refresh, search by session name or domain), SettingsTab (theme + cookie isolation mode + auto-refresh settings), ImportExportTab (profile-only + full export/import with stats preview + data management/clear all), DebugTab (cookie diff viewer + restore failure log + extension logs with log level selector), AboutTab (GitHub, OpenCollective), StorageDashboard, DragDropZone, ImportDiff
 
 ## Key Documentation
 

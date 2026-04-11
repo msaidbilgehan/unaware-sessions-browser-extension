@@ -310,22 +310,23 @@ src/
   options/
     index.html
     main.ts                  # Svelte mount + theme init
-    App.svelte               # Tabbed options page (Sessions, Settings, Import/Export, Debug, About)
+    App.svelte               # Tabbed options page (Sessions, Settings, Data, About, Debug)
     components/
       TabBar.svelte          # Tab navigation with keyboard nav + ARIA
       SessionsTab.svelte     # Session management with inline edit
-      SettingsTab.svelte     # Theme + auto-refresh settings
-      ImportExportTab.svelte # Import with drag-drop + visual diff
-      AboutTab.svelte        # Version, data management, GitHub, OpenCollective
+      SettingsTab.svelte     # Theme + cookie isolation + auto-refresh settings
+      ImportExportTab.svelte # Import with drag-drop + visual diff + data management
+      AboutTab.svelte        # Version info, GitHub, OpenCollective
       StorageDashboard.svelte # Per-session storage usage bars
       DragDropZone.svelte    # Drag-and-drop file import zone
       ImportDiff.svelte      # Visual diff preview before import
-      DebugTab.svelte        # Cookie diff viewer + restore failure log
+      DebugTab.svelte        # Cookie diff viewer + restore failure log + extension logs with log level selector
   shared/
     types.ts                 # All TypeScript interfaces + message types
     api.ts                   # Typed messaging API (popup + options)
     constants.ts             # Extension-wide constants
-    settings-store.ts        # Extension settings manager (auto-refresh, domain prefs)
+    settings-store.ts        # Extension settings manager (auto-refresh, domain prefs, log level)
+    logger.ts                # Structured logger with configurable levels and in-memory ring buffer
     storage.ts               # chrome.storage typed helpers
     utils.ts                 # Pure utility functions
     theme.css                # CSS custom properties design system

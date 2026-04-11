@@ -10,6 +10,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Structured logger (`src/shared/logger.ts`):** Configurable log levels (off/error/warn/info/debug) with in-memory ring buffer, persistent to `chrome.storage.local`, viewable and exportable from Debug tab
+- **Extension Logs in Debug tab:** Log viewer with level filter, refresh, export, and clear actions; log level selector (pill buttons) moved from Settings to Debug for co-location with log output
+- **Missing icons added to Icon.svelte:** `file-text` (used by Logging/Extension Logs sections) and `folder` (used by domain groups in popup SessionList)
+- **`--text-2xs` design token:** New 10px font size token in theme.css for badge and caption text
+- **`--color-interactive-thumb` design token:** Dedicated token for toggle switch thumbs (white in both themes)
+- **Custom scrollbar styling:** Thin 6px scrollbar with theme-aware colors via `--scrollbar-*` tokens, applied globally via `::-webkit-scrollbar` and `scrollbar-width: thin`
+- **Dark mode `*-soft` token visibility:** Bumped accent-soft, error-soft, success-soft, and warning-soft opacity from 0.12 to 0.18 in dark theme for visible icon badge backgrounds
+- **High-contrast `prefers-color-scheme: dark` fallback:** Added nested media query in `@media (prefers-contrast: more)` for users with system dark mode without explicit `data-theme` attribute
 - **Auto-refresh toggle in popup:** Button next to refresh to enable/disable periodic session data refresh
 - **Auto-refresh settings:** Configurable interval (1m/2m/5m) and per-domain toggle in options page
 - **Settings store:** New `settings-store.ts` module for extension settings persistence with listener pattern
@@ -38,6 +46,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed
 
+- **Data Management moved to Data tab:** "Clear All Data" danger zone relocated from About tab to ImportExportTab ("Data" tab) for logical grouping with export/import; AboutTab no longer requires `sessions`/`onupdate` props
+- **Logging settings moved to Debug tab:** Log level selector relocated from Settings tab to Debug tab's Extension Logs card for co-location with log output; removed log-level state and imports from SettingsTab
+- **Search matches domains:** Session search in both popup (`SessionList.svelte`) and options (`SessionsTab.svelte`) now matches against associated origin domains in addition to session names — searching "claude" finds sessions with claude.ai data
+- **Auto-refresh toggle uses green status indicator:** Active auto-refresh buttons use `--color-success` (green) with pulsing dot instead of blue accent, visually distinct from action buttons; applied to both popup (`CurrentTabPanel`) and options (`SessionsTab`)
+- **Popup uses natural document scroll:** Removed all inner scroll containers (`overflow-y: auto`, `max-height`, `overflow: clip` hacks); Chrome's popup viewport is now the single scroll owner — eliminates the double-scrollbar problem
+- **13 hardcoded `font-size: 10px` replaced with `var(--text-2xs)`:** Across SessionItem, SessionList, SessionDetail, DebugTab, SessionsTab, AboutTab
+- **Toggle thumb uses design token:** `background: white` in SettingsTab replaced with `var(--color-interactive-thumb)`
+- **Options page tab labels updated:** "Import/Export" tab renamed to "Data"
 - **Settings tab expanded:** Added cookie isolation section with soft/strict mode toggle and educational explainer
 - **ImportExportTab redesigned:** Dual export paths (profile-only vs full export), auto-detection of full vs legacy import format, stats preview for full imports
 - **`switchSession` respects isolation mode:** In soft mode, skips cookie clear/restore on domains with no target session data; removes DNR rules and lets browser cookies pass through
