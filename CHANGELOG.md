@@ -10,6 +10,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Encrypted Google Drive sync:** Opt-in two-way sync of all session data (`FullExportData`) to the user's own Google Drive using `drive.appdata` scope (hidden app folder, no access to user files)
+  - **AES-256-GCM encryption** with PBKDF2 key derivation (600K iterations) — encryption key derived from Google User ID, enabling cross-device sync with the same Google account
+  - **Three merge strategies:** Trust Cloud (overwrite local), Trust Local (overwrite cloud), Ask (per session:origin conflict picker with bulk "All Local" / "All Cloud" buttons)
+  - **Auto-sync** via `chrome.alarms` at configurable intervals (Off / 5m / 15m / 30m)
+  - **Conflict detection** via SHA-256 per-origin checksums stored in an unencrypted manifest file on Drive
+  - **Auto-recovery** on decryption failure (e.g., account change or data migration) — automatically overwrites remote with local data
+  - **Cloud Sync card** in Settings tab with connect/disconnect, status indicator, merge strategy pills, auto-sync interval pills, and encryption explainer
+  - **Sync Conflict Dialog** (`SyncConflictDialog.svelte`) — modal with per-origin local/cloud toggle, bulk resolution, timestamps
+- **New shared modules for sync:**
+  - `src/shared/sync/sync-types.ts` — `SyncConfig`, `SyncState`, `ConflictEntry`, `SyncManifest`, `EncryptedPayload` types
+  - `src/shared/sync/crypto-engine.ts` — `encrypt()`, `decrypt()`, `deriveKey()`, `sha256Hex()`
+  - `src/shared/sync/drive-client.ts` — Google Drive REST API v3 wrapper: `getToken()`, `findFile()`, `createFile()`, `updateFile()`, `downloadFile()`, `revokeAccess()`, `getGoogleUserId()`
+  - `src/shared/sync/sync-store.ts` — `SyncConfig` persistence with listeners (follows `settings-store.ts` pattern)
+  - `src/shared/sync/sync-engine.ts` — `buildLocalManifest()`, `detectConflicts()`, `mergeData()`, `applyFullData()`, `executeSyncCycle()`
+  - `src/background/drive-sync.ts` — alarm-based auto-sync, sync triggers, conflict resolution
+- **Batch session operations for sync:** `batchSetSessions()` in session-manager for atomic session replacement (single storage write vs O(N²)), `deleteAllSessions()` cascade
+- **`getAllSnapshots()` on CookieStore and StorageStore:** Single-pass IDB read for sync export, replacing per-session O(N×T) cursor scans
+- **New icons in Icon.svelte:** `cloud`, `cloud-off`
+- **6 new message types:** `SYNC_CONNECT`, `SYNC_DISCONNECT`, `SYNC_NOW`, `SYNC_GET_STATE`, `SYNC_CONFIGURE`, `SYNC_RESOLVE_CONFLICTS`
+- **6 new API wrappers:** `syncConnect()`, `syncDisconnect()`, `syncNow()`, `syncGetState()`, `syncConfigure()`, `syncResolveConflicts()`
+- **`identity` permission + `oauth2` block** in manifest.json for Google OAuth2
+- **New tests:** 56 new tests across 7 new/expanded test files (439 total)
+  - `tests/shared/sync/crypto-engine.test.ts` — encrypt/decrypt round-trip, wrong key, SHA-256
+  - `tests/shared/sync/drive-client.test.ts` — Drive API calls with mocked fetch, 401 retry, `getGoogleUserId`
+  - `tests/shared/sync/sync-store.test.ts` — config persistence, listeners, init
+  - `tests/shared/sync/sync-engine.test.ts` — manifest building, conflict detection, merge strategies
+  - `tests/background/drive-sync.test.ts` — sync triggers, alarm management, error persistence
+  - Expanded: `session-manager.test.ts` (+6 for `batchSetSessions`, `deleteAllSessions`)
 - **Security layer (passcode + biometric):** Optional 4-digit passcode (PBKDF2-SHA256, 600K iterations, 16-byte random salt) and/or WebAuthn platform biometric (fingerprint/Face ID) to protect session switch, delete, export, import, and clear-all actions; configurable grace period (1/2/5/10/30 min) stored in `chrome.storage.session` (auto-clears on browser close); biometric requires passcode as prerequisite for recoverability
 - **Security store (`src/shared/security-store.ts`):** Config manager following settings-store pattern with `chrome.storage.local` persistence, `chrome.storage.onChanged` cross-context sync, listener pattern, and init guard for idempotent initialization
 - **Crypto utilities (`src/shared/crypto-utils.ts`):** Pure PBKDF2 hashing, salt generation, constant-time comparison; `saltToBase64`/`base64ToSalt` encoding helpers

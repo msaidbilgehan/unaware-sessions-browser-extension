@@ -32,9 +32,9 @@
 
 ## Project Overview
 
-Unaware Sessions lets you run multiple isolated browser sessions side-by-side within a single browser window. Each tab operates in its own sandboxed context with separate cookies, localStorage, sessionStorage, and IndexedDB — no cloud accounts, no telemetry, no subscriptions. Everything lives on your machine.
+Unaware Sessions lets you run multiple isolated browser sessions side-by-side within a single browser window. Each tab operates in its own sandboxed context with separate cookies, localStorage, sessionStorage, and IndexedDB — no telemetry, no subscriptions. Everything lives on your machine by default, with opt-in encrypted Google Drive sync.
 
-Think of it as SessionBox, but open-source and offline-only by design.
+Think of it as SessionBox, but open-source and privacy-first by design.
 
 ---
 
@@ -104,11 +104,21 @@ Unaware Sessions fills the gap: lightweight session isolation that works inside 
 - "Forgot Passcode?" reset clears security settings without deleting session data
 - Rate limiting: 5 failed attempts triggers a 30-second cooldown
 
+### Cloud Sync (opt-in)
+
+- Encrypted Google Drive sync using AES-256-GCM (PBKDF2 key derivation, 600K iterations)
+- Encryption key derived from Google User ID — same account on any device can decrypt
+- Uses `drive.appdata` scope — hidden app folder only, cannot access user files
+- Three merge strategies: Trust Cloud, Trust Local, Ask (per-origin conflict picker)
+- Configurable auto-sync interval (Off / 5m / 15m / 30m) via `chrome.alarms`
+- Decryption failures auto-recover by overwriting remote with local data
+- Connect/disconnect from Settings → Cloud Sync card
+
 ### Privacy
 
-- Zero network calls — the extension makes no outbound requests, ever
-- No analytics, no crash reporting, no update pings beyond the browser's own extension update mechanism
-- All data stored locally; nothing leaves the device
+- Zero analytics, no crash reporting, no telemetry, no update pings beyond the browser's own extension update mechanism
+- All data stored locally by default; Google Drive sync is opt-in and encrypted
+- Drive sync uses `drive.appdata` scope — extension cannot access any user files
 
 ### Design Constraints
 
@@ -163,6 +173,7 @@ Switch between isolated sessions on any site. Each session maintains its own coo
 |  |  - Tab Tracker                              |            |
 |  |  - DNR Manager (declarativeNetRequest)      |            |
 |  |  - Message Router                           |            |
+|  |  - Drive Sync (encrypted backup)            |            |
 |  +-----+------------------+-------------------+            |
 |        |                  |                                |
 |        v                  v                                |
@@ -298,6 +309,7 @@ src/
     messaging.ts             # Discriminated union message router
     context-menu.ts          # "Open in Session" right-click menu
     badge-manager.ts         # Tab badge with session color + abbreviation
+    drive-sync.ts            # Google Drive sync orchestration + auto-sync alarm
   content/
     index.ts                 # Content script entry (document_start)
     storage-swap.ts          # localStorage/sessionStorage save/restore
@@ -324,7 +336,8 @@ src/
     components/
       TabBar.svelte          # Tab navigation with keyboard nav + ARIA
       SessionsTab.svelte     # Session management with inline edit
-      SettingsTab.svelte     # Theme + cookie isolation + auto-refresh + security settings
+      SettingsTab.svelte     # Theme + cookie isolation + auto-refresh + security + cloud sync
+      SyncConflictDialog.svelte # Per-origin local/cloud conflict picker
       ImportExportTab.svelte # Import with drag-drop + visual diff + data management
       AboutTab.svelte        # Version info, GitHub, OpenCollective
       StorageDashboard.svelte # Per-session storage usage bars
@@ -344,6 +357,12 @@ src/
     utils.ts                 # Pure utility functions
     theme.css                # CSS custom properties design system
     theme-store.ts           # Theme preference manager
+    sync/
+      sync-types.ts          # Sync type definitions
+      crypto-engine.ts       # AES-256-GCM encrypt/decrypt + PBKDF2 key derivation
+      drive-client.ts        # Google Drive REST API v3 wrapper (appDataFolder)
+      sync-store.ts          # SyncConfig persistence + listeners
+      sync-engine.ts         # Core sync orchestrator (manifest, conflicts, merge)
     components/
       Icon.svelte            # SVG icon library (Lucide paths)
       ThemeToggle.svelte     # Dark mode toggle button
@@ -399,7 +418,8 @@ tests/
 | `tabs` | Track tab lifecycle, reload tabs, update badges |
 | `declarativeNetRequest` | Modify cookie headers on outbound requests |
 | `contextMenus` | "Open in Session" right-click menu |
-| `alarms` | Periodic state persistence and cleanup |
+| `alarms` | Periodic state persistence, cleanup, and auto-sync |
+| `identity` | Google OAuth2 for Drive sync |
 
 ---
 
@@ -416,7 +436,7 @@ npm run test:watch
 npm run test:coverage
 ```
 
-Tests use **Vitest** with Chrome API mocks (defined in `tests/setup.ts`) and `fake-indexeddb` for IndexedDB testing. Coverage is tracked via v8. The test suite covers background services, shared utilities, content scripts, settings, security, and API layer (383 tests across 23 test files, 93%+ statement coverage).
+Tests use **Vitest** with Chrome API mocks (defined in `tests/setup.ts`) and `fake-indexeddb` for IndexedDB testing. Coverage is tracked via v8. The test suite covers background services, shared utilities, content scripts, settings, security, sync engine, Drive client, and API layer (439+ tests across 28 test files, 84%+ statement coverage).
 
 ---
 

@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Privacy-first, open-source browser extension for isolated browsing sessions within a single browser window. Each session has its own cookies, localStorage, sessionStorage, and IndexedDB. Zero network calls. Everything local.
+Privacy-first, open-source browser extension for isolated browsing sessions within a single browser window. Each session has its own cookies, localStorage, sessionStorage, and IndexedDB. Everything local by default, with opt-in encrypted Google Drive sync.
 
 ## Tech Stack
 
@@ -16,7 +16,7 @@ Privacy-first, open-source browser extension for isolated browsing sessions with
 
 ## Architecture
 
-- **Service Worker** (`src/background/`) — session lifecycle, cookie swap, tab tracking, DNR rules, messaging
+- **Service Worker** (`src/background/`) — session lifecycle, cookie swap, tab tracking, DNR rules, messaging, Drive sync
 - **Content Scripts** (`src/content/`) — DOM storage save/restore (localStorage, sessionStorage, IndexedDB)
 - **Popup UI** (`src/popup/`) — session list with domain grouping, "Default (no session)" for fresh login, 380px wide
 - **Options Page** (`src/options/`) — tabbed settings, import/export, storage dashboard
@@ -31,6 +31,7 @@ Privacy-first, open-source browser extension for isolated browsing sessions with
 - **Tab unassignment on cross-origin navigation** — when a tab navigates to a different origin, its session is automatically unassigned (session data belongs to the old origin; keeping it assigned on a new origin causes cross-domain confusion)
 - **IDB binary encoding** — content script encodes `ArrayBuffer`, `TypedArray`, and `Date` values into JSON-safe marker objects before `sendMessage` (Chrome extension messaging uses JSON serialization, not structured clone) and decodes them on restore
 - **Optional security layer** — 4-digit passcode (PBKDF2-SHA256, 600K iterations) and/or WebAuthn biometric (fingerprint/Face ID); client-side auth gate in popup/options before protected actions; configurable grace period (1–30 min) via `chrome.storage.session` auto-clears on browser close; biometric requires passcode as prerequisite for recoverability
+- **Opt-in encrypted Google Drive sync** — AES-256-GCM encryption with key derived from Google User ID (PBKDF2, 600K iterations); `drive.appdata` scope (hidden app folder, no access to user files); two Drive files: unencrypted manifest (checksums only) + encrypted payload; three merge strategies: trust-cloud, trust-local, ask (per-origin conflict picker); auto-sync via `chrome.alarms` at configurable intervals (Off/5m/15m/30m); same Google account on any device = same encryption key = cross-device sync; decryption failures auto-recover by overwriting remote with local data
 - **One active session per origin at a time** — DOM storage is shared per-origin across all tabs
 - **MV3 only** — no MV2 support, no persistent background page
 - **Service Worker state must survive restarts** — persist to `chrome.storage.session` / `chrome.storage.local` / extension IndexedDB
@@ -63,7 +64,7 @@ npm run release:major # Major version bump + push tags
 - **No `any`** — TypeScript strict mode, no implicit types
 - **Discriminated union messaging** — all messages between contexts use typed unions (`shared/types.ts`)
 - **Entity-per-handler pattern** — each domain has its own handler in `background/`
-- **No external network calls** — zero analytics, telemetry, or external APIs
+- **No external network calls** — zero analytics or telemetry; the only network calls are opt-in Google Drive sync (user-initiated, encrypted)
 - **Content scripts run at `document_start`** — critical for storage isolation before page scripts execute
 - **CSS custom properties** — all colors, spacing, radii, shadows use design tokens from `theme.css`
 - **Shared API layer** — `src/shared/api.ts` is the single source for popup/options to communicate with the service worker; retries once (200 ms delay) on MV3 service worker wake-up connection errors before surfacing to callers
@@ -83,7 +84,7 @@ npm run release:major # Major version bump + push tags
 
 ### Background (`src/background/`)
 
-- `session-manager.ts` — session CRUD, ordering, duplicate
+- `session-manager.ts` — session CRUD, ordering, duplicate, batch upsert for sync
 - `cookie-engine.ts` — cookie swap orchestration (save, clear, restore, switch) with origin-scoped domain-hierarchy cookie resolution, DOM storage save/restore, pending restores, per-tab switch mutex, soft/strict isolation mode, and restore failure tracking (ring buffer)
 - `cookie-store.ts` — IndexedDB wrapper for cookie snapshots + stats
 - `storage-store.ts` — IndexedDB wrapper for storage snapshots + stats
@@ -93,11 +94,17 @@ npm run release:major # Major version bump + push tags
 - `badge-manager.ts` — tab badge with session color + abbreviation
 - `context-menu.ts` — "Open in Session" right-click menu
 - `auto-refresh.ts` — alarm-driven periodic session data refresh for all tracked tabs
+- `drive-sync.ts` — Google Drive sync orchestration: alarm-based auto-sync, sync triggers, conflict resolution
 
 ### Shared (`src/shared/`)
 
 - `types.ts` — all TypeScript interfaces, MessageType enum, Message union, `IsolationMode` type (`soft` | `strict`), `SecurityConfig`, `GracePeriodMs`, full export/import types, debug types (cookie diff, restore failures)
-- `api.ts` — typed message wrappers for popup/options (createSession, switchSession, getSessionStats, exportFull, importFull, debug APIs, etc.)
+- `api.ts` — typed message wrappers for popup/options (createSession, switchSession, getSessionStats, exportFull, importFull, sync APIs, debug APIs, etc.)
+- `sync/sync-types.ts` — sync type definitions (SyncConfig, SyncState, ConflictEntry, SyncManifest, EncryptedPayload)
+- `sync/crypto-engine.ts` — AES-256-GCM encrypt/decrypt, PBKDF2 key derivation, SHA-256 checksums
+- `sync/drive-client.ts` — Google Drive REST API v3 wrapper (appDataFolder); token management, 401 retry, file CRUD, Google User ID fetch
+- `sync/sync-store.ts` — SyncConfig persistence + listeners (follows settings-store pattern)
+- `sync/sync-engine.ts` — core sync orchestrator: manifest building, conflict detection, data merging, encrypted upload/download
 - `theme.css` — CSS custom properties design system (light/dark tokens, spacing, radii, shadows)
 - `theme-store.ts` — theme preference manager (light/dark/system with chrome.storage persistence)
 - `settings-store.ts` — extension settings manager (auto-refresh interval, domain preferences, per-domain isolation mode overrides, log level, listener pattern)
@@ -116,7 +123,7 @@ npm run release:major # Major version bump + push tags
 ### Options (`src/options/`)
 
 - `App.svelte` — tabbed layout (Sessions, Settings, Data, About, Debug)
-- `components/` — TabBar (with keyboard nav + ARIA tabs), SessionsTab (domain folders, inline cookie/storage editing, per-domain auto-refresh, search by session name or domain), SettingsTab (theme + cookie isolation mode + auto-refresh + security settings with inline PIN setup flows), ImportExportTab (profile-only + full export/import with stats preview + data management/clear all + `withAuth` gate on export/import/clear), DebugTab (cookie diff viewer + restore failure log + extension logs with log level selector), AboutTab (GitHub, OpenCollective), StorageDashboard, DragDropZone, ImportDiff
+- `components/` — TabBar (with keyboard nav + ARIA tabs), SessionsTab (domain folders, inline cookie/storage editing, per-domain auto-refresh, search by session name or domain), SettingsTab (theme + cookie isolation mode + auto-refresh + security settings + Cloud Sync card with connect/disconnect, merge strategy, auto-sync interval), ImportExportTab (profile-only + full export/import with stats preview + data management/clear all + `withAuth` gate on export/import/clear), DebugTab (cookie diff viewer + restore failure log + extension logs with log level selector), AboutTab (GitHub, OpenCollective), StorageDashboard, DragDropZone, ImportDiff, SyncConflictDialog
 
 ## Key Documentation
 
@@ -128,7 +135,7 @@ npm run release:major # Major version bump + push tags
 
 ## Permissions Required
 
-`storage`, `cookies`, `tabs`, `declarativeNetRequest`, `contextMenus`, `alarms`, `favicon` + `<all_urls>` host permission.
+`storage`, `cookies`, `tabs`, `declarativeNetRequest`, `contextMenus`, `alarms`, `favicon`, `identity` + `<all_urls>` host permission. OAuth2 scope: `drive.appdata`.
 
 ## Quality Gate
 
@@ -137,7 +144,7 @@ Before marking any task complete, run in this order:
 ```bash
 npm run type-check   # TypeScript — zero errors required
 npm run lint         # ESLint — zero violations required
-npm run test         # Vitest — all 383+ tests must pass
+npm run test         # Vitest — all 439+ tests must pass
 ```
 
 Test files live in `tests/` mirroring `src/` structure (`*.test.ts`). Add tests for new background/shared logic; Svelte component tests are not required but encouraged for non-trivial state.
