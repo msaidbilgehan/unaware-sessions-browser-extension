@@ -3,7 +3,7 @@
   "version": "0.1.1",
   "private": true,
   "type": "module",
-  "description": "Privacy-first multi-session browser manager — entirely local",
+  "description": "Privacy-first multi-session browser manager - entirely local",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
