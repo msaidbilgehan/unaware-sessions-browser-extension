@@ -115,7 +115,7 @@
         {/if}
         {#if onautorefreshToggle}
           <button
-            class="action-btn"
+            class="action-btn auto-refresh-toggle"
             class:active={autoRefreshEnabled}
             onclick={onautorefreshToggle}
             aria-label={autoRefreshEnabled ? 'Disable auto-refresh' : 'Enable auto-refresh'}
@@ -272,6 +272,25 @@
     color: var(--color-accent);
     border-color: var(--color-accent);
     background: var(--color-accent-soft);
+  }
+
+  .action-btn.auto-refresh-toggle.active {
+    color: var(--color-success);
+    border-color: var(--color-success);
+    background: var(--color-success-soft);
+    position: relative;
+  }
+
+  .action-btn.auto-refresh-toggle.active::after {
+    content: '';
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 5px;
+    height: 5px;
+    border-radius: var(--radius-full);
+    background: var(--color-success);
+    animation: pulse 2s ease-in-out infinite;
   }
 
   .action-btn.primary:hover:not(:disabled) {

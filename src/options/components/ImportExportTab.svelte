@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { SessionProfile, FullExportData } from '@shared/types';
-  import { createSession, exportFull, importFull } from '@shared/api';
+  import { createSession, deleteSession as deleteSessionApi, exportFull, importFull } from '@shared/api';
+  import ConfirmDialog from '@shared/components/ConfirmDialog.svelte';
   import Icon from '@shared/components/Icon.svelte';
   import DragDropZone from './DragDropZone.svelte';
   import ImportDiff from './ImportDiff.svelte';
@@ -11,12 +12,25 @@
   }
 
   let { sessions, onupdate }: Props = $props();
+  let showClearConfirm = $state(false);
   let importError = $state('');
   let importSuccess = $state('');
   let importedProfiles = $state<SessionProfile[] | null>(null);
   let fullExporting = $state(false);
   let fullImportData = $state<FullExportData | null>(null);
   let fullImporting = $state(false);
+
+  async function handleClearAll() {
+    showClearConfirm = false;
+    try {
+      for (const session of sessions) {
+        await deleteSessionApi(session.id);
+      }
+      onupdate();
+    } catch (err) {
+      console.error('[Unaware Sessions] Failed to clear all sessions:', err);
+    }
+  }
 
   function handleExport() {
     const data = JSON.stringify(sessions, null, 2);
@@ -321,7 +335,45 @@
       </div>
     {/if}
   </section>
+
+  <!-- Data Management card -->
+  <section class="card danger-zone">
+    <div class="card-header">
+      <div class="card-icon danger">
+        <Icon name="alert-triangle" size={16} />
+      </div>
+      <div>
+        <h2>Data Management</h2>
+        <p class="description">
+          Remove all session profiles, saved cookies, and storage snapshots.
+        </p>
+      </div>
+    </div>
+
+    <button
+      class="btn danger"
+      onclick={() => (showClearConfirm = true)}
+      disabled={sessions.length === 0}
+    >
+      <Icon name="trash-2" size={14} />
+      Clear All Data
+      {#if sessions.length > 0}
+        <span class="count">({sessions.length} session{sessions.length === 1 ? '' : 's'})</span>
+      {/if}
+    </button>
+  </section>
 </div>
+
+{#if showClearConfirm}
+  <ConfirmDialog
+    title="Clear All Data"
+    message="Delete ALL sessions and their data? This cannot be undone. All session profiles, cookies, and storage snapshots will be permanently removed."
+    confirmLabel="Clear All"
+    danger={true}
+    onconfirm={handleClearAll}
+    oncancel={() => (showClearConfirm = false)}
+  />
+{/if}
 
 <style>
   .data-layout {
@@ -599,5 +651,29 @@
     to {
       transform: rotate(360deg);
     }
+  }
+
+  /* Data Management */
+  .card.danger-zone {
+    border-color: var(--color-error-border);
+  }
+
+  .card-icon.danger {
+    background: var(--color-warning-soft);
+    color: var(--color-warning);
+  }
+
+  .btn.danger {
+    color: var(--color-error);
+    border-color: var(--color-error-border);
+  }
+
+  .btn.danger:hover:not(:disabled) {
+    background: var(--color-error-soft);
+  }
+
+  .count {
+    font-weight: var(--font-normal);
+    opacity: 0.7;
   }
 </style>

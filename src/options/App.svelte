@@ -51,19 +51,30 @@
     loadSessions();
   });
 
-  // Silently update when storage changes externally (e.g., auto-refresh, popup actions)
+  // Silently update when storage changes externally (e.g., auto-refresh, popup actions).
+  // Debounce with setTimeout: a single operation can fire multiple storage changes across
+  // separate async ticks (e.g., touchSessionRefresh writes SESSIONS twice sequentially).
+  // A short timer coalesces them into one LIST_SESSIONS call.
   $effect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
     function handleStorageChange(
       changes: Record<string, chrome.storage.StorageChange>,
       area: string,
     ) {
       if (area !== 'local') return;
       if (STORAGE_KEYS.SESSIONS in changes || STORAGE_KEYS.SESSION_ORDER in changes) {
-        updateSessionsQuietly();
+        if (timer != null) clearTimeout(timer);
+        timer = setTimeout(() => {
+          timer = null;
+          updateSessionsQuietly();
+        }, 50);
       }
     }
     chrome.storage.onChanged.addListener(handleStorageChange);
-    return () => chrome.storage.onChanged.removeListener(handleStorageChange);
+    return () => {
+      if (timer != null) clearTimeout(timer);
+      chrome.storage.onChanged.removeListener(handleStorageChange);
+    };
   });
 
   // Auto-refresh is handled by the service worker alarm (background/auto-refresh.ts).
@@ -96,9 +107,9 @@
     {:else if activeTab === 'import-export'}
       <ImportExportTab {sessions} onupdate={loadSessions} />
     {:else if activeTab === 'about'}
-      <AboutTab {sessions} onupdate={loadSessions} />
+      <AboutTab />
     {:else if activeTab === 'debug'}
-      <DebugTab {sessions} onupdate={loadSessions} />
+      <DebugTab {sessions} />
     {/if}
   </div>
 </main>

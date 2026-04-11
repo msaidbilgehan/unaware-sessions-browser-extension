@@ -1,5 +1,10 @@
 <script lang="ts">
-  import type { SessionProfile, TabSessionEntry, AutoRefreshInterval, IsolationMode } from '@shared/types';
+  import type {
+    SessionProfile,
+    TabSessionEntry,
+    AutoRefreshInterval,
+    IsolationMode,
+  } from '@shared/types';
   import { extractOrigin, extractDomain } from '@shared/utils';
   import {
     getAutoRefreshInterval,
@@ -23,6 +28,7 @@
     reorderSessions,
     duplicateSession as duplicateSessionApi,
     getSessionsForOrigin,
+    getAllSessionOrigins,
     saveSessionData,
     clearOriginData,
     detectSession,
@@ -45,6 +51,7 @@
   let sessions = $state<SessionProfile[]>([]);
   let tabCounts = $state<Record<string, number>>({});
   let sessionsWithOriginData = $state<Set<string>>(new Set());
+  let sessionOriginMap = $state<Record<string, string[]>>({});
   let currentTab = $state<chrome.tabs.Tab | undefined>(undefined);
   let currentTabEntry = $state<TabSessionEntry | undefined>(undefined);
 
@@ -56,6 +63,7 @@
   let searchQuery = $state('');
   let showKeyboardOverlay = $state(false);
   let editingSessionId = $state<string | null>(null);
+  let switchingSessionId = $state<string | null>(null);
 
   // Toast state
   let toastData = $state<{
@@ -108,19 +116,19 @@
 
       // Auto-detect session from cookies when tab-session mapping is lost
       if (!currentTabEntry && origin && tab?.id) {
-        const detectedId = await detectSession(origin);
+        const detectedId = await detectSession(origin, tab.id);
         if (detectedId) {
           await assignTab(tab.id, detectedId, origin);
           currentTabEntry = { sessionId: detectedId, origin };
         }
       }
 
-      if (origin) {
-        const ids = await getSessionsForOrigin(origin);
-        sessionsWithOriginData = new Set(ids);
-      } else {
-        sessionsWithOriginData = new Set();
-      }
+      const [originIds, allOrigins] = await Promise.all([
+        origin ? getSessionsForOrigin(origin) : Promise.resolve([]),
+        getAllSessionOrigins(),
+      ]);
+      sessionsWithOriginData = new Set(originIds);
+      sessionOriginMap = allOrigins;
     } catch (err) {
       console.error('[Unaware Sessions] Failed to load state:', err);
     } finally {
@@ -132,12 +140,14 @@
   // Svelte reactivity handles re-rendering only the changed parts.
   async function updateSessionsQuietly() {
     try {
-      const [sessionList, counts] = await Promise.all([
+      const [sessionList, counts, allOrigins] = await Promise.all([
         listSessions(),
         getAllTabCounts(),
+        getAllSessionOrigins(),
       ]);
       sessions = sessionList;
       tabCounts = counts;
+      sessionOriginMap = allOrigins;
 
       if (currentTab?.url) {
         const origin = extractOrigin(currentTab.url);
@@ -179,13 +189,16 @@
   }
 
   async function handleSwitch(sessionId: string) {
-    if (!currentTab?.id) return;
+    if (!currentTab?.id || switchingSessionId) return;
+    switchingSessionId = sessionId;
     try {
       await switchSession(currentTab.id, sessionId);
       currentTabEntry = { sessionId, origin: currentOrigin };
       sessions = await listSessions();
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Failed to switch session', 'error');
+    } finally {
+      switchingSessionId = null;
     }
   }
 
@@ -222,11 +235,7 @@
   async function handleUndoDelete() {
     if (!deletedSession) return;
     try {
-      await createSession(
-        deletedSession.name,
-        deletedSession.color,
-        deletedSession.emoji,
-      );
+      await createSession(deletedSession.name, deletedSession.color, deletedSession.emoji);
       sessions = await listSessions();
       deletedSession = null;
       toastData = null;
@@ -270,7 +279,7 @@
 
       // Auto-detect session if no mapping exists
       if (!currentTabEntry && currentOrigin && currentTab?.id) {
-        const detectedId = await detectSession(currentOrigin);
+        const detectedId = await detectSession(currentOrigin, currentTab.id);
         if (detectedId) {
           await assignTab(currentTab.id, detectedId, currentOrigin);
           currentTabEntry = { sessionId: detectedId, origin: currentOrigin };
@@ -377,19 +386,30 @@
     loadState();
   });
 
-  // Silently update when storage changes externally (e.g., auto-refresh, settings page, context menu)
+  // Silently update when storage changes externally (e.g., auto-refresh, settings page, context menu).
+  // Debounce with setTimeout: a single operation can fire multiple storage changes across
+  // separate async ticks (e.g., touchSessionRefresh writes SESSIONS twice sequentially).
+  // A short timer coalesces them into one LIST_SESSIONS call.
   $effect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
     function handleStorageChange(
       changes: Record<string, chrome.storage.StorageChange>,
       area: string,
     ) {
       if (area !== 'local') return;
       if (STORAGE_KEYS.SESSIONS in changes || STORAGE_KEYS.SESSION_ORDER in changes) {
-        updateSessionsQuietly();
+        if (timer != null) clearTimeout(timer);
+        timer = setTimeout(() => {
+          timer = null;
+          updateSessionsQuietly();
+        }, 50);
       }
     }
     chrome.storage.onChanged.addListener(handleStorageChange);
-    return () => chrome.storage.onChanged.removeListener(handleStorageChange);
+    return () => {
+      if (timer != null) clearTimeout(timer);
+      chrome.storage.onChanged.removeListener(handleStorageChange);
+    };
   });
 
   // Auto-refresh
@@ -510,8 +530,11 @@
       <SessionList
         {sessions}
         activeSessionId={currentTabEntry?.sessionId}
+        {switchingSessionId}
         {tabCounts}
         {sessionsWithOriginData}
+        {sessionOriginMap}
+        {currentOrigin}
         {searchQuery}
         onswitch={handleSwitch}
         onunassign={handleUnassign}
@@ -572,10 +595,6 @@
   main {
     width: 380px;
     min-height: 200px;
-    max-height: 580px;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
     background: var(--color-bg-primary);
   }
 
@@ -584,8 +603,6 @@
     flex-direction: column;
     gap: var(--space-4);
     padding: var(--space-6);
-    overflow-y: auto;
-    flex: 1;
   }
 
   .header {
