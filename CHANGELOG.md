@@ -10,6 +10,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Security layer (passcode + biometric):** Optional 4-digit passcode (PBKDF2-SHA256, 600K iterations, 16-byte random salt) and/or WebAuthn platform biometric (fingerprint/Face ID) to protect session switch, delete, export, import, and clear-all actions; configurable grace period (1/2/5/10/30 min) stored in `chrome.storage.session` (auto-clears on browser close); biometric requires passcode as prerequisite for recoverability
+- **Security store (`src/shared/security-store.ts`):** Config manager following settings-store pattern with `chrome.storage.local` persistence, `chrome.storage.onChanged` cross-context sync, listener pattern, and init guard for idempotent initialization
+- **Crypto utilities (`src/shared/crypto-utils.ts`):** Pure PBKDF2 hashing, salt generation, constant-time comparison; `saltToBase64`/`base64ToSalt` encoding helpers
+- **Auth check utility (`src/shared/auth-check.ts`):** `checkAuth()` returns `'not-needed'` | `'grace-active'` | `'auth-required'`; used by popup and options pages before protected actions
+- **AuthGate component (`src/shared/components/AuthGate.svelte`):** Modal overlay with 4-digit PIN input (auto-advance, backspace, paste, shake on error), biometric button, auto-trigger biometric once on mount with PIN fallback, rate limiting (5 attempts → 30s cooldown), "Forgot Passcode?" reset flow
+- **Security card in Settings tab:** Passcode toggle with inline PIN setup/confirm/change/disable flows, biometric toggle (disabled until passcode is set, uses biometric verification to disable with PIN fallback), grace period pill selector
+- **`withAuth()` wrapper in popup and ImportExportTab:** Gates protected actions behind auth check; shows AuthGate modal when authentication is required
+- **`fingerprint` icon in Icon.svelte:** SVG path for biometric UI elements
+- **`SecurityConfig` and `GracePeriodMs` types:** Added to `src/shared/types.ts`
+- **Security storage keys:** `SECURITY_CONFIG` and `SECURITY_GRACE_UNTIL` added to `STORAGE_KEYS`; `DEFAULT_SECURITY_CONFIG` and `GRACE_PERIOD_OPTIONS` constants
+- **New tests:** 39 new tests across 3 new test files (383 total)
+  - `tests/shared/crypto-utils.test.ts` — 11 tests for hashing, salt encoding, verification
+  - `tests/shared/security-store.test.ts` — 24 tests for store lifecycle, passcode, grace period, listeners, cross-context sync
+  - `tests/shared/auth-check.test.ts` — 4 tests for auth check states
 - **Structured logger (`src/shared/logger.ts`):** Configurable log levels (off/error/warn/info/debug) with in-memory ring buffer, persistent to `chrome.storage.local`, viewable and exportable from Debug tab
 - **Extension Logs in Debug tab:** Log viewer with level filter, refresh, export, and clear actions; log level selector (pill buttons) moved from Settings to Debug for co-location with log output
 - **Missing icons added to Icon.svelte:** `file-text` (used by Logging/Extension Logs sections) and `folder` (used by domain groups in popup SessionList)
@@ -46,6 +60,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed
 
+- **Popup and options init chain:** `initSecurity()` runs in parallel with `initSettings()` via `Promise.all` before mounting the Svelte app
+- **SettingsTab expanded:** Added Security card section with passcode, biometric, and grace period controls
+- **ImportExportTab protected actions:** Full export, full import, and clear-all now gated behind `withAuth()` check
+- **Popup protected actions:** Session switch and session delete now gated behind `withAuth()` check
 - **Data Management moved to Data tab:** "Clear All Data" danger zone relocated from About tab to ImportExportTab ("Data" tab) for logical grouping with export/import; AboutTab no longer requires `sessions`/`onupdate` props
 - **Logging settings moved to Debug tab:** Log level selector relocated from Settings tab to Debug tab's Extension Logs card for co-location with log output; removed log-level state and imports from SettingsTab
 - **Search matches domains:** Session search in both popup (`SessionList.svelte`) and options (`SessionsTab.svelte`) now matches against associated origin domains in addition to session names — searching "claude" finds sessions with claude.ai data

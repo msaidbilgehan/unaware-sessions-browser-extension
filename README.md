@@ -94,6 +94,16 @@ Unaware Sessions fills the gap: lightweight session isolation that works inside 
 - Restore failure log: recent cookie restoration failures with detailed context
 - Per-cookie status breakdown: matched, value changed, flags changed, missing, extra, expired
 
+### Security
+
+- Optional 4-digit passcode to protect session switching, deletion, and data export
+- Optional biometric authentication (fingerprint / Face ID) via WebAuthn platform authenticator
+- Passcode hashing with PBKDF2-SHA256 (600,000 iterations) — never stored in plain text
+- Configurable grace period (1–30 minutes) to skip re-authentication after a successful check
+- Biometric requires passcode as prerequisite — always recoverable via PIN
+- "Forgot Passcode?" reset clears security settings without deleting session data
+- Rate limiting: 5 failed attempts triggers a 30-second cooldown
+
 ### Privacy
 
 - Zero network calls — the extension makes no outbound requests, ever
@@ -314,7 +324,7 @@ src/
     components/
       TabBar.svelte          # Tab navigation with keyboard nav + ARIA
       SessionsTab.svelte     # Session management with inline edit
-      SettingsTab.svelte     # Theme + cookie isolation + auto-refresh settings
+      SettingsTab.svelte     # Theme + cookie isolation + auto-refresh + security settings
       ImportExportTab.svelte # Import with drag-drop + visual diff + data management
       AboutTab.svelte        # Version info, GitHub, OpenCollective
       StorageDashboard.svelte # Per-session storage usage bars
@@ -326,6 +336,9 @@ src/
     api.ts                   # Typed messaging API (popup + options)
     constants.ts             # Extension-wide constants
     settings-store.ts        # Extension settings manager (auto-refresh, domain prefs, log level)
+    security-store.ts        # Security config manager (passcode, biometric, grace period)
+    crypto-utils.ts          # PBKDF2 hashing, salt generation, constant-time verification
+    auth-check.ts            # Auth requirement check utility
     logger.ts                # Structured logger with configurable levels and in-memory ring buffer
     storage.ts               # chrome.storage typed helpers
     utils.ts                 # Pure utility functions
@@ -335,6 +348,7 @@ src/
       Icon.svelte            # SVG icon library (Lucide paths)
       ThemeToggle.svelte     # Dark mode toggle button
       ConfirmDialog.svelte   # Modal confirmation dialog
+      AuthGate.svelte        # Passcode + biometric auth modal
       Toast.svelte           # Toast notifications with undo
       InlineEdit.svelte      # Inline text editing
       ColorPicker.svelte     # Color preset + custom picker
@@ -402,7 +416,7 @@ npm run test:watch
 npm run test:coverage
 ```
 
-Tests use **Vitest** with Chrome API mocks (defined in `tests/setup.ts`) and `fake-indexeddb` for IndexedDB testing. Coverage is tracked via v8. The test suite covers background services, shared utilities, content scripts, settings, and API layer (344 tests across 20 test files, 93%+ statement coverage).
+Tests use **Vitest** with Chrome API mocks (defined in `tests/setup.ts`) and `fake-indexeddb` for IndexedDB testing. Coverage is tracked via v8. The test suite covers background services, shared utilities, content scripts, settings, security, and API layer (383 tests across 23 test files, 93%+ statement coverage).
 
 ---
 

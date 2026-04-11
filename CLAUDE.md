@@ -30,6 +30,7 @@ Privacy-first, open-source browser extension for isolated browsing sessions with
 - **Per-tab session switch mutex** — concurrent session switches on the same tab are serialized to prevent interleaved cookie operations
 - **Tab unassignment on cross-origin navigation** — when a tab navigates to a different origin, its session is automatically unassigned (session data belongs to the old origin; keeping it assigned on a new origin causes cross-domain confusion)
 - **IDB binary encoding** — content script encodes `ArrayBuffer`, `TypedArray`, and `Date` values into JSON-safe marker objects before `sendMessage` (Chrome extension messaging uses JSON serialization, not structured clone) and decodes them on restore
+- **Optional security layer** — 4-digit passcode (PBKDF2-SHA256, 600K iterations) and/or WebAuthn biometric (fingerprint/Face ID); client-side auth gate in popup/options before protected actions; configurable grace period (1–30 min) via `chrome.storage.session` auto-clears on browser close; biometric requires passcode as prerequisite for recoverability
 - **One active session per origin at a time** — DOM storage is shared per-origin across all tabs
 - **MV3 only** — no MV2 support, no persistent background page
 - **Service Worker state must survive restarts** — persist to `chrome.storage.session` / `chrome.storage.local` / extension IndexedDB
@@ -95,24 +96,27 @@ npm run release:major # Major version bump + push tags
 
 ### Shared (`src/shared/`)
 
-- `types.ts` — all TypeScript interfaces, MessageType enum, Message union, `IsolationMode` type (`soft` | `strict`), full export/import types, debug types (cookie diff, restore failures)
+- `types.ts` — all TypeScript interfaces, MessageType enum, Message union, `IsolationMode` type (`soft` | `strict`), `SecurityConfig`, `GracePeriodMs`, full export/import types, debug types (cookie diff, restore failures)
 - `api.ts` — typed message wrappers for popup/options (createSession, switchSession, getSessionStats, exportFull, importFull, debug APIs, etc.)
 - `theme.css` — CSS custom properties design system (light/dark tokens, spacing, radii, shadows)
 - `theme-store.ts` — theme preference manager (light/dark/system with chrome.storage persistence)
 - `settings-store.ts` — extension settings manager (auto-refresh interval, domain preferences, per-domain isolation mode overrides, log level, listener pattern)
-- `constants.ts` — extension-wide constants (storage keys including domain isolation modes, colors, emojis, GitHub/OpenCollective URLs)
+- `security-store.ts` — security config manager (passcode PBKDF2 setup/verify, WebAuthn biometric enrollment/verify, grace period, listener pattern); persists to `chrome.storage.local`, grace period to `chrome.storage.session`
+- `crypto-utils.ts` — PBKDF2 hashing (600K iterations, SHA-256), salt generation, constant-time verification; pure functions, no side effects
+- `auth-check.ts` — `checkAuth()` utility returning `'not-needed'` | `'grace-active'` | `'auth-required'`; used by popup/options before protected actions
+- `constants.ts` — extension-wide constants (storage keys including security config and grace period, colors, emojis, GitHub/OpenCollective URLs, grace period options)
 - `logger.ts` — structured logger with configurable log levels (off/error/warn/info/debug), in-memory ring buffer, stored in chrome.storage.local
-- `components/` — shared Svelte components (Icon, ThemeToggle, ConfirmDialog, Toast, InlineEdit, ColorPicker, EmojiPicker, AppLogo)
+- `components/` — shared Svelte components (Icon, ThemeToggle, ConfirmDialog, AuthGate, Toast, InlineEdit, ColorPicker, EmojiPicker, AppLogo)
 
 ### Popup (`src/popup/`)
 
-- `App.svelte` — main popup (380px): header with logo + theme toggle, origin panel with auto-refresh toggle, grouped session list, keyboard shortcuts; natural document scroll (no inner scroll container — Chrome popup viewport is the single scroll owner)
+- `App.svelte` — main popup (380px): header with logo + theme toggle, origin panel with auto-refresh toggle, grouped session list, keyboard shortcuts, `withAuth` gate on session switch/delete; natural document scroll (no inner scroll container — Chrome popup viewport is the single scroll owner)
 - `components/` — SessionList (domain-grouped with "Default" option, search by session name or domain), SessionItem, CurrentTabPanel (origin + refresh + auto-refresh toggle with green status indicator), NewSessionForm, SearchBar, ContextMenu, SessionDetail, KeyboardOverlay, OnboardingEmpty
 
 ### Options (`src/options/`)
 
 - `App.svelte` — tabbed layout (Sessions, Settings, Data, About, Debug)
-- `components/` — TabBar (with keyboard nav + ARIA tabs), SessionsTab (domain folders, inline cookie/storage editing, per-domain auto-refresh, search by session name or domain), SettingsTab (theme + cookie isolation mode + auto-refresh settings), ImportExportTab (profile-only + full export/import with stats preview + data management/clear all), DebugTab (cookie diff viewer + restore failure log + extension logs with log level selector), AboutTab (GitHub, OpenCollective), StorageDashboard, DragDropZone, ImportDiff
+- `components/` — TabBar (with keyboard nav + ARIA tabs), SessionsTab (domain folders, inline cookie/storage editing, per-domain auto-refresh, search by session name or domain), SettingsTab (theme + cookie isolation mode + auto-refresh + security settings with inline PIN setup flows), ImportExportTab (profile-only + full export/import with stats preview + data management/clear all + `withAuth` gate on export/import/clear), DebugTab (cookie diff viewer + restore failure log + extension logs with log level selector), AboutTab (GitHub, OpenCollective), StorageDashboard, DragDropZone, ImportDiff
 
 ## Key Documentation
 
@@ -133,7 +137,7 @@ Before marking any task complete, run in this order:
 ```bash
 npm run type-check   # TypeScript — zero errors required
 npm run lint         # ESLint — zero violations required
-npm run test         # Vitest — all 344+ tests must pass
+npm run test         # Vitest — all 383+ tests must pass
 ```
 
 Test files live in `tests/` mirroring `src/` structure (`*.test.ts`). Add tests for new background/shared logic; Svelte component tests are not required but encouraged for non-trivial state.
