@@ -1,4 +1,4 @@
-import type { ExtensionSettings } from '@shared/types';
+import type { ExtensionSettings, SecurityConfig, GracePeriodMs } from '@shared/types';
 
 export const ALARM_PERSIST_STATE = 'persist-state';
 export const ALARM_INTERVAL_MINUTES = 1;
@@ -13,6 +13,8 @@ export const STORAGE_KEYS = {
   EXTENSION_SETTINGS: 'extensionSettings',
   AUTO_REFRESH_DOMAINS: 'autoRefreshDomains',
   DOMAIN_ISOLATION_MODES: 'domainIsolationModes',
+  SECURITY_CONFIG: 'securityConfig',
+  SECURITY_GRACE_UNTIL: 'securityGraceUntil',
 } as const;
 
 export const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
@@ -21,6 +23,23 @@ export const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
   isolationModeDefault: 'soft',
   logLevel: 'off',
 };
+
+export const DEFAULT_SECURITY_CONFIG: SecurityConfig = {
+  passcodeEnabled: false,
+  passcodeHash: '',
+  passcodeSalt: '',
+  biometricEnabled: false,
+  biometricCredentialId: '',
+  gracePeriodMs: 300000,
+};
+
+export const GRACE_PERIOD_OPTIONS: { value: GracePeriodMs; label: string }[] = [
+  { value: 60000, label: '1 min' },
+  { value: 120000, label: '2 min' },
+  { value: 300000, label: '5 min' },
+  { value: 600000, label: '10 min' },
+  { value: 1800000, label: '30 min' },
+];
 
 export const LOG_BUFFER_MAX_SIZE = 2000;
 

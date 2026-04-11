@@ -40,6 +40,8 @@
   import ThemeToggle from '@shared/components/ThemeToggle.svelte';
   import AppLogo from '@shared/components/AppLogo.svelte';
   import ConfirmDialog from '@shared/components/ConfirmDialog.svelte';
+  import AuthGate from '@shared/components/AuthGate.svelte';
+  import { checkAuth } from '@shared/auth-check';
   import Toast from '@shared/components/Toast.svelte';
   import SessionList from './components/SessionList.svelte';
   import NewSessionForm from './components/NewSessionForm.svelte';
@@ -82,6 +84,23 @@
     danger: boolean;
     onconfirm: () => void;
   } | null>(null);
+
+  // Auth gate state
+  let authGateData = $state<{ onauth: () => void } | null>(null);
+
+  async function withAuth(action: () => void | Promise<void>) {
+    const result = await checkAuth();
+    if (result !== 'auth-required') {
+      await action();
+    } else {
+      authGateData = {
+        onauth: () => {
+          authGateData = null;
+          action();
+        },
+      };
+    }
+  }
 
   // Context menu state
   let contextMenuData = $state<{
@@ -192,16 +211,19 @@
 
   async function handleSwitch(sessionId: string) {
     if (!currentTab?.id || switchingSessionId) return;
-    switchingSessionId = sessionId;
-    try {
-      await switchSession(currentTab.id, sessionId);
-      currentTabEntry = { sessionId, origin: currentOrigin };
-      sessions = await listSessions();
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Failed to switch session', 'error');
-    } finally {
-      switchingSessionId = null;
-    }
+    await withAuth(async () => {
+      if (!currentTab?.id || switchingSessionId) return;
+      switchingSessionId = sessionId;
+      try {
+        await switchSession(currentTab.id, sessionId);
+        currentTabEntry = { sessionId, origin: currentOrigin };
+        sessions = await listSessions();
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : 'Failed to switch session', 'error');
+      } finally {
+        switchingSessionId = null;
+      }
+    });
   }
 
   function handleDeleteRequest(sessionId: string) {
@@ -217,21 +239,23 @@
   }
 
   async function executeDelete(session: SessionProfile) {
-    confirmData = null;
-    try {
-      await deleteSessionApi(session.id);
-      sessions = sessions.filter((s) => s.id !== session.id);
-      if (currentTabEntry?.sessionId === session.id) {
-        currentTabEntry = undefined;
+    await withAuth(async () => {
+      confirmData = null;
+      try {
+        await deleteSessionApi(session.id);
+        sessions = sessions.filter((s) => s.id !== session.id);
+        if (currentTabEntry?.sessionId === session.id) {
+          currentTabEntry = undefined;
+        }
+        deletedSession = session;
+        showToast(`"${session.name}" deleted`, 'info', {
+          label: 'Undo',
+          onclick: handleUndoDelete,
+        });
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : 'Failed to delete session', 'error');
       }
-      deletedSession = session;
-      showToast(`"${session.name}" deleted`, 'info', {
-        label: 'Undo',
-        onclick: handleUndoDelete,
-      });
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Failed to delete session', 'error');
-    }
+    });
   }
 
   async function handleUndoDelete() {
@@ -618,6 +642,10 @@
       onswitch={handleSwitch}
       onclose={() => (showKeyboardOverlay = false)}
     />
+  {/if}
+
+  {#if authGateData}
+    <AuthGate onauth={authGateData.onauth} oncancel={() => (authGateData = null)} />
   {/if}
 </main>
 

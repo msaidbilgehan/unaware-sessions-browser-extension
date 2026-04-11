@@ -2,6 +2,8 @@
   import type { SessionProfile, FullExportData } from '@shared/types';
   import { createSession, deleteSession as deleteSessionApi, exportFull, importFull } from '@shared/api';
   import ConfirmDialog from '@shared/components/ConfirmDialog.svelte';
+  import AuthGate from '@shared/components/AuthGate.svelte';
+  import { checkAuth } from '@shared/auth-check';
   import Icon from '@shared/components/Icon.svelte';
   import DragDropZone from './DragDropZone.svelte';
   import ImportDiff from './ImportDiff.svelte';
@@ -20,16 +22,35 @@
   let fullImportData = $state<FullExportData | null>(null);
   let fullImporting = $state(false);
 
-  async function handleClearAll() {
-    showClearConfirm = false;
-    try {
-      for (const session of sessions) {
-        await deleteSessionApi(session.id);
-      }
-      onupdate();
-    } catch (err) {
-      console.error('[Unaware Sessions] Failed to clear all sessions:', err);
+  // Auth gate state
+  let authGateData = $state<{ onauth: () => void } | null>(null);
+
+  async function withAuth(action: () => void | Promise<void>) {
+    const result = await checkAuth();
+    if (result !== 'auth-required') {
+      await action();
+    } else {
+      authGateData = {
+        onauth: () => {
+          authGateData = null;
+          action();
+        },
+      };
     }
+  }
+
+  async function handleClearAll() {
+    await withAuth(async () => {
+      showClearConfirm = false;
+      try {
+        for (const session of sessions) {
+          await deleteSessionApi(session.id);
+        }
+        onupdate();
+      } catch (err) {
+        console.error('[Unaware Sessions] Failed to clear all sessions:', err);
+      }
+    });
   }
 
   function handleExport() {
@@ -44,23 +65,25 @@
   }
 
   async function handleFullExport() {
-    fullExporting = true;
-    importError = '';
-    try {
-      const data = await exportFull();
-      const json = JSON.stringify(data, null, 2);
-      const blob = new Blob([json], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `unaware-sessions-full-${new Date().toISOString().slice(0, 10)}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      importError = `Export failed: ${err instanceof Error ? err.message : 'Unknown error'}`;
-    } finally {
-      fullExporting = false;
-    }
+    await withAuth(async () => {
+      fullExporting = true;
+      importError = '';
+      try {
+        const data = await exportFull();
+        const json = JSON.stringify(data, null, 2);
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `unaware-sessions-full-${new Date().toISOString().slice(0, 10)}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        importError = `Export failed: ${err instanceof Error ? err.message : 'Unknown error'}`;
+      } finally {
+        fullExporting = false;
+      }
+    });
   }
 
   function isFullExport(data: unknown): data is FullExportData {
@@ -142,18 +165,21 @@
 
   async function handleConfirmFullImport() {
     if (!fullImportData) return;
-    fullImporting = true;
-    importError = '';
-    try {
-      const result = await importFull(fullImportData);
-      importSuccess = `Imported ${result.imported} session(s) with cookie and storage data`;
-      fullImportData = null;
-      onupdate();
-    } catch (err) {
-      importError = `Import failed: ${err instanceof Error ? err.message : 'Unknown error'}`;
-    } finally {
-      fullImporting = false;
-    }
+    await withAuth(async () => {
+      if (!fullImportData) return;
+      fullImporting = true;
+      importError = '';
+      try {
+        const result = await importFull(fullImportData);
+        importSuccess = `Imported ${result.imported} session(s) with cookie and storage data`;
+        fullImportData = null;
+        onupdate();
+      } catch (err) {
+        importError = `Import failed: ${err instanceof Error ? err.message : 'Unknown error'}`;
+      } finally {
+        fullImporting = false;
+      }
+    });
   }
 
   function formatDate(ts: number): string {
@@ -373,6 +399,10 @@
     onconfirm={handleClearAll}
     oncancel={() => (showClearConfirm = false)}
   />
+{/if}
+
+{#if authGateData}
+  <AuthGate onauth={authGateData.onauth} oncancel={() => (authGateData = null)} />
 {/if}
 
 <style>

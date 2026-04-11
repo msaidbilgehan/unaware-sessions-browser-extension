@@ -83,6 +83,19 @@ export interface ExtensionSettings {
   logLevel: LogLevel;
 }
 
+// ── Security ────────────────────────────────────────────────────
+
+export type GracePeriodMs = 60000 | 120000 | 300000 | 600000 | 1800000;
+
+export interface SecurityConfig {
+  passcodeEnabled: boolean;
+  passcodeHash: string;
+  passcodeSalt: string;
+  biometricEnabled: boolean;
+  biometricCredentialId: string;
+  gracePeriodMs: GracePeriodMs;
+}
+
 // ── Tab-Session Mapping ──────────────────────────────────────────
 
 export interface TabSessionEntry {

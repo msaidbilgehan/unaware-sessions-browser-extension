@@ -10,7 +10,24 @@
     setIsolationModeDefault,
     onSettingsChange,
   } from '@shared/settings-store';
-  import type { AutoRefreshInterval, IsolationMode } from '@shared/types';
+  import type { AutoRefreshInterval, IsolationMode, GracePeriodMs } from '@shared/types';
+  import { GRACE_PERIOD_OPTIONS } from '@shared/constants';
+  import {
+    isPasscodeEnabled,
+    isBiometricEnabled,
+    isBiometricAvailable,
+    getGracePeriodMs,
+    setupPasscode,
+    removePasscode,
+    changePasscode,
+    setupBiometric,
+    removeBiometric,
+    verifyBiometric,
+    verifyAndUnlock,
+    setGracePeriodDuration,
+    onSecurityChange,
+  } from '@shared/security-store';
+  import { tick } from 'svelte';
   import Icon from '@shared/components/Icon.svelte';
 
   let theme = $state<ThemePreference>(getTheme());
@@ -87,6 +104,217 @@
 
   async function handleIsolationDefaultChange(mode: IsolationMode) {
     await setIsolationModeDefault(mode);
+  }
+
+  // ── Security state ──────────────────────────────────────────────
+  let passcodeOn = $state(isPasscodeEnabled());
+  let biometricOn = $state(isBiometricEnabled());
+  let biometricSupported = $state(false);
+  let gracePeriod = $state<GracePeriodMs>(getGracePeriodMs());
+
+  // Passcode setup flow
+  type SecurityFlow = 'idle' | 'setup-enter' | 'setup-confirm' | 'verify-then-disable' | 'verify-then-change' | 'verify-then-biometric' | 'change-enter' | 'change-confirm';
+  let securityFlow = $state<SecurityFlow>('idle');
+  let pinDigits = $state<string[]>(['', '', '', '']);
+  let pinConfirm = $state<string[]>(['', '', '', '']);
+  let pinError = $state('');
+  let pinInputRefs = $state<(HTMLInputElement | null)[]>([null, null, null, null]);
+
+  $effect(() => {
+    isBiometricAvailable().then((v) => {
+      biometricSupported = v;
+    });
+  });
+
+  $effect(() => {
+    const unsub = onSecurityChange((config) => {
+      passcodeOn = config.passcodeEnabled;
+      biometricOn = config.biometricEnabled;
+      gracePeriod = config.gracePeriodMs;
+    });
+    return unsub;
+  });
+
+  function resetPinState() {
+    securityFlow = 'idle';
+    pinDigits = ['', '', '', ''];
+    pinConfirm = ['', '', '', ''];
+    pinError = '';
+  }
+
+  async function focusFirstPin() {
+    await tick();
+    pinInputRefs[0]?.focus();
+  }
+
+  function handlePinDigitInput(index: number, e: Event, target: 'digits' | 'confirm') {
+    const input = e.target as HTMLInputElement;
+    const value = input.value.replace(/\D/g, '');
+    const arr = target === 'digits' ? pinDigits : pinConfirm;
+    arr[index] = value.slice(-1);
+    input.value = arr[index];
+
+    if (arr[index] && index < 3) {
+      pinInputRefs[index + 1]?.focus();
+    }
+  }
+
+  function handlePinDigitKeydown(index: number, e: KeyboardEvent, target: 'digits' | 'confirm') {
+    const arr = target === 'digits' ? pinDigits : pinConfirm;
+    if (e.key === 'Backspace') {
+      if (!arr[index] && index > 0) {
+        e.preventDefault();
+        arr[index - 1] = '';
+        pinInputRefs[index - 1]?.focus();
+      } else {
+        arr[index] = '';
+      }
+    }
+    if (e.key === 'ArrowLeft' && index > 0) {
+      e.preventDefault();
+      pinInputRefs[index - 1]?.focus();
+    }
+    if (e.key === 'ArrowRight' && index < 3) {
+      e.preventDefault();
+      pinInputRefs[index + 1]?.focus();
+    }
+    if (e.key === 'Escape') {
+      resetPinState();
+    }
+  }
+
+  function startPasscodeSetup() {
+    resetPinState();
+    securityFlow = 'setup-enter';
+    focusFirstPin();
+  }
+
+  function handleSetupEnterComplete() {
+    const pin = pinDigits.join('');
+    if (pin.length !== 4) return;
+    securityFlow = 'setup-confirm';
+    pinInputRefs = [null, null, null, null];
+    focusFirstPin();
+  }
+
+  async function handleSetupConfirmComplete() {
+    const pin = pinDigits.join('');
+    const confirm = pinConfirm.join('');
+    if (confirm.length !== 4) return;
+    if (pin !== confirm) {
+      pinError = 'PINs do not match';
+      pinConfirm = ['', '', '', ''];
+      focusFirstPin();
+      return;
+    }
+    await setupPasscode(pin);
+    resetPinState();
+  }
+
+  function startPasscodeDisable() {
+    resetPinState();
+    securityFlow = 'verify-then-disable';
+    focusFirstPin();
+  }
+
+  function startPasscodeChange() {
+    resetPinState();
+    securityFlow = 'verify-then-change';
+    focusFirstPin();
+  }
+
+  async function handleVerifyComplete() {
+    const pin = pinDigits.join('');
+    if (pin.length !== 4) return;
+    const valid = await verifyAndUnlock(pin);
+    if (!valid) {
+      pinError = 'Incorrect passcode';
+      pinDigits = ['', '', '', ''];
+      focusFirstPin();
+      return;
+    }
+    if (securityFlow === 'verify-then-disable') {
+      if (biometricOn) await removeBiometric();
+      await removePasscode();
+      resetPinState();
+    } else if (securityFlow === 'verify-then-change') {
+      pinDigits = ['', '', '', ''];
+      pinError = '';
+      securityFlow = 'change-enter';
+      pinInputRefs = [null, null, null, null];
+      focusFirstPin();
+    } else if (securityFlow === 'verify-then-biometric') {
+      resetPinState();
+      await doBiometricToggle();
+    }
+  }
+
+  function handleChangeEnterComplete() {
+    const pin = pinDigits.join('');
+    if (pin.length !== 4) return;
+    securityFlow = 'change-confirm';
+    pinInputRefs = [null, null, null, null];
+    focusFirstPin();
+  }
+
+  async function handleChangeConfirmComplete() {
+    const pin = pinDigits.join('');
+    const confirm = pinConfirm.join('');
+    if (confirm.length !== 4) return;
+    if (pin !== confirm) {
+      pinError = 'PINs do not match';
+      pinConfirm = ['', '', '', ''];
+      focusFirstPin();
+      return;
+    }
+    await changePasscode(pin);
+    resetPinState();
+  }
+
+  async function handleBiometricToggle() {
+    if (!passcodeOn) return; // Passcode must be enabled first
+    if (biometricOn) {
+      // Disabling: try biometric verification first, fall back to passcode
+      await handleBiometricDisable();
+    } else {
+      // Enabling: verify via biometric registration (WebAuthn prompt is inherently verified)
+      // but require passcode first to prove identity
+      resetPinState();
+      securityFlow = 'verify-then-biometric';
+      focusFirstPin();
+    }
+  }
+
+  async function handleBiometricDisable() {
+    try {
+      const verified = await verifyBiometric();
+      if (verified) {
+        await removeBiometric();
+        return;
+      }
+    } catch {
+      // Biometric failed — fall back to passcode
+    }
+    // Fallback: require passcode to disable biometric
+    resetPinState();
+    securityFlow = 'verify-then-biometric';
+    focusFirstPin();
+  }
+
+  async function doBiometricToggle() {
+    try {
+      if (biometricOn) {
+        await removeBiometric();
+      } else {
+        await setupBiometric();
+      }
+    } catch {
+      // setupBiometric can fail if user cancels the WebAuthn prompt
+    }
+  }
+
+  async function handleGracePeriodChange(ms: GracePeriodMs) {
+    await setGracePeriodDuration(ms);
   }
 
 </script>
@@ -216,6 +444,274 @@
         <span class="toggle-thumb"></span>
       </button>
     </label>
+  </section>
+
+  <!-- Security -->
+  <section class="card">
+    <div class="card-header">
+      <div class="card-icon security">
+        <Icon name="lock" size={16} />
+      </div>
+      <div>
+        <h2>Security</h2>
+        <p class="description">
+          Protect session switching and data export with a passcode or biometric authentication.
+        </p>
+      </div>
+    </div>
+
+    <!-- Passcode toggle row -->
+    <div class="toggle-row">
+      <div class="toggle-info">
+        <span class="toggle-label">Passcode</span>
+        <span class="toggle-description">
+          Require a 4-digit PIN to switch sessions, delete, or export data.
+        </span>
+      </div>
+      {#if passcodeOn && securityFlow === 'idle'}
+        <div class="security-actions">
+          <button class="security-text-btn" onclick={startPasscodeChange}>Change</button>
+          <button
+            class="toggle-switch on"
+            onclick={startPasscodeDisable}
+            role="switch"
+            aria-checked={true}
+            aria-label="Disable passcode"
+          >
+            <span class="toggle-thumb"></span>
+          </button>
+        </div>
+      {:else if !passcodeOn && securityFlow === 'idle'}
+        <button
+          class="toggle-switch"
+          onclick={startPasscodeSetup}
+          role="switch"
+          aria-checked={false}
+          aria-label="Enable passcode"
+        >
+          <span class="toggle-thumb"></span>
+        </button>
+      {/if}
+    </div>
+
+    <!-- Inline PIN entry flows -->
+    {#if securityFlow === 'setup-enter'}
+      <div class="pin-flow">
+        <span class="pin-flow-label">Enter a 4-digit passcode</span>
+        <div class="pin-row">
+          {#each pinDigits as _, i}
+            <input
+              bind:this={pinInputRefs[i]}
+              type="tel"
+              inputmode="numeric"
+              maxlength="1"
+              autocomplete="off"
+              class="pin-box"
+              class:filled={pinDigits[i].length > 0}
+              oninput={(e) => handlePinDigitInput(i, e, 'digits')}
+              onkeydown={(e) => handlePinDigitKeydown(i, e, 'digits')}
+              aria-label="Digit {i + 1}"
+            />
+          {/each}
+        </div>
+        <div class="pin-flow-actions">
+          <button class="security-text-btn" onclick={resetPinState}>Cancel</button>
+          <button
+            class="security-text-btn primary"
+            onclick={handleSetupEnterComplete}
+            disabled={pinDigits.join('').length !== 4}
+          >Next</button>
+        </div>
+      </div>
+    {/if}
+
+    {#if securityFlow === 'setup-confirm'}
+      <div class="pin-flow">
+        <span class="pin-flow-label">Confirm passcode</span>
+        <div class="pin-row">
+          {#each pinConfirm as _, i}
+            <input
+              bind:this={pinInputRefs[i]}
+              type="tel"
+              inputmode="numeric"
+              maxlength="1"
+              autocomplete="off"
+              class="pin-box"
+              class:filled={pinConfirm[i].length > 0}
+              class:error={!!pinError}
+              oninput={(e) => handlePinDigitInput(i, e, 'confirm')}
+              onkeydown={(e) => handlePinDigitKeydown(i, e, 'confirm')}
+              aria-label="Confirm digit {i + 1}"
+            />
+          {/each}
+        </div>
+        {#if pinError}
+          <span class="pin-error">{pinError}</span>
+        {/if}
+        <div class="pin-flow-actions">
+          <button class="security-text-btn" onclick={resetPinState}>Cancel</button>
+          <button
+            class="security-text-btn primary"
+            onclick={handleSetupConfirmComplete}
+            disabled={pinConfirm.join('').length !== 4}
+          >Save</button>
+        </div>
+      </div>
+    {/if}
+
+    {#if securityFlow === 'verify-then-disable' || securityFlow === 'verify-then-change' || securityFlow === 'verify-then-biometric'}
+      <div class="pin-flow">
+        <span class="pin-flow-label">Enter current passcode</span>
+        <div class="pin-row">
+          {#each pinDigits as _, i}
+            <input
+              bind:this={pinInputRefs[i]}
+              type="tel"
+              inputmode="numeric"
+              maxlength="1"
+              autocomplete="off"
+              class="pin-box"
+              class:filled={pinDigits[i].length > 0}
+              class:error={!!pinError}
+              oninput={(e) => handlePinDigitInput(i, e, 'digits')}
+              onkeydown={(e) => handlePinDigitKeydown(i, e, 'digits')}
+              aria-label="Digit {i + 1}"
+            />
+          {/each}
+        </div>
+        {#if pinError}
+          <span class="pin-error">{pinError}</span>
+        {/if}
+        <div class="pin-flow-actions">
+          <button class="security-text-btn" onclick={resetPinState}>Cancel</button>
+          <button
+            class="security-text-btn primary"
+            onclick={handleVerifyComplete}
+            disabled={pinDigits.join('').length !== 4}
+          >Verify</button>
+        </div>
+      </div>
+    {/if}
+
+    {#if securityFlow === 'change-enter'}
+      <div class="pin-flow">
+        <span class="pin-flow-label">Enter new passcode</span>
+        <div class="pin-row">
+          {#each pinDigits as _, i}
+            <input
+              bind:this={pinInputRefs[i]}
+              type="tel"
+              inputmode="numeric"
+              maxlength="1"
+              autocomplete="off"
+              class="pin-box"
+              class:filled={pinDigits[i].length > 0}
+              oninput={(e) => handlePinDigitInput(i, e, 'digits')}
+              onkeydown={(e) => handlePinDigitKeydown(i, e, 'digits')}
+              aria-label="Digit {i + 1}"
+            />
+          {/each}
+        </div>
+        <div class="pin-flow-actions">
+          <button class="security-text-btn" onclick={resetPinState}>Cancel</button>
+          <button
+            class="security-text-btn primary"
+            onclick={handleChangeEnterComplete}
+            disabled={pinDigits.join('').length !== 4}
+          >Next</button>
+        </div>
+      </div>
+    {/if}
+
+    {#if securityFlow === 'change-confirm'}
+      <div class="pin-flow">
+        <span class="pin-flow-label">Confirm new passcode</span>
+        <div class="pin-row">
+          {#each pinConfirm as _, i}
+            <input
+              bind:this={pinInputRefs[i]}
+              type="tel"
+              inputmode="numeric"
+              maxlength="1"
+              autocomplete="off"
+              class="pin-box"
+              class:filled={pinConfirm[i].length > 0}
+              class:error={!!pinError}
+              oninput={(e) => handlePinDigitInput(i, e, 'confirm')}
+              onkeydown={(e) => handlePinDigitKeydown(i, e, 'confirm')}
+              aria-label="Confirm digit {i + 1}"
+            />
+          {/each}
+        </div>
+        {#if pinError}
+          <span class="pin-error">{pinError}</span>
+        {/if}
+        <div class="pin-flow-actions">
+          <button class="security-text-btn" onclick={resetPinState}>Cancel</button>
+          <button
+            class="security-text-btn primary"
+            onclick={handleChangeConfirmComplete}
+            disabled={pinConfirm.join('').length !== 4}
+          >Save</button>
+        </div>
+      </div>
+    {/if}
+
+    <!-- Biometric toggle row (only if platform supports it) -->
+    {#if biometricSupported}
+      <div class="divider"></div>
+      <label class="toggle-row" class:disabled={!passcodeOn}>
+        <div class="toggle-info">
+          <span class="toggle-label">
+            <Icon name="fingerprint" size={14} class="inline-icon" />
+            Biometric
+          </span>
+          <span class="toggle-description">
+            {#if !passcodeOn}
+              Enable a passcode first to use biometric authentication.
+            {:else}
+              Use fingerprint or Face ID to authenticate instead of the passcode.
+            {/if}
+          </span>
+        </div>
+        <button
+          class="toggle-switch"
+          class:on={biometricOn}
+          onclick={handleBiometricToggle}
+          disabled={!passcodeOn}
+          role="switch"
+          aria-checked={biometricOn}
+          aria-label="Toggle biometric authentication"
+        >
+          <span class="toggle-thumb"></span>
+        </button>
+      </label>
+    {/if}
+
+    <!-- Grace period selector (only if any security is enabled) -->
+    {#if passcodeOn || biometricOn}
+      <div class="divider"></div>
+      <div class="setting-row">
+        <div class="toggle-info">
+          <span class="setting-label">Grace period</span>
+          <span class="toggle-description">
+            Skip re-authentication within this window after a successful check.
+          </span>
+        </div>
+        <div class="interval-options">
+          {#each GRACE_PERIOD_OPTIONS as opt (opt.value)}
+            <button
+              class="interval-pill"
+              class:active={gracePeriod === opt.value}
+              onclick={() => handleGracePeriodChange(opt.value)}
+              aria-pressed={gracePeriod === opt.value}
+            >
+              {opt.label}
+            </button>
+          {/each}
+        </div>
+      </div>
+    {/if}
   </section>
 </div>
 
@@ -370,6 +866,11 @@
     cursor: pointer;
   }
 
+  .toggle-row.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
   .toggle-info {
     display: flex;
     flex-direction: column;
@@ -459,5 +960,118 @@
 
   .interval-pill :global(svg) {
     vertical-align: -1px;
+  }
+
+  /* Security card */
+  .card-icon.security {
+    background: var(--color-warning-soft);
+    color: var(--color-warning);
+  }
+
+  .security-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+
+  .security-text-btn {
+    padding: var(--space-2) var(--space-4);
+    border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-md);
+    background: var(--color-bg-primary);
+    font-size: var(--text-xs);
+    font-family: var(--font-sans);
+    font-weight: var(--font-medium);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .security-text-btn:hover:not(:disabled) {
+    background: var(--color-interactive-hover);
+  }
+
+  .security-text-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .security-text-btn.primary {
+    background: var(--color-accent);
+    border-color: var(--color-accent);
+    color: var(--color-text-inverse);
+  }
+
+  .security-text-btn.primary:hover:not(:disabled) {
+    background: var(--color-accent-hover);
+  }
+
+  .security-text-btn:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
+  }
+
+  /* PIN flow */
+  .pin-flow {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-4);
+    padding: var(--space-5);
+    background: var(--color-bg-secondary);
+    border-radius: var(--radius-lg);
+  }
+
+  .pin-flow-label {
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+    color: var(--color-text-primary);
+  }
+
+  .pin-row {
+    display: flex;
+    gap: var(--space-3);
+  }
+
+  .pin-box {
+    width: 40px;
+    height: 48px;
+    text-align: center;
+    font-size: var(--text-xl);
+    font-weight: var(--font-bold);
+    border: 2px solid var(--color-border-primary);
+    border-radius: var(--radius-md);
+    background: var(--color-bg-elevated);
+    color: var(--color-text-primary);
+    outline: none;
+    transition: all var(--transition-fast);
+    -webkit-text-security: disc;
+  }
+
+  .pin-box:focus {
+    border-color: var(--color-accent);
+    box-shadow: var(--shadow-focus);
+  }
+
+  .pin-box.filled {
+    border-color: var(--color-accent);
+  }
+
+  .pin-box.error {
+    border-color: var(--color-error);
+  }
+
+  .pin-error {
+    font-size: var(--text-xs);
+    color: var(--color-error);
+  }
+
+  .pin-flow-actions {
+    display: flex;
+    gap: var(--space-3);
+  }
+
+  :global(.inline-icon) {
+    vertical-align: -2px;
   }
 </style>
