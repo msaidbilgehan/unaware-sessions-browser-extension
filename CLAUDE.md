@@ -144,7 +144,7 @@ Before marking any task complete, run in this order:
 ```bash
 npm run type-check   # TypeScript — zero errors required
 npm run lint         # ESLint — zero violations required
-npm run test         # Vitest — all 439+ tests must pass
+npm run test         # Vitest — all 467+ tests must pass
 ```
 
 Test files live in `tests/` mirroring `src/` structure (`*.test.ts`). Add tests for new background/shared logic; Svelte component tests are not required but encouraged for non-trivial state.

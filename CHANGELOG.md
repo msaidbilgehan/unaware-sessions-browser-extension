@@ -31,13 +31,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **6 new message types:** `SYNC_CONNECT`, `SYNC_DISCONNECT`, `SYNC_NOW`, `SYNC_GET_STATE`, `SYNC_CONFIGURE`, `SYNC_RESOLVE_CONFLICTS`
 - **6 new API wrappers:** `syncConnect()`, `syncDisconnect()`, `syncNow()`, `syncGetState()`, `syncConfigure()`, `syncResolveConflicts()`
 - **`identity` permission + `oauth2` block** in manifest.json for Google OAuth2
-- **New tests:** 56 new tests across 7 new/expanded test files (439 total)
+- **New tests:** 84 new tests across 10 new/expanded test files (467 total)
   - `tests/shared/sync/crypto-engine.test.ts` — encrypt/decrypt round-trip, wrong key, SHA-256
   - `tests/shared/sync/drive-client.test.ts` — Drive API calls with mocked fetch, 401 retry, `getGoogleUserId`
   - `tests/shared/sync/sync-store.test.ts` — config persistence, listeners, init
   - `tests/shared/sync/sync-engine.test.ts` — manifest building, conflict detection, merge strategies
   - `tests/background/drive-sync.test.ts` — sync triggers, alarm management, error persistence
   - Expanded: `session-manager.test.ts` (+6 for `batchSetSessions`, `deleteAllSessions`)
+  - `tests/shared/logger.test.ts` — 20 tests for level filtering, entry structure, buffer management, console mirroring
+  - Expanded: `security-store.test.ts` (+5 for `removeBiometric`, `removePasscode` edge cases, `isBiometricAvailable`)
+  - Expanded: `drive-sync.test.ts` (+3 for config change alarm update/clear, alarm handler with googleId)
 - **Security layer (passcode + biometric):** Optional 4-digit passcode (PBKDF2-SHA256, 600K iterations, 16-byte random salt) and/or WebAuthn platform biometric (fingerprint/Face ID) to protect session switch, delete, export, import, and clear-all actions; configurable grace period (1/2/5/10/30 min) stored in `chrome.storage.session` (auto-clears on browser close); biometric requires passcode as prerequisite for recoverability
 - **Security store (`src/shared/security-store.ts`):** Config manager following settings-store pattern with `chrome.storage.local` persistence, `chrome.storage.onChanged` cross-context sync, listener pattern, and init guard for idempotent initialization
 - **Crypto utilities (`src/shared/crypto-utils.ts`):** Pure PBKDF2 hashing, salt generation, constant-time comparison; `saltToBase64`/`base64ToSalt` encoding helpers
@@ -133,6 +136,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Drive sync 401 on reconnect after disconnect:** `getGoogleUserId()` called `/oauth2/v3/userinfo` which requires the `openid` scope — not declared in the manifest. After token revocation + reconnect, Chrome only granted the declared `drive.appdata` scope, causing 401 "Invalid Credentials". Switched to `/drive/v3/about?fields=user(permissionId)` which only requires the existing `drive.appdata` scope
+- **Drive sync decryption failure blocks all future syncs:** When remote data was encrypted with a different account (e.g., after account change or migration from passphrase-based encryption), `decrypt()` threw an unrecoverable error, trapping the user in an error loop. Now catches decryption failures and auto-recovers by overwriting remote with local data (trust-local fallback)
 - **Auto-refresh button shows stale state when `autoRefreshDefaultEnabled` changes:** The `onSettingsChange` handler in `App.svelte` updated `autoRefreshInterval` but never re-evaluated `domainAutoRefreshOn`. When the global "Auto-refresh for new domains" default changed (e.g., toggled in the Options page while the popup was open), the background immediately applied the new default—refreshing sessions with no explicit per-domain entry—while the popup button stayed unchanged and showed the wrong active/inactive state. The `SessionsTab` had the same bug: `domainRefreshVersion` only incremented on `AUTO_REFRESH_DOMAINS` storage changes, not on `EXTENSION_SETTINGS` changes, so per-domain toggle indicators in the options page also stayed stale. Fixed by re-evaluating `domainAutoRefreshOn` in `App.svelte`'s settings change callback and by bumping `domainRefreshVersion` in `SessionsTab`'s settings change callback.
 
 - **Google "cookie settings" error on session switch:** `clearCookies()` only queried `chrome.cookies.getAll({ domain })` for the exact hostname, missing parent-domain cookies (e.g., `.google.com` when on `www.google.com`) — orphaned old-session cookies coexisted with new-session cookies, triggering Google's security check. Now walks the domain hierarchy via `getCookiesForOrigin()` to clear all applicable cookies
