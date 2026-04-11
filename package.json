@@ -1,6 +1,6 @@
 {
   "name": "unaware-sessions-browser-extension",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "Privacy-first multi-session browser manager - entirely local",
