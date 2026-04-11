@@ -8,6 +8,7 @@
   interface Props {
     session: SessionProfile;
     isActive: boolean;
+    isSwitching?: boolean;
     hasOriginData?: boolean;
     tabCount?: number;
     onswitch: (sessionId: string) => void;
@@ -25,6 +26,7 @@
   let {
     session,
     isActive,
+    isSwitching = false,
     hasOriginData = false,
     tabCount = 0,
     onswitch,
@@ -78,17 +80,19 @@
 <div
   class="session-item"
   class:active={isActive}
+  class:switching={isSwitching}
   role="button"
   tabindex="0"
   style="--session-color: {session.color}"
   onmouseenter={() => (showActions = true)}
   onmouseleave={() => (showActions = false)}
-  onclick={() => onswitch(session.id)}
-  onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onswitch(session.id))}
+  onclick={() => !isSwitching && onswitch(session.id)}
+  onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && !isSwitching && (e.preventDefault(), onswitch(session.id))}
   oncontextmenu={handleContextMenu}
-  aria-label="Switch to session {session.name}"
+  aria-label={isSwitching ? `Switching to ${session.name}...` : `Switch to session ${session.name}`}
+  aria-busy={isSwitching}
   title={session.name}
-  draggable={draggable ? 'true' : undefined}
+  draggable={draggable && !isSwitching ? 'true' : undefined}
   {ondragstart}
   {ondragover}
   {ondragend}
@@ -102,7 +106,9 @@
     {/if}
 
     <span class="indicator">
-      {#if session.emoji}
+      {#if isSwitching}
+        <span class="switch-spinner" style="border-top-color: {session.color}"></span>
+      {:else if session.emoji}
         <span class="emoji">{session.emoji}</span>
       {:else}
         <span class="dot" style="background-color: {session.color}"></span>
@@ -247,6 +253,20 @@
     flex-shrink: 0;
   }
 
+  .switch-spinner {
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--color-border-primary);
+    border-top-color: var(--session-color);
+    border-radius: var(--radius-full);
+    animation: spin 0.7s linear infinite;
+  }
+
+  .session-item.switching {
+    opacity: 0.7;
+    pointer-events: none;
+  }
+
   .name-group {
     flex: 1;
     min-width: 0;
@@ -266,7 +286,7 @@
   }
 
   .last-refreshed {
-    font-size: 10px;
+    font-size: var(--text-2xs);
     color: var(--color-text-tertiary);
     line-height: 1;
   }
@@ -299,7 +319,7 @@
   }
 
   .tab-badge {
-    font-size: 10px;
+    font-size: var(--text-2xs);
     color: var(--color-text-tertiary);
     background: var(--color-bg-tertiary);
     padding: 0 var(--space-2);
@@ -312,7 +332,7 @@
   }
 
   .active-badge {
-    font-size: 10px;
+    font-size: var(--text-2xs);
     color: var(--color-accent);
     background: var(--color-accent-soft);
     padding: 1px var(--space-3);

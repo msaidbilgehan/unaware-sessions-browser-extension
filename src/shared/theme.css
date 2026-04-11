@@ -41,6 +41,7 @@
   /* Colors — Interactive */
   --color-interactive-hover: #f1f5f9;
   --color-interactive-active: #e2e8f0;
+  --color-interactive-thumb: #ffffff;
 
   /* Spacing */
   --space-0: 0px;
@@ -64,6 +65,7 @@
   --radius-full: 9999px;
 
   /* Font Size */
+  --text-2xs: 10px;
   --text-xs: 11px;
   --text-sm: 12px;
   --text-base: 13px;
@@ -96,6 +98,12 @@
   --shadow-glow: 0 0 0 3px var(--color-accent-glow);
   --shadow-focus: 0 0 0 2px var(--color-bg-primary), 0 0 0 4px var(--color-accent);
 
+  /* Scrollbar */
+  --scrollbar-size: 6px;
+  --scrollbar-track: transparent;
+  --scrollbar-thumb: rgba(0, 0, 0, 0.15);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.3);
+
   /* Transitions */
   --transition-fast: 0.15s ease;
   --transition-normal: 0.2s ease;
@@ -125,21 +133,25 @@
 
   --color-accent: #60a5fa;
   --color-accent-hover: #3b82f6;
-  --color-accent-soft: rgba(59, 130, 246, 0.12);
+  --color-accent-soft: rgba(59, 130, 246, 0.18);
   --color-accent-glow: rgba(96, 165, 250, 0.2);
   --color-accent-muted: #3b82f6;
 
   --color-error: #f87171;
   --color-error-hover: #ef4444;
-  --color-error-soft: rgba(239, 68, 68, 0.12);
+  --color-error-soft: rgba(239, 68, 68, 0.18);
   --color-error-border: rgba(239, 68, 68, 0.25);
   --color-success: #34d399;
-  --color-success-soft: rgba(16, 185, 129, 0.12);
+  --color-success-soft: rgba(16, 185, 129, 0.18);
   --color-warning: #fbbf24;
-  --color-warning-soft: rgba(251, 191, 36, 0.12);
+  --color-warning-soft: rgba(251, 191, 36, 0.18);
 
   --color-interactive-hover: #25252b;
   --color-interactive-active: #2e2e36;
+  --color-interactive-thumb: #ffffff;
+
+  --scrollbar-thumb: rgba(255, 255, 255, 0.15);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.3);
 
   --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.2);
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2);
@@ -173,21 +185,25 @@
 
     --color-accent: #60a5fa;
     --color-accent-hover: #3b82f6;
-    --color-accent-soft: rgba(59, 130, 246, 0.12);
+    --color-accent-soft: rgba(59, 130, 246, 0.18);
     --color-accent-glow: rgba(96, 165, 250, 0.2);
     --color-accent-muted: #3b82f6;
 
     --color-error: #f87171;
     --color-error-hover: #ef4444;
-    --color-error-soft: rgba(239, 68, 68, 0.12);
+    --color-error-soft: rgba(239, 68, 68, 0.18);
     --color-error-border: rgba(239, 68, 68, 0.25);
     --color-success: #34d399;
-    --color-success-soft: rgba(16, 185, 129, 0.12);
+    --color-success-soft: rgba(16, 185, 129, 0.18);
     --color-warning: #fbbf24;
-    --color-warning-soft: rgba(251, 191, 36, 0.12);
+    --color-warning-soft: rgba(251, 191, 36, 0.18);
 
     --color-interactive-hover: #25252b;
     --color-interactive-active: #2e2e36;
+    --color-interactive-thumb: #ffffff;
+
+    --scrollbar-thumb: rgba(255, 255, 255, 0.15);
+    --scrollbar-thumb-hover: rgba(255, 255, 255, 0.3);
 
     --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.2);
     --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2);
@@ -233,6 +249,16 @@
     --color-text-tertiary: #a1a1aa;
     --color-border-primary: #71717a;
     --color-border-secondary: #52525b;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme]) {
+      --color-text-primary: #ffffff;
+      --color-text-secondary: #d4d4d8;
+      --color-text-tertiary: #a1a1aa;
+      --color-border-primary: #71717a;
+      --color-border-secondary: #52525b;
+    }
   }
 }
 
@@ -286,6 +312,37 @@ body {
   line-height: var(--leading-normal);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Scrollbar ──────────────────────────────────────────────────── */
+
+/* Standards-based (Firefox) */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+/* WebKit / Chromium */
+::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+}
+
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: var(--radius-full);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 /* ── Utility Classes ────────────────────────────────────────────── */

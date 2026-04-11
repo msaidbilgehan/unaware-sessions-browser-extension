@@ -88,6 +88,7 @@
   async function handleIsolationDefaultChange(mode: IsolationMode) {
     await setIsolationModeDefault(mode);
   }
+
 </script>
 
 <div class="settings-layout">
@@ -417,7 +418,7 @@
     left: 2px;
     width: 16px;
     height: 16px;
-    background: white;
+    background: var(--color-interactive-thumb);
     border-radius: var(--radius-full);
     box-shadow: var(--shadow-sm);
     transition: transform var(--transition-spring);

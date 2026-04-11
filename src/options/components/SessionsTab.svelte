@@ -63,7 +63,15 @@
 
   const filteredSessions = $derived(
     searchQuery
-      ? sessions.filter((s) => s.name.toLowerCase().includes(searchQuery.toLowerCase()))
+      ? sessions.filter((s) => {
+          const q = searchQuery.toLowerCase();
+          if (s.name.toLowerCase().includes(q)) return true;
+          const details = detailsMap.get(s.id);
+          if (details) {
+            return details.origins.some((o) => o.origin.toLowerCase().includes(q));
+          }
+          return false;
+        })
       : sessions,
   );
 
@@ -839,7 +847,7 @@
   }
 
   .domain-count {
-    font-size: 10px;
+    font-size: var(--text-2xs);
     font-weight: var(--font-semibold);
     color: var(--color-text-tertiary);
     background: var(--color-bg-tertiary);
@@ -997,9 +1005,22 @@
   }
 
   .auto-refresh-btn.active {
-    color: var(--color-accent);
-    border-color: var(--color-accent);
-    background: var(--color-accent-soft);
+    color: var(--color-success);
+    border-color: var(--color-success);
+    background: var(--color-success-soft);
+    position: relative;
+  }
+
+  .auto-refresh-btn.active::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 5px;
+    height: 5px;
+    border-radius: var(--radius-full);
+    background: var(--color-success);
+    animation: pulse 2s ease-in-out infinite;
   }
 
   /* Details panel */
@@ -1100,7 +1121,7 @@
     color: var(--color-text-tertiary);
     padding: var(--space-2) var(--space-3);
     border-bottom: 1px solid var(--color-border-secondary);
-    font-size: 10px;
+    font-size: var(--text-2xs);
     text-transform: uppercase;
     letter-spacing: 0.3px;
   }

@@ -3,14 +3,25 @@
     SessionProfile,
     CookieDiffResult,
     RestoreFailureEntry,
+    LogEntry,
   } from '@shared/types';
-  import { getCookieDiff, getRestoreFailures } from '@shared/api';
+  import type { LogLevel } from '@shared/types';
+  import {
+    getCookieDiff,
+    getRestoreFailures,
+    getExtensionLogs,
+    clearExtensionLogs,
+  } from '@shared/api';
+  import {
+    getLogLevel,
+    setLogLevel,
+    onSettingsChange,
+  } from '@shared/settings-store';
   import Icon from '@shared/components/Icon.svelte';
   import Toast from '@shared/components/Toast.svelte';
 
   interface Props {
     sessions: SessionProfile[];
-    onupdate: () => void;
   }
 
   let { sessions }: Props = $props();
@@ -27,8 +38,9 @@
   let failuresLoading = $state(false);
 
   // Toast
-  let toasts: Array<{ id: string; message: string; type: 'error' | 'success' | 'info' }> =
-    $state([]);
+  let toasts: Array<{ id: string; message: string; type: 'error' | 'success' | 'info' }> = $state(
+    [],
+  );
 
   function showToast(message: string, type: 'error' | 'success' | 'info' = 'info') {
     const id = crypto.randomUUID();
@@ -115,6 +127,89 @@
     const session = sessions.find((s) => s.id === id);
     return session?.name ?? id.slice(0, 8);
   }
+
+  // ── Log Level Setting ─────────────────────────────────────────
+  let logLevel = $state<LogLevel>(getLogLevel());
+
+  $effect(() => {
+    const unsub = onSettingsChange((settings) => {
+      logLevel = settings.logLevel;
+    });
+    return unsub;
+  });
+
+  const logLevelOptions: { value: LogLevel; label: string }[] = [
+    { value: 'off', label: 'Off' },
+    { value: 'error', label: 'Error' },
+    { value: 'warn', label: 'Warning' },
+    { value: 'info', label: 'Info' },
+    { value: 'debug', label: 'Debug' },
+  ];
+
+  async function handleLogLevelChange(level: LogLevel) {
+    await setLogLevel(level);
+  }
+
+  // ── Extension Logs ────────────────────────────────────────────
+  let logs = $state<LogEntry[]>([]);
+  let logsLoading = $state(false);
+  let logFilterLevel = $state<string>('all');
+
+  async function loadLogs() {
+    logsLoading = true;
+    try {
+      logs = await getExtensionLogs();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to load logs', 'error');
+    } finally {
+      logsLoading = false;
+    }
+  }
+
+  async function handleClearLogs() {
+    try {
+      await clearExtensionLogs();
+      logs = [];
+      showToast('Logs cleared', 'success');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to clear logs', 'error');
+    }
+  }
+
+  function exportLogs() {
+    if (logs.length === 0) {
+      showToast('No logs to export', 'info');
+      return;
+    }
+    const exportData = {
+      exportedAt: new Date().toISOString(),
+      entryCount: logs.length,
+      entries: logs,
+    };
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `unaware-sessions-logs-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const filteredLogs = $derived(
+    logFilterLevel === 'all' ? logs : logs.filter((e) => e.level === logFilterLevel),
+  );
+
+  const logLevelColors: Record<string, string> = {
+    error: 'log-error',
+    warn: 'log-warn',
+    info: 'log-info',
+    debug: 'log-debug',
+  };
+
+  // Load logs on mount
+  $effect(() => {
+    loadLogs();
+  });
 </script>
 
 <div class="debug-layout">
@@ -150,7 +245,8 @@
         <select id="session-select" class="select-input" bind:value={selectedSessionId}>
           {#each sessions as session}
             <option value={session.id}>
-              {session.emoji ?? ''} {session.name}
+              {session.emoji ?? ''}
+              {session.name}
             </option>
           {/each}
         </select>
@@ -231,8 +327,32 @@
           <option value="all">All ({diffResult.entries.length})</option>
           {#each Object.entries(diffResult.summary) as [key, count]}
             {#if count > 0}
-              <option value={key === 'matched' ? 'match' : key === 'valueChanged' ? 'value_changed' : key === 'flagsChanged' ? 'flags_changed' : key === 'missingInBrowser' ? 'missing_in_browser' : key === 'extraInBrowser' ? 'extra_in_browser' : key}>
-                {statusLabels[key === 'matched' ? 'match' : key === 'valueChanged' ? 'value_changed' : key === 'flagsChanged' ? 'flags_changed' : key === 'missingInBrowser' ? 'missing_in_browser' : key === 'extraInBrowser' ? 'extra_in_browser' : key] ?? key} ({count})
+              <option
+                value={key === 'matched'
+                  ? 'match'
+                  : key === 'valueChanged'
+                    ? 'value_changed'
+                    : key === 'flagsChanged'
+                      ? 'flags_changed'
+                      : key === 'missingInBrowser'
+                        ? 'missing_in_browser'
+                        : key === 'extraInBrowser'
+                          ? 'extra_in_browser'
+                          : key}
+              >
+                {statusLabels[
+                  key === 'matched'
+                    ? 'match'
+                    : key === 'valueChanged'
+                      ? 'value_changed'
+                      : key === 'flagsChanged'
+                        ? 'flags_changed'
+                        : key === 'missingInBrowser'
+                          ? 'missing_in_browser'
+                          : key === 'extraInBrowser'
+                            ? 'extra_in_browser'
+                            : key
+                ] ?? key} ({count})
               </option>
             {/if}
           {/each}
@@ -295,6 +415,115 @@
     {/if}
   </section>
 
+  <!-- Extension Logs -->
+  <section class="card">
+    <div class="card-header">
+      <div class="card-icon">
+        <Icon name="file-text" size={16} />
+      </div>
+      <div>
+        <h2>Extension Logs</h2>
+        <p class="description">
+          Internal extension events recorded by the logger. Logs are kept in memory and cleared on extension restart.
+        </p>
+      </div>
+      <div class="header-actions">
+        <button class="btn btn-ghost btn-sm" onclick={loadLogs} disabled={logsLoading}>
+          <Icon name="refresh-cw" size={14} />
+          Refresh
+        </button>
+        <button class="btn btn-ghost btn-sm" onclick={exportLogs} disabled={logs.length === 0}>
+          <Icon name="download" size={14} />
+          Export
+        </button>
+        <button
+          class="btn btn-ghost btn-sm btn-danger-ghost"
+          onclick={handleClearLogs}
+          disabled={logs.length === 0}
+        >
+          <Icon name="trash-2" size={14} />
+          Clear
+        </button>
+      </div>
+    </div>
+
+    <div class="log-level-row">
+      <span class="log-level-label">Log level</span>
+      <div class="log-level-options">
+        {#each logLevelOptions as opt (opt.value)}
+          <button
+            class="log-level-pill"
+            class:active={logLevel === opt.value}
+            onclick={() => handleLogLevelChange(opt.value)}
+            aria-pressed={logLevel === opt.value}
+          >
+            {opt.label}
+          </button>
+        {/each}
+      </div>
+    </div>
+
+    {#if logsLoading}
+      <div class="loading-inline">
+        <span class="spinner"></span>
+        Loading...
+      </div>
+    {:else if logs.length === 0}
+      <div class="empty-state">
+        <Icon name="file-text" size={20} />
+        <p>No logs recorded. Select a log level above to start capturing events.</p>
+      </div>
+    {:else}
+      <!-- Filter -->
+      <div class="filter-row">
+        <label class="control-label" for="log-filter-select">Filter</label>
+        <select id="log-filter-select" class="select-input select-sm" bind:value={logFilterLevel}>
+          <option value="all">All ({logs.length})</option>
+          {#each ['error', 'warn', 'info', 'debug'] as level}
+            {@const count = logs.filter((e) => e.level === level).length}
+            {#if count > 0}
+              <option value={level}
+                >{level.charAt(0).toUpperCase() + level.slice(1)} ({count})</option
+              >
+            {/if}
+          {/each}
+        </select>
+        <span class="log-count">{filteredLogs.length} entries</span>
+      </div>
+
+      <div class="table-wrapper log-table-wrapper">
+        <table class="diff-table log-table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Level</th>
+              <th>Source</th>
+              <th>Message</th>
+              <th>Data</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each [...filteredLogs].reverse() as entry}
+              <tr class={logLevelColors[entry.level] ?? ''}>
+                <td class="cell-time">{formatTimestamp(entry.timestamp)}</td>
+                <td>
+                  <span class="log-level-badge {logLevelColors[entry.level] ?? ''}">
+                    {entry.level.toUpperCase()}
+                  </span>
+                </td>
+                <td class="cell-source">{entry.source}</td>
+                <td class="cell-message" title={entry.message}>{entry.message}</td>
+                <td class="cell-data" title={entry.data != null ? JSON.stringify(entry.data) : ''}>
+                  {entry.data != null ? truncate(JSON.stringify(entry.data), 60) : ''}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    {/if}
+  </section>
+
   <!-- Restore Failures Log -->
   <section class="card">
     <div class="card-header">
@@ -304,7 +533,8 @@
       <div>
         <h2>Restore Failures</h2>
         <p class="description">
-          Recent cookie restoration failures logged by the service worker. Cleared on extension restart.
+          Recent cookie restoration failures logged by the service worker. Cleared on extension
+          restart.
         </p>
       </div>
       <button class="btn btn-ghost btn-sm" onclick={loadFailures} disabled={failuresLoading}>
@@ -664,7 +894,7 @@
     display: inline-block;
     padding: var(--space-1) var(--space-2);
     border-radius: var(--radius-sm);
-    font-size: 10px;
+    font-size: var(--text-2xs);
     font-weight: var(--font-medium);
     white-space: nowrap;
   }
@@ -702,7 +932,7 @@
     padding: 0 var(--space-2);
     background: var(--color-bg-tertiary);
     border-radius: var(--radius-sm);
-    font-size: 10px;
+    font-size: var(--text-2xs);
     font-family: monospace;
     color: var(--color-text-secondary);
   }
@@ -751,5 +981,136 @@
     to {
       transform: rotate(360deg);
     }
+  }
+
+  /* ── Extension Logs ─────────────────────────────────────────── */
+  .log-level-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+  }
+
+  .log-level-label {
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+  }
+
+  .log-level-options {
+    display: flex;
+    gap: var(--space-2);
+  }
+
+  .log-level-pill {
+    padding: var(--space-2) var(--space-4);
+    border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-full);
+    background: var(--color-bg-primary);
+    color: var(--color-text-secondary);
+    font-size: var(--text-xs);
+    font-family: var(--font-sans);
+    font-weight: var(--font-medium);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .log-level-pill:hover {
+    background: var(--color-interactive-hover);
+  }
+
+  .log-level-pill.active {
+    background: var(--color-accent-soft);
+    color: var(--color-accent);
+    border-color: var(--color-accent);
+  }
+
+  .header-actions {
+    display: flex;
+    gap: var(--space-2);
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+
+  .btn-danger-ghost {
+    color: var(--color-error);
+  }
+
+  .btn-danger-ghost:hover:not(:disabled) {
+    background: var(--color-error-soft);
+  }
+
+  .log-count {
+    font-size: var(--text-xs);
+    color: var(--color-text-tertiary);
+    margin-left: auto;
+  }
+
+  .log-table-wrapper {
+    max-height: 420px;
+    overflow-y: auto;
+  }
+
+  .log-table .cell-source {
+    font-family: monospace;
+    font-size: var(--text-xs);
+    color: var(--color-accent);
+    white-space: nowrap;
+  }
+
+  .log-table .cell-message {
+    color: var(--color-text-primary);
+    max-width: 320px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .log-table .cell-data {
+    font-family: monospace;
+    font-size: var(--text-2xs);
+    color: var(--color-text-tertiary);
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .log-level-badge {
+    display: inline-block;
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-2xs);
+    font-weight: var(--font-semibold);
+    white-space: nowrap;
+    text-transform: uppercase;
+  }
+
+  .log-error .log-level-badge {
+    background: var(--color-error-soft);
+    color: var(--color-error);
+  }
+
+  .log-warn .log-level-badge {
+    background: var(--color-warning-soft);
+    color: var(--color-warning);
+  }
+
+  .log-info .log-level-badge {
+    background: var(--color-accent-soft);
+    color: var(--color-accent);
+  }
+
+  .log-debug .log-level-badge {
+    background: var(--color-bg-tertiary);
+    color: var(--color-text-tertiary);
+  }
+
+  tr.log-error {
+    background: color-mix(in srgb, var(--color-error-soft) 20%, transparent);
+  }
+
+  tr.log-warn {
+    background: color-mix(in srgb, var(--color-warning-soft) 20%, transparent);
   }
 </style>

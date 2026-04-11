@@ -1,5 +1,7 @@
 <script lang="ts">
   import type { SessionProfile } from '@shared/types';
+  import { SvelteSet } from 'svelte/reactivity';
+  import { extractDomain } from '@shared/utils';
   import SessionItem from './SessionItem.svelte';
   import OnboardingEmpty from './OnboardingEmpty.svelte';
 
@@ -8,8 +10,11 @@
   interface Props {
     sessions: SessionProfile[];
     activeSessionId: string | undefined;
+    switchingSessionId: string | null;
     tabCounts: Record<string, number>;
     sessionsWithOriginData: Set<string>;
+    sessionOriginMap: Record<string, string[]>;
+    currentOrigin: string;
     searchQuery: string;
     onswitch: (sessionId: string) => void;
     onunassign: () => void;
@@ -24,8 +29,11 @@
   let {
     sessions,
     activeSessionId,
+    switchingSessionId,
     tabCounts,
     sessionsWithOriginData,
+    sessionOriginMap,
+    currentOrigin,
     searchQuery,
     onswitch,
     onunassign,
@@ -40,10 +48,16 @@
   let dragIndex = $state<number | null>(null);
   let dragOverIndex = $state<number | null>(null);
   let showOtherSessions = $state(false);
+  let collapsedDomains = new SvelteSet<string>();
 
   const filteredSessions = $derived(
     searchQuery
-      ? sessions.filter((s) => s.name.toLowerCase().includes(searchQuery.toLowerCase()))
+      ? sessions.filter((s) => {
+          const q = searchQuery.toLowerCase();
+          if (s.name.toLowerCase().includes(q)) return true;
+          const origins = sessionOriginMap[s.id] ?? [];
+          return origins.some((o) => o.toLowerCase().includes(q));
+        })
       : sessions,
   );
 
@@ -57,10 +71,48 @@
     filteredSessions.filter((s) => !sessionsWithOriginData.has(s.id) && s.id !== activeSessionId),
   );
 
+  // Group other sessions by domain — each session appears under its primary
+  // non-current domain.  Sessions without any saved origin go into "No data".
+  const domainGroups = $derived.by(() => {
+    const currentDomain = currentOrigin ? extractDomain(currentOrigin) : '';
+    const groups: Record<string, SessionProfile[]> = {};
+
+    for (const session of otherSessions) {
+      const origins = sessionOriginMap[session.id] ?? [];
+
+      // Pick domains that aren't the current site
+      const otherDomains = origins
+        .map((o) => extractDomain(o))
+        .filter((d) => d && d !== currentDomain);
+
+      if (otherDomains.length > 0) {
+        // Place under first (primary) domain
+        const domain = otherDomains[0];
+        if (groups[domain]) groups[domain].push(session);
+        else groups[domain] = [session];
+      } else {
+        if (groups['']) groups[''].push(session);
+        else groups[''] = [session];
+      }
+    }
+
+    // Sort: named domains first (alphabetically), then "No data" last
+    return Object.entries(groups).sort((a, b) => {
+      if (!a[0]) return 1;
+      if (!b[0]) return -1;
+      return a[0].localeCompare(b[0]);
+    });
+  });
+
   // Auto-expand other sessions when no site-specific sessions exist
   const effectiveShowOther = $derived(
     showOtherSessions || (thisSiteSessions.length === 0 && otherSessions.length > 0),
   );
+
+  function toggleDomain(domain: string) {
+    if (collapsedDomains.has(domain)) collapsedDomains.delete(domain);
+    else collapsedDomains.add(domain);
+  }
 
   function handleDragStart(e: DragEvent, index: number) {
     dragIndex = index;
@@ -131,6 +183,7 @@
             <SessionItem
               {session}
               isActive={session.id === activeSessionId}
+              isSwitching={session.id === switchingSessionId}
               hasOriginData={sessionsWithOriginData.has(session.id)}
               tabCount={tabCounts[session.id] ?? 0}
               {onswitch}
@@ -167,25 +220,50 @@
         </button>
         {#if effectiveShowOther}
           <div class="other-list">
-            {#each otherSessions as session, j (session.id)}
-              {@const idx = thisSiteSessions.length + j}
-              <div class="drag-wrapper" class:drag-over={dragOverIndex === idx && dragIndex !== idx}>
-                <SessionItem
-                  {session}
-                  isActive={false}
-                  hasOriginData={false}
-                  tabCount={tabCounts[session.id] ?? 0}
-                  {onswitch}
-                  {ondelete}
-                  {onrename}
-                  forceEditing={editingSessionId === session.id}
-                  {oncontextmenu}
-                  draggable={true}
-                  ondragstart={(e) => handleDragStart(e, idx)}
-                  ondragover={(e) => handleDragOver(e, idx)}
-                  ondrop={(e) => handleDrop(e, idx)}
-                  ondragend={handleDragEnd}
-                />
+            {#each domainGroups as [domain, domainSessions] (domain)}
+              {@const isCollapsed = collapsedDomains.has(domain)}
+              <div class="domain-folder">
+                <button
+                  class="domain-toggle"
+                  onclick={() => toggleDomain(domain)}
+                  aria-expanded={!isCollapsed}
+                >
+                  <span class="domain-chevron" class:open={!isCollapsed}>
+                    <Icon name="chevron-right" size={10} />
+                  </span>
+                  <Icon name="folder" size={12} />
+                  <span class="domain-name">{domain || 'No data'}</span>
+                  <span class="group-count">{domainSessions.length}</span>
+                </button>
+                {#if !isCollapsed}
+                  <div class="domain-items">
+                    {#each domainSessions as session (session.id)}
+                      {@const idx = thisSiteSessions.length + otherSessions.indexOf(session)}
+                      <div
+                        class="drag-wrapper"
+                        class:drag-over={dragOverIndex === idx && dragIndex !== idx}
+                      >
+                        <SessionItem
+                          {session}
+                          isActive={false}
+                          isSwitching={session.id === switchingSessionId}
+                          hasOriginData={false}
+                          tabCount={tabCounts[session.id] ?? 0}
+                          {onswitch}
+                          {ondelete}
+                          {onrename}
+                          forceEditing={editingSessionId === session.id}
+                          {oncontextmenu}
+                          draggable={true}
+                          ondragstart={(e) => handleDragStart(e, idx)}
+                          ondragover={(e) => handleDragOver(e, idx)}
+                          ondrop={(e) => handleDrop(e, idx)}
+                          ondragend={handleDragEnd}
+                        />
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
               </div>
             {/each}
           </div>
@@ -255,7 +333,7 @@
   }
 
   .default-badge {
-    font-size: 10px;
+    font-size: var(--text-2xs);
     color: var(--color-accent);
     background: var(--color-accent-soft);
     padding: 1px var(--space-3);
@@ -287,7 +365,7 @@
   }
 
   .group-count {
-    font-size: 10px;
+    font-size: var(--text-2xs);
     color: var(--color-text-tertiary);
     background: var(--color-bg-tertiary);
     padding: 0 var(--space-2);
@@ -349,6 +427,69 @@
 
   .other-list:hover {
     opacity: 1;
+  }
+
+  /* ── Domain folders ──────────────────────────────────────────── */
+
+  .domain-folder {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .domain-toggle {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    background: none;
+    border: none;
+    padding: var(--space-2) var(--space-1);
+    cursor: pointer;
+    font-family: var(--font-sans);
+    font-size: var(--text-xs);
+    color: var(--color-text-tertiary);
+    border-radius: var(--radius-md);
+    transition: color var(--transition-fast);
+    width: 100%;
+  }
+
+  .domain-toggle:hover {
+    color: var(--color-text-secondary);
+  }
+
+  .domain-toggle:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
+  }
+
+  .domain-toggle :global(svg) {
+    flex-shrink: 0;
+  }
+
+  .domain-chevron {
+    display: flex;
+    transition: transform var(--transition-fast);
+    color: var(--color-text-tertiary);
+  }
+
+  .domain-chevron.open {
+    transform: rotate(90deg);
+  }
+
+  .domain-name {
+    font-weight: var(--font-medium);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    text-align: left;
+  }
+
+  .domain-items {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding-left: var(--space-5);
   }
 
   .empty-search,

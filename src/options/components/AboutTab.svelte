@@ -1,29 +1,6 @@
 <script lang="ts">
-  import type { SessionProfile } from '@shared/types';
-  import ConfirmDialog from '@shared/components/ConfirmDialog.svelte';
-  import { deleteSession as deleteSessionApi } from '@shared/api';
   import Icon from '@shared/components/Icon.svelte';
   import { GITHUB_URL, OPENCOLLECTIVE_URL } from '@shared/constants';
-
-  interface Props {
-    sessions: SessionProfile[];
-    onupdate: () => void;
-  }
-
-  let { sessions, onupdate }: Props = $props();
-  let showClearConfirm = $state(false);
-
-  async function handleClearAll() {
-    showClearConfirm = false;
-    try {
-      for (const session of sessions) {
-        await deleteSessionApi(session.id);
-      }
-      onupdate();
-    } catch (err) {
-      console.error('[Unaware Sessions] Failed to clear all sessions:', err);
-    }
-  }
 </script>
 
 <div class="about-layout">
@@ -107,44 +84,8 @@
     </div>
   </section>
 
-  <!-- Data Management card -->
-  <section class="card danger-zone">
-    <div class="card-header">
-      <div class="card-icon danger">
-        <Icon name="alert-triangle" size={16} />
-      </div>
-      <div>
-        <h2>Data Management</h2>
-        <p class="description">
-          Remove all session profiles, saved cookies, and storage snapshots.
-        </p>
-      </div>
-    </div>
 
-    <button
-      class="btn danger"
-      onclick={() => (showClearConfirm = true)}
-      disabled={sessions.length === 0}
-    >
-      <Icon name="trash-2" size={14} />
-      Clear All Data
-      {#if sessions.length > 0}
-        <span class="count">({sessions.length} session{sessions.length === 1 ? '' : 's'})</span>
-      {/if}
-    </button>
-  </section>
 </div>
-
-{#if showClearConfirm}
-  <ConfirmDialog
-    title="Clear All Data"
-    message="Delete ALL sessions and their data? This cannot be undone. All session profiles, cookies, and storage snapshots will be permanently removed."
-    confirmLabel="Clear All"
-    danger={true}
-    onconfirm={handleClearAll}
-    oncancel={() => (showClearConfirm = false)}
-  />
-{/if}
 
 <style>
   .about-layout {
@@ -162,10 +103,6 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-5);
-  }
-
-  .card.danger-zone {
-    border-color: var(--color-error-border);
   }
 
   .card-header {
@@ -189,11 +126,6 @@
   .card-icon.sponsor {
     background: var(--color-error-soft);
     color: var(--color-error);
-  }
-
-  .card-icon.danger {
-    background: var(--color-warning-soft);
-    color: var(--color-warning);
   }
 
   h2 {
@@ -221,7 +153,7 @@
     display: inline-flex;
     align-items: center;
     gap: var(--space-1);
-    font-size: 10px;
+    font-size: var(--text-2xs);
     font-weight: var(--font-semibold);
     padding: var(--space-1) var(--space-3);
     border-radius: var(--radius-full);
@@ -319,41 +251,5 @@
   .link-card > :global(svg:last-child) {
     color: var(--color-text-tertiary);
     flex-shrink: 0;
-  }
-
-  /* Danger button */
-  .btn {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-3);
-    padding: var(--space-4) var(--space-6);
-    background: var(--color-bg-primary);
-    border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-lg);
-    font-size: var(--text-sm);
-    font-family: var(--font-sans);
-    font-weight: var(--font-medium);
-    cursor: pointer;
-    transition: all var(--transition-fast);
-    width: fit-content;
-  }
-
-  .btn.danger {
-    color: var(--color-error);
-    border-color: var(--color-error-border);
-  }
-
-  .btn.danger:hover:not(:disabled) {
-    background: var(--color-error-soft);
-  }
-
-  .btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
-
-  .count {
-    font-weight: var(--font-normal);
-    opacity: 0.7;
   }
 </style>
