@@ -120,10 +120,12 @@ export async function downloadFile(token: string, fileId: string): Promise<strin
 // ── Google User ID ────────────────────────────────────────
 
 export async function getGoogleUserId(token: string): Promise<string> {
-  const res = await driveRequest(token, '/oauth2/v3/userinfo');
-  const data = (await res.json()) as { sub: string };
-  if (!data.sub) {
+  // Use Drive API's about endpoint — only requires drive.appdata scope.
+  // The userinfo endpoint requires openid/profile scopes which we don't declare.
+  const res = await driveRequest(token, '/drive/v3/about?fields=user(permissionId)');
+  const data = (await res.json()) as { user?: { permissionId?: string } };
+  if (!data.user?.permissionId) {
     throw new Error('Failed to get Google User ID');
   }
-  return data.sub;
+  return data.user.permissionId;
 }

@@ -119,26 +119,26 @@ describe('drive-client', () => {
   });
 
   describe('getGoogleUserId', () => {
-    it('returns the Google user sub ID', async () => {
+    it('returns the Google user permissionId', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve({ sub: '117382948561023' }),
+        json: () => Promise.resolve({ user: { permissionId: '117382948561023' } }),
       });
 
       const id = await getGoogleUserId('token');
       expect(id).toBe('117382948561023');
       expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining('userinfo'),
+        expect.stringContaining('about'),
         expect.objectContaining({
           headers: expect.objectContaining({ Authorization: 'Bearer token' }),
         }),
       );
     });
 
-    it('throws when sub is missing', async () => {
+    it('throws when permissionId is missing', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve({}),
+        json: () => Promise.resolve({ user: {} }),
       });
 
       await expect(getGoogleUserId('token')).rejects.toThrow('Failed to get Google User ID');
