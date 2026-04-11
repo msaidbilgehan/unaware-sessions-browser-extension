@@ -96,5 +96,48 @@ describe('drive-sync', () => {
         expect.any(Object),
       );
     });
+
+    it('updates alarm when config changes to enabled with interval', async () => {
+      await initSyncStore();
+      await initDriveSync();
+
+      // Config change: enable sync with 30m interval
+      await setSyncConfig({ enabled: true, syncInterval: 30 });
+      // Wait for the async listener to fire
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(mockChrome.alarms.create).toHaveBeenCalledWith('drive-sync', {
+        periodInMinutes: 30,
+      });
+    });
+
+    it('clears alarm when config changes to disabled', async () => {
+      await initSyncStore();
+      await setSyncConfig({ enabled: true, syncInterval: 15 });
+      await initDriveSync();
+
+      mockChrome.alarms.clear.mockClear();
+      await setSyncConfig({ enabled: false });
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(mockChrome.alarms.clear).toHaveBeenCalledWith('drive-sync');
+    });
+  });
+
+  describe('handleDriveSyncAlarm with googleId', () => {
+    it('triggers sync when enabled with googleId', async () => {
+      await initSyncStore();
+      await setSyncConfig({ enabled: true, googleId: 'google-123' });
+
+      // triggerSync will fail (no fetch mock) — but alarm handler should attempt it
+      const mockFetch = vi.fn().mockRejectedValueOnce(new Error('mock'));
+      vi.stubGlobal('fetch', mockFetch);
+
+      await handleDriveSyncAlarm();
+      // Should have attempted sync (status changed from idle)
+      expect(getSyncState().status).toBe('error');
+
+      vi.unstubAllGlobals();
+    });
   });
 });

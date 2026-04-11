@@ -217,6 +217,82 @@ describe('listeners', () => {
   });
 });
 
+describe('removePasscode grace period edge cases', () => {
+  it('does not clear grace period when biometric is still enabled', async () => {
+    await setupPasscode('1234');
+    // Simulate biometric being enabled via external storage change
+    mockChrome.storage.onChanged._fire(
+      {
+        [STORAGE_KEYS.SECURITY_CONFIG]: {
+          newValue: {
+            ...getSecurityConfig(),
+            biometricEnabled: true,
+            biometricCredentialId: 'cred-id',
+          },
+        },
+      },
+      'local',
+    );
+
+    await removePasscode();
+    expect(isPasscodeEnabled()).toBe(false);
+    // Grace period should NOT be cleared since biometric is still enabled
+    expect(chrome.storage.session.remove).not.toHaveBeenCalledWith(
+      STORAGE_KEYS.SECURITY_GRACE_UNTIL,
+    );
+  });
+
+  it('clears grace period when no biometric is enabled', async () => {
+    await setupPasscode('1234');
+    await grantGracePeriod();
+    await removePasscode();
+    expect(chrome.storage.session.remove).toHaveBeenCalledWith(
+      STORAGE_KEYS.SECURITY_GRACE_UNTIL,
+    );
+  });
+});
+
+describe('removeBiometric', () => {
+  it('disables biometric and clears credential ID', async () => {
+    // Simulate biometric being enabled
+    mockChrome.storage.onChanged._fire(
+      {
+        [STORAGE_KEYS.SECURITY_CONFIG]: {
+          newValue: {
+            ...DEFAULT_SECURITY_CONFIG,
+            biometricEnabled: true,
+            biometricCredentialId: 'cred-123',
+          },
+        },
+      },
+      'local',
+    );
+    expect(isBiometricEnabled()).toBe(true);
+
+    const { removeBiometric } = await import('@shared/security-store');
+    await removeBiometric();
+    expect(isBiometricEnabled()).toBe(false);
+    expect(getSecurityConfig().biometricCredentialId).toBe('');
+  });
+
+  it('clears grace period when no passcode is enabled', async () => {
+    const { removeBiometric } = await import('@shared/security-store');
+    await removeBiometric();
+    expect(chrome.storage.session.remove).toHaveBeenCalledWith(
+      STORAGE_KEYS.SECURITY_GRACE_UNTIL,
+    );
+  });
+});
+
+describe('isBiometricAvailable', () => {
+  it('returns false when PublicKeyCredential is undefined', async () => {
+    const { isBiometricAvailable } = await import('@shared/security-store');
+    // globalThis.PublicKeyCredential is undefined in Node test environment
+    const available = await isBiometricAvailable();
+    expect(available).toBe(false);
+  });
+});
+
 describe('cross-context sync', () => {
   it('updates in-memory config when storage changes externally', () => {
     const updated: SecurityConfig = {
