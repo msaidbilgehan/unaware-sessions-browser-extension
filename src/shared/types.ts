@@ -214,6 +214,14 @@ export enum MessageType {
   // Logging
   GET_LOGS = 'GET_LOGS',
   CLEAR_LOGS = 'CLEAR_LOGS',
+
+  // Cloud Sync
+  SYNC_CONNECT = 'SYNC_CONNECT',
+  SYNC_DISCONNECT = 'SYNC_DISCONNECT',
+  SYNC_NOW = 'SYNC_NOW',
+  SYNC_GET_STATE = 'SYNC_GET_STATE',
+  SYNC_CONFIGURE = 'SYNC_CONFIGURE',
+  SYNC_RESOLVE_CONFLICTS = 'SYNC_RESOLVE_CONFLICTS',
 }
 
 export interface CreateSessionMessage {
@@ -428,6 +436,34 @@ export interface ClearLogsMessage {
   type: MessageType.CLEAR_LOGS;
 }
 
+// ── Sync Messages ──────────────────────────────────────────
+
+export interface SyncConnectMessage {
+  type: MessageType.SYNC_CONNECT;
+}
+
+export interface SyncDisconnectMessage {
+  type: MessageType.SYNC_DISCONNECT;
+}
+
+export interface SyncNowMessage {
+  type: MessageType.SYNC_NOW;
+}
+
+export interface SyncGetStateMessage {
+  type: MessageType.SYNC_GET_STATE;
+}
+
+export interface SyncConfigureMessage {
+  type: MessageType.SYNC_CONFIGURE;
+  updates: Partial<import('@shared/sync/sync-types').SyncConfig>;
+}
+
+export interface SyncResolveConflictsMessage {
+  type: MessageType.SYNC_RESOLVE_CONFLICTS;
+  resolutions: import('@shared/sync/sync-types').ConflictEntry[];
+}
+
 export type CookieDiffStatus =
   | 'match'
   | 'value_changed'
@@ -529,7 +565,13 @@ export type Message =
   | GetCookieDiffMessage
   | GetRestoreFailuresMessage
   | GetLogsMessage
-  | ClearLogsMessage;
+  | ClearLogsMessage
+  | SyncConnectMessage
+  | SyncDisconnectMessage
+  | SyncNowMessage
+  | SyncGetStateMessage
+  | SyncConfigureMessage
+  | SyncResolveConflictsMessage;
 
 // ── Response Wrapper ─────────────────────────────────────────────
 

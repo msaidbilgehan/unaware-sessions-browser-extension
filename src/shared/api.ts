@@ -11,6 +11,7 @@ import type {
   FullExportData,
   LogEntry,
 } from '@shared/types';
+import type { SyncConfig, SyncState, ConflictEntry } from '@shared/sync/sync-types';
 
 function isConnectionError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
@@ -245,4 +246,30 @@ export function getExtensionLogs(): Promise<LogEntry[]> {
 
 export function clearExtensionLogs(): Promise<void> {
   return sendMessage({ type: MessageType.CLEAR_LOGS });
+}
+
+// ── Cloud Sync API ──────────────────────────────────────────
+
+export function syncConnect(): Promise<void> {
+  return sendMessage({ type: MessageType.SYNC_CONNECT });
+}
+
+export function syncDisconnect(): Promise<void> {
+  return sendMessage({ type: MessageType.SYNC_DISCONNECT });
+}
+
+export function syncNow(): Promise<SyncState> {
+  return sendMessage({ type: MessageType.SYNC_NOW });
+}
+
+export function syncGetState(): Promise<SyncState> {
+  return sendMessage({ type: MessageType.SYNC_GET_STATE });
+}
+
+export function syncConfigure(updates: Partial<SyncConfig>): Promise<void> {
+  return sendMessage({ type: MessageType.SYNC_CONFIGURE, updates });
+}
+
+export function syncResolveConflicts(resolutions: ConflictEntry[]): Promise<SyncState> {
+  return sendMessage({ type: MessageType.SYNC_RESOLVE_CONFLICTS, resolutions });
 }

@@ -8,7 +8,10 @@ import {
   updateSession,
   hydrateSessions,
   duplicateSession,
+  batchSetSessions,
+  deleteAllSessions,
 } from '@background/session-manager';
+import type { SessionProfile } from '@shared/types';
 
 beforeEach(async () => {
   resetChromeMocks();
@@ -156,5 +159,76 @@ describe('session-manager', () => {
   it('throws on empty session name', async () => {
     await expect(createSession('', '#3B82F6')).rejects.toThrow('Session name cannot be empty');
     await expect(createSession('   ', '#3B82F6')).rejects.toThrow('Session name cannot be empty');
+  });
+
+  describe('deleteAllSessions', () => {
+    it('removes all sessions', async () => {
+      await createSession('sess-1', '#3B82F6');
+      await createSession('sess-2', '#EF4444');
+      expect(await listSessions()).toHaveLength(2);
+
+      await deleteAllSessions();
+      expect(await listSessions()).toHaveLength(0);
+    });
+
+    it('is safe on empty state', async () => {
+      await deleteAllSessions();
+      expect(await listSessions()).toHaveLength(0);
+    });
+  });
+
+  describe('batchSetSessions', () => {
+    function makeProfile(id: string, name: string): SessionProfile {
+      return {
+        id,
+        name,
+        color: '#3B82F6',
+        createdAt: 1700000000000,
+        updatedAt: 1700000000000,
+        settings: {},
+      };
+    }
+
+    it('replaces all sessions atomically', async () => {
+      await createSession('old-1', '#3B82F6');
+      await createSession('old-2', '#EF4444');
+
+      const profiles = [makeProfile('new-1', 'New A'), makeProfile('new-2', 'New B')];
+      await batchSetSessions(profiles);
+
+      const sessions = await listSessions();
+      expect(sessions).toHaveLength(2);
+      expect(sessions.map((s) => s.name)).toEqual(['New A', 'New B']);
+    });
+
+    it('preserves session order from input array', async () => {
+      const profiles = [
+        makeProfile('z-id', 'Zulu'),
+        makeProfile('a-id', 'Alpha'),
+        makeProfile('m-id', 'Mike'),
+      ];
+      await batchSetSessions(profiles);
+
+      const sessions = await listSessions();
+      expect(sessions.map((s) => s.id)).toEqual(['z-id', 'a-id', 'm-id']);
+    });
+
+    it('persists across hydration cycles', async () => {
+      const profiles = [makeProfile('persist-1', 'Persisted')];
+      await batchSetSessions(profiles);
+
+      await hydrateSessions();
+      const sessions = await listSessions();
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0].name).toBe('Persisted');
+    });
+
+    it('handles empty array', async () => {
+      await createSession('existing', '#3B82F6');
+      await batchSetSessions([]);
+
+      const sessions = await listSessions();
+      expect(sessions).toHaveLength(0);
+    });
   });
 });

@@ -1,4 +1,5 @@
 import type { ExtensionSettings, SecurityConfig, GracePeriodMs } from '@shared/types';
+import type { SyncConfig, SyncInterval } from '@shared/sync/sync-types';
 
 export const ALARM_PERSIST_STATE = 'persist-state';
 export const ALARM_INTERVAL_MINUTES = 1;
@@ -15,6 +16,7 @@ export const STORAGE_KEYS = {
   DOMAIN_ISOLATION_MODES: 'domainIsolationModes',
   SECURITY_CONFIG: 'securityConfig',
   SECURITY_GRACE_UNTIL: 'securityGraceUntil',
+  SYNC_CONFIG: 'syncConfig',
 } as const;
 
 export const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
@@ -42,6 +44,25 @@ export const GRACE_PERIOD_OPTIONS: { value: GracePeriodMs; label: string }[] = [
 ];
 
 export const LOG_BUFFER_MAX_SIZE = 2000;
+
+export const ALARM_DRIVE_SYNC = 'drive-sync';
+
+export const DEFAULT_SYNC_CONFIG: SyncConfig = {
+  enabled: false,
+  mergeStrategy: 'ask',
+  syncInterval: 0,
+  lastSyncAt: 0,
+  lastSyncError: '',
+  deviceId: '',
+  googleId: '',
+};
+
+export const SYNC_INTERVAL_OPTIONS: { value: SyncInterval; label: string }[] = [
+  { value: 0, label: 'Off' },
+  { value: 5, label: '5m' },
+  { value: 15, label: '15m' },
+  { value: 30, label: '30m' },
+];
 
 export const DNR_RULE_ID_BASE = 1000;
 export const DNR_RULE_LIMIT = 5000;

@@ -138,6 +138,46 @@ async function removeSessionFromOrder(sessionId: string): Promise<void> {
   await setLocal(STORAGE_KEYS.SESSION_ORDER, filtered);
 }
 
+// ── Sync Helpers ────────────────────────────────────────────
+
+/**
+ * Replace all in-memory sessions with the provided array and persist once.
+ * Used by applyFullData to avoid O(N²) storage writes from calling
+ * upsertSessionDirect in a loop (each call would persistSessions + appendOrder).
+ */
+export async function batchSetSessions(profiles: SessionProfile[]): Promise<void> {
+  await ensureHydrated();
+  sessions.clear();
+  for (const p of profiles) {
+    sessions.set(p.id, p);
+  }
+  await persistSessions();
+  await setLocal(STORAGE_KEYS.SESSION_ORDER, profiles.map((p) => p.id));
+}
+
+export async function upsertSessionDirect(profile: SessionProfile): Promise<void> {
+  await ensureHydrated();
+  sessions.set(profile.id, profile);
+  await persistSessions();
+  await appendSessionOrder(profile.id);
+}
+
+export async function deleteAllSessions(): Promise<void> {
+  await ensureHydrated();
+
+  const ids = Array.from(sessions.keys());
+  await Promise.all(
+    ids.map(async (id) => {
+      await cookieStore.deleteForSession(id);
+      await storageStore.deleteForSession(id);
+    }),
+  );
+
+  sessions.clear();
+  await persistSessions();
+  await setLocal(STORAGE_KEYS.SESSION_ORDER, [] as string[]);
+}
+
 export async function touchSessionRefresh(sessionId: string): Promise<void> {
   await ensureHydrated();
   const existing = sessions.get(sessionId);

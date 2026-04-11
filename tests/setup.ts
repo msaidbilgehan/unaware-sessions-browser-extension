@@ -103,6 +103,10 @@ const mockChrome = {
     removeAll: vi.fn(() => Promise.resolve()),
     onClicked: createMockEvent(),
   },
+  identity: {
+    getAuthToken: vi.fn(() => Promise.resolve({ token: 'mock-token' })),
+    removeCachedAuthToken: vi.fn(() => Promise.resolve()),
+  },
 };
 
 Object.defineProperty(globalThis, 'chrome', {

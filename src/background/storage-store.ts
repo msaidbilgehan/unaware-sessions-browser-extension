@@ -229,6 +229,38 @@ class StorageStore {
         reject(new Error(`Failed to delete session storage: ${tx.error?.message}`));
     });
   }
+
+  async getAllSnapshots(): Promise<StorageSnapshot[]> {
+    const db = await this.open();
+
+    return new Promise((resolve, reject) => {
+      const snapshots: StorageSnapshot[] = [];
+      const tx = db.transaction(STORAGE_STORE_NAME, 'readonly');
+      const cursorRequest = tx.objectStore(STORAGE_STORE_NAME).openCursor();
+
+      cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result;
+        if (cursor) {
+          snapshots.push(cursor.value as StorageSnapshot);
+          cursor.continue();
+        }
+      };
+
+      tx.oncomplete = () => resolve(snapshots);
+      tx.onerror = () => reject(new Error(`Failed to get all snapshots: ${tx.error?.message}`));
+    });
+  }
+
+  async deleteAll(): Promise<void> {
+    const db = await this.open();
+
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORAGE_STORE_NAME, 'readwrite');
+      tx.objectStore(STORAGE_STORE_NAME).clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(new Error(`Failed to clear storage store: ${tx.error?.message}`));
+    });
+  }
 }
 
 export const storageStore = new StorageStore();

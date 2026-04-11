@@ -41,7 +41,7 @@ import { cookieStore } from './cookie-store';
 import { storageStore } from './storage-store';
 import { STORAGE_KEYS } from '@shared/constants';
 import { setLocal } from '@shared/storage';
-import { estimateCookieBytes, estimateRecordBytes, extractDomain } from '@shared/utils';
+import { estimateCookieBytes, estimateRecordBytes, extractDomain, generateId } from '@shared/utils';
 import type {
   CookieDiffEntry,
   CookieDiffResult,
@@ -50,6 +50,13 @@ import type {
 } from '@shared/types';
 import { refreshAllActiveSessions } from './auto-refresh';
 import { getLogs, clearLogs } from '@shared/logger';
+import { getToken, revokeAccess, getGoogleUserId } from '@shared/sync/drive-client';
+import { getSyncConfig, setSyncConfig } from '@shared/sync/sync-store';
+import {
+  triggerSync,
+  getSyncState,
+  resolveConflicts,
+} from './drive-sync';
 
 type MessageHandler = (
   message: Message,
@@ -605,6 +612,44 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
   [MessageType.CLEAR_LOGS]: async () => {
     clearLogs();
     return { success: true };
+  },
+
+  // ── Cloud Sync handlers ─────────────────────────────────────
+
+  [MessageType.SYNC_CONNECT]: async () => {
+    const token = await getToken(true);
+    const googleId = await getGoogleUserId(token);
+    const config = getSyncConfig();
+    const deviceId = config.deviceId || generateId();
+    await setSyncConfig({ enabled: true, deviceId, googleId, lastSyncError: '' });
+    return { success: true };
+  },
+
+  [MessageType.SYNC_DISCONNECT]: async () => {
+    await revokeAccess();
+    await setSyncConfig({ enabled: false, lastSyncAt: 0, lastSyncError: '', deviceId: '', googleId: '' });
+    return { success: true };
+  },
+
+  [MessageType.SYNC_NOW]: async () => {
+    const state = await triggerSync();
+    return { success: true, data: state };
+  },
+
+  [MessageType.SYNC_GET_STATE]: async () => {
+    return { success: true, data: getSyncState() };
+  },
+
+  [MessageType.SYNC_CONFIGURE]: async (msg) => {
+    if (msg.type !== MessageType.SYNC_CONFIGURE) return { success: false };
+    await setSyncConfig(msg.updates);
+    return { success: true };
+  },
+
+  [MessageType.SYNC_RESOLVE_CONFLICTS]: async (msg) => {
+    if (msg.type !== MessageType.SYNC_RESOLVE_CONFLICTS) return { success: false };
+    const state = await resolveConflicts(msg.resolutions);
+    return { success: true, data: state };
   },
 
   [MessageType.PING]: async () => {

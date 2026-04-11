@@ -38,8 +38,15 @@
     "alarms",
     "contextMenus",
     "declarativeNetRequest",
-    "favicon"
+    "favicon",
+    "identity"
   ],
+  "oauth2": {
+    "client_id": "678771882421-54gnhbimq736lvlqkgmsfnfj34eojcpf.apps.googleusercontent.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/drive.appdata"
+    ]
+  },
   "host_permissions": ["<all_urls>"],
   "commands": {
     "_execute_action": {

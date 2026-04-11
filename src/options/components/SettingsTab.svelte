@@ -29,6 +29,25 @@
   } from '@shared/security-store';
   import { tick } from 'svelte';
   import Icon from '@shared/components/Icon.svelte';
+  import Toast from '@shared/components/Toast.svelte';
+  import ConfirmDialog from '@shared/components/ConfirmDialog.svelte';
+  import SyncConflictDialog from './SyncConflictDialog.svelte';
+  import {
+    syncConnect,
+    syncDisconnect,
+    syncNow,
+    syncGetState,
+    syncConfigure,
+    syncResolveConflicts,
+  } from '@shared/api';
+  import {
+    getSyncConfig,
+    initSyncStore,
+    onSyncConfigChange,
+  } from '@shared/sync/sync-store';
+  import type { SyncConfig, SyncState, MergeStrategy, SyncInterval, ConflictEntry } from '@shared/sync/sync-types';
+  import { SYNC_INTERVAL_OPTIONS } from '@shared/constants';
+  import { formatRelativeTime } from '@shared/utils';
 
   let theme = $state<ThemePreference>(getTheme());
 
@@ -316,6 +335,117 @@
   async function handleGracePeriodChange(ms: GracePeriodMs) {
     await setGracePeriodDuration(ms);
   }
+
+  // ── Cloud Sync state ──────────────────────────────────────
+
+  let syncCfg = $state<SyncConfig>(getSyncConfig());
+  let syncState = $state<SyncState>({ status: 'idle', progress: '', conflicts: [] });
+  let showDisconnectConfirm = $state(false);
+  let showConflictDialog = $state(false);
+  let syncing = $state(false);
+  let connecting = $state(false);
+  let syncToast = $state<{ message: string; type: 'error' | 'success' | 'info' } | null>(null);
+
+  $effect(() => {
+    initSyncStore().then(() => {
+      syncCfg = getSyncConfig();
+    });
+    const unsub = onSyncConfigChange((config) => {
+      syncCfg = config;
+    });
+    return unsub;
+  });
+
+  const mergeOptions: { value: MergeStrategy; label: string }[] = [
+    { value: 'trust-cloud', label: 'Trust Cloud' },
+    { value: 'trust-local', label: 'Trust Local' },
+    { value: 'ask', label: 'Ask' },
+  ];
+
+  async function handleSyncConnect() {
+    connecting = true;
+    try {
+      await syncConnect();
+      syncCfg = getSyncConfig();
+      syncToast = { message: 'Connected to Google Drive', type: 'success' };
+    } catch (err) {
+      syncToast = { message: `Connection failed: ${err instanceof Error ? err.message : 'Unknown error'}`, type: 'error' };
+    } finally {
+      connecting = false;
+    }
+  }
+
+  async function handleSyncDisconnect() {
+    showDisconnectConfirm = false;
+    try {
+      await syncDisconnect();
+      syncCfg = getSyncConfig();
+      syncState = { status: 'idle', progress: '', conflicts: [] };
+      syncToast = { message: 'Disconnected from Google Drive', type: 'info' };
+    } catch (err) {
+      syncToast = { message: `Disconnect failed: ${err instanceof Error ? err.message : 'Unknown error'}`, type: 'error' };
+    }
+  }
+
+  async function handleSyncNow() {
+    syncing = true;
+    try {
+      const state = await syncNow();
+      syncState = state;
+
+      if (state.status === 'conflict') {
+        showConflictDialog = true;
+      } else if (state.status === 'error') {
+        syncToast = { message: state.progress, type: 'error' };
+      } else {
+        syncToast = { message: 'Sync completed', type: 'success' };
+      }
+    } catch (err) {
+      syncToast = { message: `Sync failed: ${err instanceof Error ? err.message : 'Unknown error'}`, type: 'error' };
+    } finally {
+      syncing = false;
+    }
+  }
+
+  async function handleConflictResolve(resolutions: ConflictEntry[]) {
+    showConflictDialog = false;
+    syncing = true;
+    try {
+      const state = await syncResolveConflicts(resolutions);
+      syncState = state;
+      if (state.status === 'error') {
+        syncToast = { message: state.progress, type: 'error' };
+      } else {
+        syncToast = { message: 'Sync completed with resolved conflicts', type: 'success' };
+      }
+    } catch (err) {
+      syncToast = { message: `Sync failed: ${err instanceof Error ? err.message : 'Unknown error'}`, type: 'error' };
+    } finally {
+      syncing = false;
+    }
+  }
+
+  async function handleMergeStrategyChange(strategy: MergeStrategy) {
+    await syncConfigure({ mergeStrategy: strategy });
+  }
+
+  async function handleSyncIntervalChange(interval: SyncInterval) {
+    await syncConfigure({ syncInterval: interval });
+  }
+
+  async function refreshSyncState() {
+    try {
+      syncState = await syncGetState();
+    } catch {
+      // Ignore — sync may not be initialized
+    }
+  }
+
+  $effect(() => {
+    if (syncCfg.enabled) {
+      refreshSyncState();
+    }
+  });
 
 </script>
 
@@ -713,7 +843,169 @@
       </div>
     {/if}
   </section>
+
+  <!-- Cloud Sync -->
+  <section class="card">
+    <div class="card-header">
+      <div class="card-icon sync">
+        <Icon name="cloud" size={16} />
+      </div>
+      <div>
+        <h2>Cloud Sync</h2>
+        <p class="description">
+          Sync session data to your Google Drive. Data is encrypted with your passphrase before leaving the browser.
+        </p>
+      </div>
+    </div>
+
+    {#if !syncCfg.enabled}
+      <button
+        class="security-text-btn primary"
+        onclick={handleSyncConnect}
+        disabled={connecting}
+      >
+        {#if connecting}
+          <span class="spinner-sm"></span>
+          Connecting...
+        {:else}
+          <Icon name="cloud" size={14} />
+          Connect to Google Drive
+        {/if}
+      </button>
+    {:else}
+      <!-- Status line -->
+      <div class="sync-status-row">
+        <div class="sync-status-indicator" class:syncing class:error={syncState.status === 'error'}>
+          {#if syncing}
+            <span class="spinner-sm"></span>
+          {:else if syncState.status === 'error'}
+            <Icon name="alert-triangle" size={14} />
+          {:else}
+            <Icon name="check" size={14} />
+          {/if}
+          <span class="sync-status-text">
+            {#if syncing}
+              Syncing...
+            {:else if syncState.status === 'error'}
+              Error
+            {:else}
+              Connected
+            {/if}
+          </span>
+        </div>
+        {#if syncCfg.lastSyncAt > 0}
+          <span class="sync-last-time">Last: {formatRelativeTime(syncCfg.lastSyncAt)}</span>
+        {/if}
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- Merge strategy -->
+      <div class="setting-row">
+        <div class="toggle-info">
+          <span class="setting-label">Merge strategy</span>
+          <span class="toggle-description">
+            How conflicts are resolved when both local and cloud data have changed.
+          </span>
+        </div>
+        <div class="interval-options">
+          {#each mergeOptions as opt (opt.value)}
+            <button
+              class="interval-pill"
+              class:active={syncCfg.mergeStrategy === opt.value}
+              onclick={() => handleMergeStrategyChange(opt.value)}
+              aria-pressed={syncCfg.mergeStrategy === opt.value}
+            >
+              {opt.label}
+            </button>
+          {/each}
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- Auto-sync interval -->
+      <div class="setting-row">
+        <span class="setting-label">Auto-sync interval</span>
+        <div class="interval-options">
+          {#each SYNC_INTERVAL_OPTIONS as opt (opt.value)}
+            <button
+              class="interval-pill"
+              class:active={syncCfg.syncInterval === opt.value}
+              onclick={() => handleSyncIntervalChange(opt.value)}
+              aria-pressed={syncCfg.syncInterval === opt.value}
+            >
+              {opt.label}
+            </button>
+          {/each}
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- Actions -->
+      <div class="sync-actions">
+        <button
+          class="security-text-btn primary"
+          onclick={handleSyncNow}
+          disabled={syncing}
+        >
+          {#if syncing}
+            <span class="spinner-sm"></span>
+            Syncing...
+          {:else}
+            <Icon name="refresh-cw" size={14} />
+            Sync Now
+          {/if}
+        </button>
+        <button
+          class="security-text-btn"
+          onclick={() => (showDisconnectConfirm = true)}
+        >
+          <Icon name="cloud-off" size={14} />
+          Disconnect
+        </button>
+      </div>
+
+      <!-- Encryption explainer -->
+      <div class="isolation-explainer">
+        <div class="explainer-row">
+          <Icon name="lock" size={14} />
+          <div>
+            Your data is encrypted with <strong>AES-256-GCM</strong> using your Google account identity before leaving the browser.
+          </div>
+        </div>
+      </div>
+    {/if}
+  </section>
 </div>
+
+{#if showDisconnectConfirm}
+  <ConfirmDialog
+    title="Disconnect Cloud Sync"
+    message="Disconnect from Google Drive? Your cloud data will remain on Drive but sync will stop. You can reconnect later."
+    confirmLabel="Disconnect"
+    danger={true}
+    onconfirm={handleSyncDisconnect}
+    oncancel={() => (showDisconnectConfirm = false)}
+  />
+{/if}
+
+{#if showConflictDialog && syncState.conflicts.length > 0}
+  <SyncConflictDialog
+    conflicts={syncState.conflicts}
+    onresolve={handleConflictResolve}
+    oncancel={() => { showConflictDialog = false; }}
+  />
+{/if}
+
+{#if syncToast}
+  <Toast
+    message={syncToast.message}
+    type={syncToast.type}
+    ondismiss={() => (syncToast = null)}
+  />
+{/if}
 
 <style>
   .settings-layout {
@@ -1072,6 +1364,73 @@
   }
 
   :global(.inline-icon) {
+    vertical-align: -2px;
+  }
+
+  /* Cloud Sync card */
+  .card-icon.sync {
+    background: var(--color-accent-soft);
+    color: var(--color-accent);
+  }
+
+  .sync-status-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-3) var(--space-5);
+    background: var(--color-bg-secondary);
+    border-radius: var(--radius-lg);
+  }
+
+  .sync-status-indicator {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--color-success);
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+  }
+
+  .sync-status-indicator.syncing {
+    color: var(--color-accent);
+  }
+
+  .sync-status-indicator.error {
+    color: var(--color-error);
+  }
+
+  .sync-status-text {
+    font-size: var(--text-sm);
+  }
+
+  .sync-last-time {
+    font-size: var(--text-xs);
+    color: var(--color-text-tertiary);
+  }
+
+  .sync-actions {
+    display: flex;
+    gap: var(--space-3);
+  }
+
+  .spinner-sm {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--color-border-primary);
+    border-top-color: currentColor;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    vertical-align: -2px;
+  }
+
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  .security-text-btn :global(svg) {
     vertical-align: -2px;
   }
 </style>
