@@ -1,16 +1,17 @@
 # Unaware Sessions — Product Specifications
 
-**Version:** 0.1.0  
-**Status:** Draft  
-**Last Updated:** 2026-04-07
+**Version:** 1.1.0  
+**Status:** Active  
+**Last Updated:** 2026-04-18
 
 ---
 
 ## 1. Overview
 
-Unaware Sessions is a privacy-first, open-source browser extension that provides isolated browsing sessions within a single browser window. Each session maintains its own cookies, localStorage, sessionStorage, and IndexedDB — all stored locally, with zero network calls.
+Unaware Sessions is a privacy-first, open-source browser extension that provides isolated browsing sessions within a single browser window. Each session maintains its own cookies, localStorage, sessionStorage, and IndexedDB — all stored locally by default. An optional Google Drive sync keeps sessions in sync across devices, with all data encrypted end-to-end (AES-256-GCM) before leaving the device.
 
-**Target:** Manifest V3 (mandatory for Chrome Web Store distribution).
+**Target:** Manifest V3 (mandatory for Chrome Web Store distribution).  
+**Published:** [Chrome Web Store](https://chromewebstore.google.com/detail/browser-automata/pfpfakjgmkfmcimgknmnebloclkbfhbh)
 
 ---
 
@@ -38,9 +39,16 @@ No `contextualIdentities` API available. Session isolation is achieved through *
 - **IndexedDB** — Content script save/restore on reload (best-effort)
 - **Cache API** — Content script save/restore on reload (best-effort)
 
-Cookie swap uses origin-scoped save/clear/restore. When a session snapshot contains cross-domain cookies (e.g., `anthropic.com` for `claude.ai`, `authenticator.cursor.sh` for `cursor.com`), those are also restored during session switch to preserve auth flows that span multiple domains.
+Cookie swap uses **origin-scoped** save/clear/restore with domain hierarchy walk (e.g., both `mail.google.com` and `.google.com` cookies are captured). No cross-domain cookies are saved or restored — each origin's cookie set is self-contained.
 
-Cookie header manipulation via `declarativeNetRequest` dynamic rules for outbound request isolation.
+**Cookie isolation modes:**
+
+- **Soft** (default) — skips cookie clear/restore on domains where the target session has no saved data, preserving unrelated services (e.g., switching sessions on `gmail.com` won't wipe `github.com` cookies)
+- **Strict** — always clears cookies for full isolation even without target session data
+
+Configurable globally and per-domain via the Settings tab.
+
+Cookie header manipulation via `declarativeNetRequest` dynamic rules for outbound request isolation. Per-tab session switch mutex serializes concurrent switches on the same tab to prevent interleaved cookie operations.
 
 ### 3.2 Firefox
 
@@ -72,31 +80,40 @@ graph TB
     subgraph Extension
         SW[Service Worker<br/>Background]
         CS[Content Scripts<br/>Per-Tab]
-        PP[Popup UI<br/>Svelte]
-        OP[Options Page<br/>Svelte]
+        PP[Popup UI<br/>Svelte 5]
+        OP[Options Page<br/>Svelte 5]
     end
 
     subgraph Internal Storage
         SM[Session Manager<br/>chrome.storage.local]
-        SS[Session Store<br/>IndexedDB - Extension Context]
+        SS[Cookie Store + Storage Store<br/>IndexedDB - Extension Context]
+        SC[Security + Settings + Sync Config<br/>chrome.storage.local]
     end
 
     subgraph Browser APIs
         CK[chrome.cookies]
         DNR[declarativeNetRequest]
         TB[chrome.tabs]
-        CI[contextualIdentities<br/>Firefox Only]
+        ID[chrome.identity<br/>OAuth2]
+        CI[contextualIdentities<br/>Firefox Only - Not Yet Implemented]
+    end
+
+    subgraph External
+        GD[Google Drive<br/>appDataFolder - Encrypted]
     end
 
     PP -->|Create/Switch/Delete Session| SW
     OP -->|Configure Settings| SW
     SW -->|Manage Sessions| SM
     SW -->|Store Snapshots| SS
+    SW -->|Persist Config| SC
     SW -->|Swap Cookies| CK
     SW -->|Set Header Rules| DNR
     SW -->|Track Tabs| TB
+    SW -->|OAuth Token| ID
     SW -->|Create Containers| CI
     SW -->|Inject/Command| CS
+    SW -->|Encrypted Sync| GD
     CS -->|Save/Restore Storage| SS
 ```
 
@@ -106,19 +123,24 @@ graph TB
 
 **Responsibilities:**
 
-- Session lifecycle management (create, switch, delete)
+- Session lifecycle management (create, switch, delete, duplicate, batch upsert)
 - Tab-to-session mapping with persistence (survives SW restarts)
-- Cookie swap orchestration on session switch
+- Cookie swap orchestration on session switch (per-tab mutex, soft/strict isolation)
 - `declarativeNetRequest` rule management for cookie header isolation
 - Context menu registration ("Open in Session")
-- Badge/icon updates per tab
+- Badge/icon updates per tab (session color + abbreviation)
 - Message broker between popup, content scripts, and storage
+- Auto-refresh: alarm-driven periodic session data save for tracked tabs
+- Google Drive sync orchestration (alarm-based auto-sync, conflict triggers)
+- Tab unassignment on cross-origin navigation
 
 **State persistence strategy:**
 
 - Tab-session mapping — `chrome.storage.session` (survives SW restart within browser session)
 - Session profiles — `chrome.storage.local` (survives browser restart)
-- Storage snapshots — Extension-context IndexedDB (large data, structured)
+- Cookie + storage snapshots — Extension-context IndexedDB (large data, structured)
+- Settings, security config, sync config — `chrome.storage.local`
+- Grace period state — `chrome.storage.session` (auto-clears on browser close)
 
 #### 4.2.2 Content Scripts
 
@@ -126,38 +148,50 @@ graph TB
 
 **Responsibilities:**
 
-- On session switch (triggered by SW message):
+- On SW message `saveStorage` (triggered by manual refresh or auto-refresh):
   1. Save current origin's localStorage, sessionStorage to extension store
-  2. Clear origin's localStorage, sessionStorage
-  3. Restore target session's data from extension store
+  2. Save IndexedDB snapshot (best-effort)
+- On SW message `restoreStorage` (triggered on page load after session switch):
+  1. Clear origin's localStorage, sessionStorage
+  2. Restore target session's data from extension store
 - IndexedDB snapshot/restore (best-effort):
   1. Enumerate databases via `indexedDB.databases()`
   2. Read all object stores and records
-  3. Clear and recreate with target session data
+  3. Encode binary values (`ArrayBuffer`, `TypedArray`, `Date`) into JSON-safe markers before `sendMessage` (Chrome extension messaging uses JSON serialization, not structured clone)
+  4. Decode markers back to native types on restore
+  5. Clear and recreate databases with target session data
 - Report storage size metrics to SW for UI display
 
-#### 4.2.3 Popup UI (Svelte)
+#### 4.2.3 Popup UI (Svelte 5)
+
+**Width:** 380px, natural document scroll (Chrome popup viewport is the single scroll owner)
 
 **Views:**
 
-- Session list (name, color, active origin count)
-- New session form (name, color picker)
-- Current tab info (active session, origin)
-- Quick switch: select session — triggers reload + swap
-- Session management (rename, delete, duplicate)
+- Header with app logo, theme toggle
+- Current tab panel (origin, favicon, refresh button, auto-refresh toggle with green status indicator)
+- Session list with domain grouping ("This Site" / "Other Sessions"), search by session name or domain
+- "Default (no session)" option for clean browsing / fresh login
+- New session form (name, color picker, emoji picker)
+- Session management: inline rename, delete with undo, duplicate, pin, context menu
+- Quick-switch overlay — press `?` then a number key to jump to a session
+- Keyboard shortcuts: `n` (new), `/` (search), `?` (quick-switch), `Escape` (close)
+- Onboarding empty state for first-run users
+- `withAuth` gate on session switch/delete when passcode/biometric is enabled
 
-#### 4.2.4 Options Page (Svelte)
+#### 4.2.4 Options Page (Svelte 5)
 
-**Views:**
+**Tabs:**
 
-- Session profile management (bulk operations)
-- Import / Export (JSON, optionally encrypted)
-- Per-session settings (User-Agent override, custom headers)
-- Data management (clear all sessions, storage usage stats)
+- **Sessions** — Domain folders, inline cookie/storage editing, per-domain auto-refresh, search by session name or domain
+- **Settings** — Theme, cookie isolation mode (soft/strict), auto-refresh interval, security settings (passcode + biometric), Cloud Sync card (connect/disconnect, merge strategy, auto-sync interval)
+- **Data** — Profile-only + full export/import with stats preview, drag-and-drop import, data management / clear all, `withAuth` gate on export/import/clear
+- **Debug** — Cookie diff viewer, restore failure log, extension logs with log level selector
+- **About** — Version, GitHub link, OpenCollective donation
 
 ### 4.3 Session Switch Flow (Chromium)
 
-The user clicks a session card in the popup session list. The switch is entirely orchestrated by the service worker — no content script interaction occurs during the switch itself. DOM storage (localStorage, sessionStorage, IndexedDB) is saved separately via the manual "Refresh session data" button, not as part of the switch flow.
+The user clicks a session card in the popup session list. The switch is entirely orchestrated by the service worker — no content script interaction occurs during the switch itself. DOM storage (localStorage, sessionStorage, IndexedDB) is saved separately via the manual "Refresh session data" button or auto-refresh, not as part of the switch flow. A per-tab mutex serializes concurrent switches on the same tab to prevent interleaved cookie operations.
 
 ```mermaid
 sequenceDiagram
@@ -170,26 +204,26 @@ sequenceDiagram
     U->>P: Click session card in list
     P->>SW: switchSession(tabId, targetSessionId)
     
+    Note over SW: Acquire per-tab mutex
+    
     Note over SW: 1. Save current session's cookies (origin-scoped)
-    SW->>API: getAll({domain: origin})
+    SW->>API: getAll({domain: origin + parent domains})
     API-->>SW: cookies[]
     SW->>DB: Store cookies (currentSessionId + origin)
     
-    Note over SW: 2. Clear cookies for origin
+    Note over SW: 2. Clear cookies for origin (soft: skip if no target data)
     SW->>API: remove(cookie) for each origin cookie
     
     Note over SW: 3. Restore target session's cookies
     SW->>DB: Load cookies (targetSessionId + origin)
     SW->>API: set(cookie) for each
     
-    Note over SW: 4. Restore cross-domain cookies from snapshot (auth flows)
-    SW->>DB: Load full snapshot, find extra domains
-    SW->>API: set(cookie) for each cross-domain cookie
-    
-    Note over SW: 5. Update state and navigate
+    Note over SW: 4. Update state and navigate
     SW->>SW: Update tab-session mapping (assignTab)
     SW->>SW: Update DNR rules
     SW->>API: chrome.tabs.update(tabId, {url})
+    
+    Note over SW: Release per-tab mutex
 ```
 
 ### 4.4 Session Switch Flow (Firefox)
@@ -294,6 +328,75 @@ interface CookieSnapshot {
 }
 ```
 
+### 5.5 Security Config
+
+```typescript
+type IsolationMode = 'soft' | 'strict';
+
+type GracePeriodMs = 60000 | 120000 | 300000 | 600000 | 1800000; // 1m–30m
+
+interface SecurityConfig {
+  passcodeHash: string;          // PBKDF2-SHA256 hash (empty = disabled)
+  passcodeSalt: string;          // Random salt for PBKDF2
+  biometricEnabled: boolean;     // WebAuthn platform authenticator
+  biometricCredentialId: string; // Stored credential ID
+  gracePeriodMs: GracePeriodMs;  // Skip re-auth window
+}
+```
+
+### 5.6 Sync Types
+
+```typescript
+type MergeStrategy = 'trust-cloud' | 'trust-local' | 'ask';
+type SyncInterval = 0 | 5 | 15 | 30;
+
+interface SyncConfig {
+  enabled: boolean;
+  mergeStrategy: MergeStrategy;
+  syncInterval: SyncInterval;
+  lastSyncAt: number;
+  lastSyncError: string;
+  deviceId: string;
+  googleId: string;
+}
+
+interface SyncManifest {
+  version: 1;
+  updatedAt: number;
+  deviceId: string;
+  checksums: Record<string, string>;       // "sessionId:origin" → hash
+  sessionChecksums: Record<string, string>; // sessionId → hash
+}
+
+interface EncryptedPayload {
+  v: 1;
+  salt: string;  // Base64
+  iv: string;    // Base64
+  ct: string;    // Base64 ciphertext (AES-256-GCM)
+}
+
+interface ConflictEntry {
+  sessionId: string;
+  sessionName: string;
+  origin: string;
+  localTimestamp: number;
+  cloudTimestamp: number;
+  resolution: 'local' | 'cloud' | null;
+}
+```
+
+### 5.7 Full Export Data
+
+```typescript
+interface FullExportData {
+  version: 1;
+  exportedAt: number;
+  sessions: SessionProfile[];
+  cookieSnapshots: CookieSnapshot[];
+  storageSnapshots: StorageSnapshot[];
+}
+```
+
 ---
 
 ## 6. Extension Permissions
@@ -307,21 +410,27 @@ interface CookieSnapshot {
     "declarativeNetRequest",
     "contextMenus",
     "alarms",
-    "favicon"
+    "favicon",
+    "identity"
   ],
-  "host_permissions": ["<all_urls>"]
+  "host_permissions": ["<all_urls>"],
+  "oauth2": {
+    "scopes": ["https://www.googleapis.com/auth/drive.appdata"]
+  }
 }
 ```
 
 | Permission | Purpose |
 |---|---|
-| `storage` | Persist session profiles and tab mappings |
+| `storage` | Persist session profiles, tab mappings, settings, security config |
 | `cookies` | Read/write/delete cookies per domain for session swap |
 | `tabs` | Track tab lifecycle, reload tabs, update badges |
 | `declarativeNetRequest` | Modify cookie headers on outbound requests |
 | `contextMenus` | "Open in Session" right-click menu |
-| `alarms` | Periodic cleanup, session auto-save |
+| `alarms` | Auto-refresh, auto-sync, periodic cleanup |
 | `favicon` | Display site icons in popup via _favicon API |
+| `identity` | OAuth2 token for Google Drive sync |
+| `drive.appdata` (OAuth2 scope) | Hidden app folder on Google Drive — no access to user files |
 
 ---
 
@@ -330,12 +439,14 @@ interface CookieSnapshot {
 | Layer | Technology | Role |
 |---|---|---|
 | Extension Runtime | WebExtensions API (MV3) | Cross-browser extension framework |
-| UI Framework | Svelte 5 | Popup, options page, sidebar |
-| Build System | Vite + @crxjs/vite-plugin | Dev server, HMR, packaging |
-| Language | TypeScript | End-to-end type safety |
-| Internal Storage | chrome.storage.local + IndexedDB | Session profiles + storage snapshots |
-| Styling | CSS Custom Properties | Scoped, minimal styles |
-| Testing | Vitest + fake-indexeddb | Unit + mock storage |
+| UI Framework | Svelte 5 (runes) | Popup & options interface |
+| Build System | Vite + @crxjs/vite-plugin | Dev server, HMR, extension bundling |
+| Language | TypeScript (strict) | End-to-end type safety |
+| Internal Storage | chrome.storage.local + chrome.storage.session + IndexedDB | Session profiles, tab mappings, cookie/storage snapshots |
+| Styling | CSS custom properties | Design system tokens with light/dark themes |
+| Security | Web Crypto (PBKDF2-SHA256) + WebAuthn | Passcode hashing, biometric auth |
+| Optional Sync | Google Drive REST v3 (`drive.appdata`) + Web Crypto (AES-256-GCM) | Opt-in encrypted session sync |
+| Testing | Vitest + fake-indexeddb | Unit tests with Chrome API mocks (467+ tests) |
 | Linting | ESLint + Prettier | Code quality |
 
 ---
@@ -344,38 +455,42 @@ interface CookieSnapshot {
 
 ### 8.1 Popup — Session List
 
-```
+```text
 +-------------------------------+
-|  Unaware Sessions        [gear]|
+|  [logo] Unaware Sessions [sun]|
 +-------------------------------+
-|  gmail.com          [refresh] |
+|  gmail.com  [auto] [refresh]  |
++-------------------------------+
+|  [/ Search sessions...]       |
 +-------------------------------+
 |                               |
 |  o Default (no session)       |
 |                               |
 |  THIS SITE                    |
-|  * work-gmail           [3]   |
-|  * client-A             [1]   |
+|  📧 work-gmail    [pin] [3]  |
+|  👤 client-A            [1]  |
 |                               |
 |  OTHER SESSIONS (2)        v  |
-|  o staging              [2]   |
-|  o personal                   |
+|  o 🧪 staging           [2]  |
+|  o 🏠 personal               |
 |                               |
 +-------------------------------+
-|  [+ New Session]              |
+|  [+ New Session]    n / ? Esc |
 +-------------------------------+
 
-* = active on this tab
-o = inactive / other origin
+📧 = emoji avatar
+[pin] = pinned session
 [3] = tab count
-[refresh] = save session data
-[gear] = settings/options
+[auto] = auto-refresh toggle (green when active)
+[refresh] = manual save session data
+[sun] = theme toggle (light/dark/system)
+n = new, / = search, ? = quick-switch, Esc = close
 v = expand/collapse toggle
 ```
 
 ### 8.2 Popup — New Session
 
-```
+```text
 +-------------------------------+
 |  <- New Session               |
 +-------------------------------+
@@ -383,6 +498,8 @@ v = expand/collapse toggle
 |  Name: [__________________]   |
 |                               |
 |  Color: * * * * * * * *       |
+|                               |
+|  Emoji: 😀 📧 👤 🧪 🏠 ...  |
 |                               |
 |  [Create Session]             |
 |                               |
@@ -421,21 +538,19 @@ Right-click on link:
 
 ## 10. Future Work
 
-These features are explicitly **out of scope for v1** and deferred to future releases.
+These features are deferred to future releases.
 
-### 10.1 Drive Sync (Encrypted Cloud Sync)
+> **Implemented since v1:** Drive Sync (now Section 5.6 / 4.2.1), Passcode + Biometric Lock (now Section 5.5), Cookie Isolation Modes, Auto-Refresh, Debugging Tools.
 
-Opt-in module that syncs encrypted session profiles to a user-chosen cloud drive folder. The extension itself makes **zero direct network calls** — sync is mediated entirely through the drive's local client folder.
+### 10.1 Firefox `contextualIdentities` Integration
+
+Use Firefox's native container isolation where available, falling back to Snapshot & Swap only for storage layers not covered by contextual identities. Provides kernel-level cookie jar isolation without content script overhead.
 
 **Approach:**
 
-- Session profiles serialized, encrypted (AES-256-GCM) with user passphrase, written to a local folder (e.g., `~/Google Drive/Unaware Sessions/`)
-- The cloud drive's desktop client handles upload/download
-- On another machine, the extension watches the same folder and imports after decryption
-- Conflict resolution: last-write-wins with merge prompt for divergent edits
-
-**Synced:** Session profile metadata (name, color, settings), session templates.  
-**Never synced:** Cookies, active session state, browsing history, DOM storage contents.
+- Detect Firefox at runtime; create/delete `contextualIdentities` (containers) mapped to session profiles
+- On session switch: open new tab with `cookieStoreId` instead of cookie swap
+- Adapt popup UI: hide storage isolation indicators (Firefox handles natively)
 
 ### 10.2 Per-Session Proxy Routing
 
@@ -444,20 +559,24 @@ HTTP/SOCKS5 proxy configuration per session for IP-level isolation.
 **Approach:**
 
 - Proxy settings stored in `SessionSettings`
-- Implemented via `chrome.proxy` API (Chromium) or proxy PAC scripts
+- Implemented via `chrome.proxy` API (Chromium) or proxy PAC scripts (Firefox)
 - Each session's network traffic routed through its configured proxy
 - Provides IP-level isolation complementary to cookie/storage isolation
 
-**Requires:** Careful handling of DNS leaks, WebRTC leak prevention, proxy authentication.
+**Requires:** Careful handling of DNS leaks, WebRTC leak prevention, and proxy authentication.
 
 ### 10.3 Session Templates
 
-Pre-configured groups of tabs + session pairings for common workflows. One-click launch of entire work contexts.
+Pre-configured groups of tabs + session pairings for common workflows. One-click launch of entire work contexts (e.g., open 4 client dashboards each in their own session).
 
 ### 10.4 Request Header Injection
 
-Per-session custom request headers (useful for staging auth tokens, API keys). Implemented via `declarativeNetRequest` rules scoped to session.
+Per-session custom request headers — useful for staging auth tokens, API keys, or custom debug headers. Implemented via `declarativeNetRequest` rules scoped to session.
 
-### 10.5 Passphrase Lock
+### 10.5 Per-Session User-Agent Override
 
-Optional passphrase to encrypt and lock the session vault. Requires unlock on browser start.
+Configurable User-Agent string per session for device/browser spoofing during QA and cross-environment testing. The `SessionSettings.userAgent` field is reserved in the type model but not yet wired up end-to-end.
+
+### 10.6 Encrypted Local Export
+
+Optional AES-256-GCM encryption with user-provided passphrase for local JSON export files. Currently, local exports are unencrypted (Drive sync uses encryption, but local file export does not).

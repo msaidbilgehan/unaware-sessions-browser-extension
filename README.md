@@ -1,6 +1,6 @@
 # Unaware Sessions Browser Extension
 
-**Open-source, privacy-first multi-session browser manager — entirely local.**
+**Open-source, privacy-first multi-session browser manager — local by default, with opt-in encrypted cloud sync.**
 
 [![Chrome Web Store](https://img.shields.io/chrome-web-store/v/pfpfakjgmkfmcimgknmnebloclkbfhbh?style=flat-square&logo=google-chrome&logoColor=white&label=Chrome%20Extension)](https://chromewebstore.google.com/detail/browser-automata/pfpfakjgmkfmcimgknmnebloclkbfhbh)
 
@@ -54,7 +54,7 @@ Managing multiple accounts on the same service (Gmail, Twitter, dev/staging/prod
 - **Incognito / Private windows** don't persist sessions and can't run in parallel with identity separation.
 - **Multi-Account Containers** (Firefox) are the closest native solution but are Firefox-only and lack cross-browser portability.
 
-Unaware Sessions fills the gap: lightweight session isolation that works inside your existing browser, stores nothing remotely, and is fully auditable.
+Unaware Sessions fills the gap: lightweight session isolation that works inside your existing browser, stores nothing remotely unless you opt in, and is fully auditable.
 
 ---
 
@@ -62,11 +62,11 @@ Unaware Sessions fills the gap: lightweight session isolation that works inside 
 
 ### Core
 
-- Create named, color-coded session profiles (e.g., `work-gmail`, `client-A`, `staging`)
-- Each profile gets its own isolated cookie jar, localStorage, and sessionStorage
+- Create named, color-coded, emoji-tagged session profiles (e.g., `work-gmail`, `client-A`, `staging`)
+- Each profile gets its own isolated cookie jar, localStorage, sessionStorage, and IndexedDB
 - Open any link in any session context via right-click context menu
 - Tab badge indicators showing which session a tab belongs to
-- Switch a tab's session identity with automatic page reload
+- Switch a tab's session identity with a fresh navigation to apply the new context cleanly
 - Cookie isolation modes: **soft** (default, preserves unmanaged domains) or **strict** (full isolation)
 - Per-domain isolation mode overrides via settings
 
@@ -79,7 +79,8 @@ Unaware Sessions fills the gap: lightweight session isolation that works inside 
 - Rename (double-click), delete (with undo), and duplicate session profiles
 - Drag-to-reorder sessions
 - Per-session storage usage dashboard
-- Search/filter bar for large session lists
+- Search/filter by session name or associated domain
+- Auto-refresh for tracked tabs at a configurable interval (globally or per-domain)
 - Right-click context menu on sessions (rename, duplicate, pin, delete)
 
 ### UI & Accessibility
@@ -139,7 +140,7 @@ Unaware Sessions fills the gap: lightweight session isolation that works inside 
 
 ### Popup — Session Switching
 
-Switch between isolated sessions on any site. Each session maintains its own cookies, localStorage, and IndexedDB.
+Switch between isolated sessions on any site. Each session maintains its own cookies, localStorage, sessionStorage, and IndexedDB.
 
 #### ChatGPT
 
@@ -200,13 +201,17 @@ Switch between isolated sessions on any site. Each session maintains its own coo
 
 ### Session Switch Flow (Chromium)
 
-1. User selects "Switch to Session B" in popup
-2. Service Worker saves current session's cookies and triggers content script to save DOM storage (localStorage, sessionStorage, IndexedDB)
-3. Service Worker clears origin cookies and restores Session B's cookies
-4. Service Worker queues a pending storage restore and reloads the tab
-5. Content script at `document_start` sends `CONTENT_SCRIPT_READY` to Service Worker
-6. Service Worker sends Session B's DOM storage to content script for restoration
-7. Badge updates to reflect new session
+1. User clicks a session card in the popup
+2. Service Worker acquires per-tab mutex (serializes concurrent switches)
+3. Service Worker saves current session's cookies (origin-scoped with domain hierarchy walk)
+4. Service Worker clears origin cookies (soft mode: skips if no target session data)
+5. Service Worker restores target session's cookies from IndexedDB
+6. Service Worker updates tab-session mapping and DNR rules
+7. Service Worker navigates tab via `chrome.tabs.update({url})` for clean cookie state
+8. On page load, content script at `document_start` restores DOM storage from previously saved snapshot
+9. Badge updates to reflect new session
+
+> **Note:** DOM storage (localStorage, sessionStorage, IndexedDB) is saved separately via the manual "Refresh session data" button or auto-refresh — not as part of the switch itself.
 
 ### Platform Strategy
 
@@ -231,12 +236,14 @@ Switch between isolated sessions on any site. Each session maintains its own coo
 | Layer | Technology | Role |
 | ----- | ---------- | ---- |
 | Extension Runtime | WebExtensions API (MV3) | Cross-browser extension framework |
-| UI Framework | Svelte 5 | Popup, options page (runes-based reactivity) |
-| Build System | Vite + @crxjs/vite-plugin | Dev server, HMR, Chrome extension bundling |
-| Language | TypeScript | End-to-end type safety (strict mode) |
-| Internal Storage | chrome.storage.local + IndexedDB | Session profiles + storage snapshots |
-| Styling | CSS Custom Properties | Design system with light/dark themes, no CSS framework |
-| Testing | Vitest + fake-indexeddb | Unit tests with Chrome API mocks |
+| UI Framework | Svelte 5 (runes) | Popup & options interface |
+| Build System | Vite + @crxjs/vite-plugin | Dev server, HMR, extension bundling |
+| Language | TypeScript (strict) | End-to-end type safety |
+| Internal Storage | chrome.storage.local + chrome.storage.session + IndexedDB | Session profiles, tab mappings, cookie/storage snapshots |
+| Styling | CSS custom properties | Design system tokens with light/dark themes |
+| Security | Web Crypto (PBKDF2-SHA256) + WebAuthn | Passcode hashing, biometric auth |
+| Optional Sync | Google Drive REST v3 (`drive.appdata`) + Web Crypto (AES-256-GCM) | Opt-in encrypted session sync |
+| Testing | Vitest + fake-indexeddb | Unit tests with Chrome API mocks (467+ tests) |
 | Linting | ESLint + Prettier | Code quality |
 
 ---
@@ -271,12 +278,6 @@ npm run build
 4. Select the `dist/` folder from the project root.
 5. The Unaware Sessions icon appears in your toolbar — click it to open the popup.
 
-### Load into Firefox
-
-1. Open `about:debugging#/runtime/this-firefox` in Firefox.
-2. Click **Load Temporary Add-on**.
-3. Select `dist/firefox/manifest.json`.
-
 ### Development Mode (HMR)
 
 ```bash
@@ -297,7 +298,7 @@ Press `Alt+Shift+B` (the default keyboard shortcut) to open the Unaware Sessions
 2. Hit **+ New Session** — give it a name and pick a color.
 3. Right-click any link and select **Open in Session** to choose your session.
 4. The tab opens with a colored badge. Cookies and storage are fully isolated.
-5. Create more sessions as needed. Switch any tab between sessions from the popup (triggers page reload).
+5. Create more sessions as needed. Switch any tab between sessions from the popup.
 
 ---
 
@@ -425,7 +426,8 @@ tests/
 | `tabs` | Track tab lifecycle, reload tabs, update badges |
 | `declarativeNetRequest` | Modify cookie headers on outbound requests |
 | `contextMenus` | "Open in Session" right-click menu |
-| `alarms` | Periodic state persistence, cleanup, and auto-sync |
+| `alarms` | Auto-refresh, auto-sync, periodic cleanup |
+| `favicon` | Display site icons in popup via _favicon API |
 | `identity` | Google OAuth2 for Drive sync |
 
 ---
@@ -473,7 +475,7 @@ npm run test         # All tests pass
 - **TypeScript strict mode** — no `any`, no implicit types.
 - **Entity-per-handler pattern** — each entity domain has its own module in `background/`.
 - **Discriminated union messaging** — all messages between contexts use typed discriminated unions (see `shared/types.ts`).
-- **No external network calls** — the extension runs entirely locally. No analytics, no telemetry, no external APIs.
+- **No analytics, no telemetry** — the only network calls are opt-in Google Drive sync (user-initiated, encrypted).
 
 ### Pull Request Guidelines
 
