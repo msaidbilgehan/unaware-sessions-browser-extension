@@ -45,6 +45,12 @@
     syncGetState,
     syncConfigure,
     syncResolveConflicts,
+    exportFull,
+    webDavBackupNow,
+    webDavConnect,
+    webDavDisconnect,
+    webDavGetState,
+    webDavTestConnection,
   } from '@shared/api';
   import {
     getSyncConfig,
@@ -52,8 +58,32 @@
     onSyncConfigChange,
   } from '@shared/sync/sync-store';
   import type { SyncConfig, SyncState, MergeStrategy, SyncInterval, ConflictEntry } from '@shared/sync/sync-types';
-  import { SYNC_INTERVAL_OPTIONS } from '@shared/constants';
-  import { formatRelativeTime } from '@shared/utils';
+  import {
+    SYNC_INTERVAL_OPTIONS,
+    WEBDAV_MAX_BACKUP_OPTIONS,
+    WEBDAV_SYNC_INTERVAL_OPTIONS,
+  } from '@shared/constants';
+  import {
+    getWebDavConfig,
+    initWebDavStore,
+    onWebDavConfigChange,
+    setWebDavConfig,
+  } from '@shared/webdav/webdav-store';
+  import { encrypt } from '@shared/sync/crypto-engine';
+  import {
+    deleteWebDavFile,
+    listWebDavFiles,
+    putWebDavFile,
+    testWebDavConnection,
+  } from '@shared/webdav/webdav-client';
+  import type {
+    WebDavConfig,
+    WebDavConnectionConfig,
+    WebDavMaxBackups,
+    WebDavState,
+    WebDavSyncInterval,
+  } from '@shared/webdav/webdav-types';
+  import { formatRelativeTime, generateId } from '@shared/utils';
 
   let theme = $state<ThemePreference>(getTheme());
 
@@ -450,6 +480,315 @@
   $effect(() => {
     if (syncCfg.enabled) {
       refreshSyncState();
+    }
+  });
+
+  // ── WebDAV Backup state ───────────────────────────────────
+
+  let webDavCfg = $state<WebDavConfig>(getWebDavConfig());
+  let webDavState = $state<WebDavState>({ status: 'idle', progress: '' });
+  let showWebDavDisconnectConfirm = $state(false);
+  let webDavConnecting = $state(false);
+  let webDavTesting = $state(false);
+  let webDavSaving = $state(false);
+  let webDavBackingUp = $state(false);
+  let webDavHost = $state(webDavCfg.host);
+  let webDavUsername = $state(webDavCfg.username);
+  let webDavPassword = $state(webDavCfg.password);
+  let webDavPath = $state(webDavCfg.path);
+  let webDavSyncInterval = $state<WebDavSyncInterval>(webDavCfg.syncInterval);
+  let webDavMaxBackups = $state<WebDavMaxBackups>(webDavCfg.maxBackups);
+
+  $effect(() => {
+    initWebDavStore().then(() => {
+      webDavCfg = getWebDavConfig();
+      syncWebDavForm(webDavCfg);
+    });
+    const unsub = onWebDavConfigChange((config) => {
+      webDavCfg = config;
+      syncWebDavForm(config);
+    });
+    return unsub;
+  });
+
+  function syncWebDavForm(config: WebDavConfig) {
+    webDavHost = config.host;
+    webDavUsername = config.username;
+    webDavPassword = config.password;
+    webDavPath = config.path;
+    webDavSyncInterval = config.syncInterval;
+    webDavMaxBackups = config.maxBackups;
+  }
+
+  async function refreshWebDavState() {
+    try {
+      webDavState = await webDavGetState();
+    } catch {
+      // Ignore — WebDAV may not be initialized yet
+    }
+  }
+
+  async function refreshWebDavConfigFromStore() {
+    await initWebDavStore();
+    webDavCfg = getWebDavConfig();
+    syncWebDavForm(webDavCfg);
+  }
+
+  function getWebDavFormConfig() {
+    return {
+      host: webDavHost.trim(),
+      username: webDavUsername.trim(),
+      password: webDavPassword,
+      path: webDavPath.trim() || '/backup',
+      syncInterval: webDavSyncInterval,
+      maxBackups: webDavMaxBackups,
+    };
+  }
+
+  function getSafeWebDavConsoleConfig() {
+    return {
+      host: webDavHost.trim(),
+      username: webDavUsername.trim(),
+      password: webDavPassword ? '***' : '',
+      path: webDavPath.trim() || '/backup',
+      syncInterval: webDavSyncInterval,
+      maxBackups: webDavMaxBackups,
+    };
+  }
+
+  function logWebDavError(action: string, err: unknown) {
+    console.error(`[WebDAV] ${action} failed`, err, {
+      error: err instanceof Error ? err.message : String(err),
+      config: getSafeWebDavConsoleConfig(),
+    });
+  }
+
+  function isUnknownMessageTypeError(err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return message.includes('Unknown message type: WEBDAV_');
+  }
+
+  async function saveWebDavConfigLocally(extra: Partial<WebDavConfig> = {}) {
+    const existing = getWebDavConfig();
+    await setWebDavConfig({
+      ...getWebDavFormConfig(),
+      deviceId: existing.deviceId || generateId(),
+      lastSyncError: '',
+      ...extra,
+    });
+  }
+
+  function toWebDavConnectionConfig(config: WebDavConfig): WebDavConnectionConfig {
+    return {
+      host: config.host,
+      username: config.username,
+      password: config.password,
+      path: config.path,
+    };
+  }
+
+  function getWebDavPassphrase(config: WebDavConfig) {
+    return `webdav:${config.host}:${config.username}:${config.password}`;
+  }
+
+  function sanitizeWebDavFileToken(value: string) {
+    return value.replace(/[^a-zA-Z0-9_-]/g, '_');
+  }
+
+  function formatWebDavBackupTimestamp(date: Date) {
+    const parts = [
+      date.getFullYear(),
+      date.getMonth() + 1,
+      date.getDate(),
+      date.getHours(),
+      date.getMinutes(),
+      date.getSeconds(),
+    ];
+    return parts.map((part, index) => (index === 0 ? String(part) : String(part).padStart(2, '0'))).join('');
+  }
+
+  function buildWebDavBackupFileName(deviceId: string) {
+    return `unaware-sessions.${formatWebDavBackupTimestamp(new Date())}.${sanitizeWebDavFileToken(deviceId)}.webdav.json`;
+  }
+
+  async function pruneOldWebDavBackups(config: WebDavConfig) {
+    if (config.maxBackups <= 0) return;
+
+    const deviceToken = `.${sanitizeWebDavFileToken(config.deviceId || 'device')}.`;
+    const files = await listWebDavFiles(toWebDavConnectionConfig(config));
+    const backups = files
+      .filter((file) => {
+        return (
+          file.fileName.startsWith('unaware-sessions.') &&
+          file.fileName.endsWith('.webdav.json') &&
+          file.fileName.includes(deviceToken)
+        );
+      })
+      .sort((a, b) => {
+        const byModified = b.lastModified - a.lastModified;
+        return byModified !== 0 ? byModified : b.fileName.localeCompare(a.fileName);
+      });
+
+    for (const file of backups.slice(config.maxBackups)) {
+      await deleteWebDavFile(toWebDavConnectionConfig(config), file.fileName);
+    }
+  }
+
+  async function backupToWebDavFromOptions(): Promise<WebDavState> {
+    await saveWebDavConfigLocally();
+    const config = getWebDavConfig();
+    if (!config.host) {
+      throw new Error('WebDAV host is required');
+    }
+
+    webDavState = { status: 'syncing', progress: 'Backing up to WebDAV...' };
+    const data = await exportFull();
+    const encrypted = await encrypt(data, getWebDavPassphrase(config));
+    const fileName = buildWebDavBackupFileName(config.deviceId || 'device');
+
+    await putWebDavFile(toWebDavConnectionConfig(config), fileName, JSON.stringify(encrypted));
+    await pruneOldWebDavBackups(config);
+    await setWebDavConfig({ lastSyncAt: Date.now(), lastSyncError: '' });
+
+    webDavState = { status: 'idle', progress: '' };
+    return webDavState;
+  }
+
+  async function handleWebDavSaveAccount() {
+    webDavSaving = true;
+    try {
+      await saveWebDavConfigLocally();
+      await refreshWebDavConfigFromStore();
+      syncToast = { message: $_('options.settings.webdavSettingsSaved'), type: 'success' };
+    } catch (err) {
+      logWebDavError('Save account', err);
+      syncToast = { message: $_('options.settings.webdavSaveFailed', { values: { error: err instanceof Error ? err.message : 'Unknown error' } }), type: 'error' };
+    } finally {
+      webDavSaving = false;
+    }
+  }
+
+  async function handleWebDavTestConnection() {
+    webDavTesting = true;
+    try {
+      try {
+        await webDavTestConnection(getWebDavFormConfig());
+      } catch (err) {
+        if (!isUnknownMessageTypeError(err)) throw err;
+        console.warn('[WebDAV] Service worker is missing WEBDAV_TEST_CONNECTION, testing from options page fallback');
+        await saveWebDavConfigLocally();
+        await testWebDavConnection(getWebDavFormConfig());
+        await setWebDavConfig({ lastSyncError: '' });
+      }
+      await refreshWebDavConfigFromStore();
+      console.info('[WebDAV] Test connection succeeded', { config: getSafeWebDavConsoleConfig() });
+      syncToast = { message: $_('options.settings.webdavTestSucceeded'), type: 'success' };
+    } catch (err) {
+      await setWebDavConfig({ lastSyncError: err instanceof Error ? err.message : String(err) });
+      logWebDavError('Test connection', err);
+      syncToast = { message: $_('options.settings.webdavTestFailed', { values: { error: err instanceof Error ? err.message : 'Unknown error' } }), type: 'error' };
+    } finally {
+      webDavTesting = false;
+    }
+  }
+
+  async function handleWebDavConnect() {
+    webDavConnecting = true;
+    try {
+      try {
+        await webDavConnect(getWebDavFormConfig());
+      } catch (err) {
+        if (!isUnknownMessageTypeError(err)) throw err;
+        console.warn('[WebDAV] Service worker is missing WEBDAV_CONNECT, connecting from options page fallback');
+        await saveWebDavConfigLocally();
+        await testWebDavConnection(getWebDavFormConfig());
+        await setWebDavConfig({ enabled: true, lastSyncError: '' });
+      }
+      await refreshWebDavConfigFromStore();
+      syncToast = { message: $_('options.settings.connectedWebdav'), type: 'success' };
+    } catch (err) {
+      logWebDavError('Connect', err);
+      await setWebDavConfig({ lastSyncError: err instanceof Error ? err.message : String(err) });
+      await refreshWebDavConfigFromStore();
+      syncToast = { message: $_('options.settings.webdavConnectionFailed', { values: { error: err instanceof Error ? err.message : 'Unknown error' } }), type: 'error' };
+    } finally {
+      webDavConnecting = false;
+    }
+  }
+
+  async function handleWebDavDisconnect() {
+    showWebDavDisconnectConfirm = false;
+    try {
+      try {
+        await webDavDisconnect();
+      } catch (err) {
+        if (!isUnknownMessageTypeError(err)) throw err;
+        console.warn('[WebDAV] Service worker is missing WEBDAV_DISCONNECT, disconnecting from options page fallback');
+        await setWebDavConfig({
+          enabled: false,
+          host: '',
+          username: '',
+          password: '',
+          path: '/backup',
+          syncInterval: 0,
+          maxBackups: 0,
+          lastSyncAt: 0,
+          lastSyncError: '',
+          deviceId: '',
+        });
+      }
+      await refreshWebDavConfigFromStore();
+      webDavState = { status: 'idle', progress: '' };
+      syncToast = { message: $_('options.settings.disconnectedWebdav'), type: 'info' };
+    } catch (err) {
+      logWebDavError('Disconnect', err);
+      syncToast = { message: $_('options.settings.webdavDisconnectFailed', { values: { error: err instanceof Error ? err.message : 'Unknown error' } }), type: 'error' };
+    }
+  }
+
+  async function handleWebDavBackupNow() {
+    webDavBackingUp = true;
+    try {
+      let state: WebDavState;
+      try {
+        state = await webDavBackupNow();
+      } catch (err) {
+        if (!isUnknownMessageTypeError(err)) throw err;
+        console.warn('[WebDAV] Service worker is missing WEBDAV_BACKUP_NOW, backing up from options page fallback');
+        state = await backupToWebDavFromOptions();
+      }
+      webDavState = state;
+      await refreshWebDavConfigFromStore();
+      if (state.status === 'error') {
+        syncToast = { message: state.progress, type: 'error' };
+      } else {
+        syncToast = { message: $_('options.settings.webdavBackupCompleted'), type: 'success' };
+      }
+    } catch (err) {
+      logWebDavError('Backup', err);
+      webDavState = { status: 'error', progress: err instanceof Error ? err.message : String(err) };
+      await setWebDavConfig({ lastSyncError: webDavState.progress });
+      syncToast = { message: $_('options.settings.webdavBackupFailed', { values: { error: err instanceof Error ? err.message : 'Unknown error' } }), type: 'error' };
+    } finally {
+      webDavBackingUp = false;
+    }
+  }
+
+  async function handleWebDavIntervalChange(interval: WebDavSyncInterval) {
+    webDavSyncInterval = interval;
+    await setWebDavConfig({ syncInterval: interval });
+    await refreshWebDavConfigFromStore();
+  }
+
+  async function handleWebDavMaxBackupsChange(maxBackups: WebDavMaxBackups) {
+    webDavMaxBackups = maxBackups;
+    await setWebDavConfig({ maxBackups });
+    await refreshWebDavConfigFromStore();
+  }
+
+  $effect(() => {
+    if (webDavCfg.enabled) {
+      refreshWebDavState();
     }
   });
 
@@ -1034,6 +1373,207 @@
       </div>
     {/if}
   </section>
+
+  <!-- WebDAV Backup -->
+  <section class="card">
+    <div class="card-header">
+      <div class="card-icon webdav">
+        <Icon name="database" size={16} />
+      </div>
+      <div>
+        <h2>{$_('options.settings.webdavSync')}</h2>
+        <p class="description">
+          {$_('options.settings.webdavSyncDesc')}
+        </p>
+      </div>
+    </div>
+
+    <div class="webdav-grid">
+      <label class="field">
+        <span class="field-label">{$_('options.settings.webdavHost')}</span>
+        <input
+          class="text-input"
+          type="url"
+          bind:value={webDavHost}
+          placeholder={$_('options.settings.webdavHostPlaceholder')}
+          autocomplete="url"
+        />
+      </label>
+      <label class="field">
+        <span class="field-label">{$_('options.settings.webdavPath')}</span>
+        <input
+          class="text-input"
+          type="text"
+          bind:value={webDavPath}
+          placeholder={$_('options.settings.webdavPathPlaceholder')}
+          autocomplete="off"
+        />
+      </label>
+      <label class="field">
+        <span class="field-label">{$_('options.settings.webdavUsername')}</span>
+        <input
+          class="text-input"
+          type="text"
+          bind:value={webDavUsername}
+          autocomplete="username"
+        />
+      </label>
+      <label class="field">
+        <span class="field-label">{$_('options.settings.webdavPassword')}</span>
+        <input
+          class="text-input"
+          type="password"
+          bind:value={webDavPassword}
+          autocomplete="current-password"
+        />
+      </label>
+    </div>
+
+    {#if webDavCfg.enabled}
+      <div class="sync-status-row">
+        <div class="sync-status-indicator" class:syncing={webDavBackingUp || webDavState.status === 'syncing'} class:error={webDavState.status === 'error'}>
+          {#if webDavBackingUp || webDavState.status === 'syncing'}
+            <span class="spinner-sm"></span>
+          {:else if webDavState.status === 'error'}
+            <Icon name="alert-triangle" size={14} />
+          {:else}
+            <Icon name="check" size={14} />
+          {/if}
+          <span class="sync-status-text">
+            {#if webDavBackingUp || webDavState.status === 'syncing'}
+              {$_('common.syncing')}
+            {:else if webDavState.status === 'error'}
+              {$_('common.error')}
+            {:else}
+              {$_('common.connected')}
+            {/if}
+          </span>
+        </div>
+        {#if webDavCfg.lastSyncAt > 0}
+          <span class="sync-last-time">{$_('options.settings.lastSync', { values: { time: formatRelativeTime(webDavCfg.lastSyncAt) } })}</span>
+        {/if}
+      </div>
+      {#if webDavState.status === 'error' && webDavState.progress}
+        <p class="sync-error-text">{webDavState.progress}</p>
+      {:else if webDavCfg.lastSyncError}
+        <p class="sync-error-text">{webDavCfg.lastSyncError}</p>
+      {/if}
+    {/if}
+
+    <div class="divider"></div>
+
+    <div class="setting-row">
+      <span class="setting-label">{$_('options.settings.autoSyncInterval')}</span>
+      <div class="interval-options webdav-intervals">
+        {#each WEBDAV_SYNC_INTERVAL_OPTIONS as opt (opt.value)}
+          <button
+            class="interval-pill"
+            class:active={webDavSyncInterval === opt.value}
+            onclick={() => handleWebDavIntervalChange(opt.value)}
+            aria-pressed={webDavSyncInterval === opt.value}
+          >
+            {opt.label}
+          </button>
+        {/each}
+      </div>
+    </div>
+
+    <div class="setting-row">
+      <div class="toggle-info">
+        <span class="setting-label">{$_('options.settings.webdavMaxBackups')}</span>
+        <span class="toggle-description">
+          {$_('options.settings.webdavMaxBackupsDesc')}
+        </span>
+      </div>
+      <div class="interval-options">
+        {#each WEBDAV_MAX_BACKUP_OPTIONS as opt (opt.value)}
+          <button
+            class="interval-pill"
+            class:active={webDavMaxBackups === opt.value}
+            onclick={() => handleWebDavMaxBackupsChange(opt.value)}
+            aria-pressed={webDavMaxBackups === opt.value}
+          >
+            {opt.value === 0 ? $_('options.settings.unlimited') : opt.label}
+          </button>
+        {/each}
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="sync-actions">
+      <button
+        class="security-text-btn"
+        onclick={handleWebDavSaveAccount}
+        disabled={webDavSaving}
+      >
+        {#if webDavSaving}
+          <span class="spinner-sm"></span>
+          {$_('common.saving')}
+        {:else}
+          <Icon name="check" size={14} />
+          {$_('options.settings.saveWebdavAccount')}
+        {/if}
+      </button>
+      <button
+        class="security-text-btn"
+        onclick={handleWebDavTestConnection}
+        disabled={webDavTesting}
+      >
+        {#if webDavTesting}
+          <span class="spinner-sm"></span>
+          {$_('options.settings.testing')}
+        {:else}
+          <Icon name="refresh-cw" size={14} />
+          {$_('options.settings.testWebdav')}
+        {/if}
+      </button>
+      <button
+        class="security-text-btn primary"
+        onclick={handleWebDavConnect}
+        disabled={webDavConnecting}
+      >
+        {#if webDavConnecting}
+          <span class="spinner-sm"></span>
+          {$_('common.connecting')}
+        {:else}
+          <Icon name="check" size={14} />
+          {webDavCfg.enabled ? $_('options.settings.saveWebdav') : $_('options.settings.connectWebdav')}
+        {/if}
+      </button>
+      {#if webDavCfg.enabled}
+        <button
+          class="security-text-btn"
+          onclick={handleWebDavBackupNow}
+          disabled={webDavBackingUp}
+        >
+          {#if webDavBackingUp}
+            <span class="spinner-sm"></span>
+            {$_('common.syncing')}
+          {:else}
+            <Icon name="upload" size={14} />
+            {$_('options.settings.backupNow')}
+          {/if}
+        </button>
+        <button
+          class="security-text-btn"
+          onclick={() => (showWebDavDisconnectConfirm = true)}
+        >
+          <Icon name="cloud-off" size={14} />
+          {$_('common.disconnect')}
+        </button>
+      {/if}
+    </div>
+
+    <div class="isolation-explainer">
+      <div class="explainer-row">
+        <Icon name="lock" size={14} />
+        <div>
+          {$_('options.settings.webdavEncryptionDesc')}
+        </div>
+      </div>
+    </div>
+  </section>
 </div>
 
 {#if showDisconnectConfirm}
@@ -1044,6 +1584,17 @@
     danger={true}
     onconfirm={handleSyncDisconnect}
     oncancel={() => (showDisconnectConfirm = false)}
+  />
+{/if}
+
+{#if showWebDavDisconnectConfirm}
+  <ConfirmDialog
+    title={$_('options.settings.webdavDisconnectTitle')}
+    message={$_('options.settings.webdavDisconnectMessage')}
+    confirmLabel={$_('common.disconnect')}
+    danger={true}
+    onconfirm={handleWebDavDisconnect}
+    oncancel={() => (showWebDavDisconnectConfirm = false)}
   />
 {/if}
 
@@ -1429,6 +1980,57 @@
     color: var(--color-accent);
   }
 
+  .card-icon.webdav {
+    background: var(--color-success-soft);
+    color: var(--color-success);
+  }
+
+  .webdav-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-4);
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .field-label {
+    font-size: var(--text-xs);
+    font-weight: var(--font-medium);
+    color: var(--color-text-secondary);
+  }
+
+  .text-input {
+    width: 100%;
+    min-width: 0;
+    padding: var(--space-3) var(--space-4);
+    border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-md);
+    background: var(--color-bg-primary);
+    color: var(--color-text-primary);
+    font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    outline: none;
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  }
+
+  .text-input:focus {
+    border-color: var(--color-accent);
+    box-shadow: var(--shadow-focus);
+  }
+
+  .text-input::placeholder {
+    color: var(--color-text-tertiary);
+  }
+
+  .webdav-intervals {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
   .sync-status-row {
     display: flex;
     align-items: center;
@@ -1464,8 +2066,17 @@
     color: var(--color-text-tertiary);
   }
 
+  .sync-error-text {
+    margin: calc(-1 * var(--space-3)) 0 0;
+    font-size: var(--text-xs);
+    color: var(--color-error);
+    line-height: var(--leading-relaxed);
+    word-break: break-word;
+  }
+
   .sync-actions {
     display: flex;
+    flex-wrap: wrap;
     gap: var(--space-3);
   }
 
@@ -1488,5 +2099,17 @@
 
   .security-text-btn :global(svg) {
     vertical-align: -2px;
+  }
+
+  @media (max-width: 640px) {
+    .setting-row,
+    .sync-status-row {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+
+    .webdav-grid {
+      grid-template-columns: 1fr;
+    }
   }
 </style>

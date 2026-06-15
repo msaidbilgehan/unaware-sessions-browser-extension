@@ -222,6 +222,14 @@ export enum MessageType {
   SYNC_GET_STATE = 'SYNC_GET_STATE',
   SYNC_CONFIGURE = 'SYNC_CONFIGURE',
   SYNC_RESOLVE_CONFLICTS = 'SYNC_RESOLVE_CONFLICTS',
+
+  // WebDAV Backup
+  WEBDAV_CONNECT = 'WEBDAV_CONNECT',
+  WEBDAV_DISCONNECT = 'WEBDAV_DISCONNECT',
+  WEBDAV_BACKUP_NOW = 'WEBDAV_BACKUP_NOW',
+  WEBDAV_TEST_CONNECTION = 'WEBDAV_TEST_CONNECTION',
+  WEBDAV_GET_STATE = 'WEBDAV_GET_STATE',
+  WEBDAV_CONFIGURE = 'WEBDAV_CONFIGURE',
 }
 
 export interface CreateSessionMessage {
@@ -464,6 +472,39 @@ export interface SyncResolveConflictsMessage {
   resolutions: import('@shared/sync/sync-types').ConflictEntry[];
 }
 
+export interface WebDavConnectMessage {
+  type: MessageType.WEBDAV_CONNECT;
+  config: Pick<
+    import('@shared/webdav/webdav-types').WebDavConfig,
+    'host' | 'username' | 'password' | 'path' | 'syncInterval' | 'maxBackups'
+  >;
+}
+
+export interface WebDavDisconnectMessage {
+  type: MessageType.WEBDAV_DISCONNECT;
+}
+
+export interface WebDavBackupNowMessage {
+  type: MessageType.WEBDAV_BACKUP_NOW;
+}
+
+export interface WebDavTestConnectionMessage {
+  type: MessageType.WEBDAV_TEST_CONNECTION;
+  config: Pick<
+    import('@shared/webdav/webdav-types').WebDavConfig,
+    'host' | 'username' | 'password' | 'path' | 'syncInterval' | 'maxBackups'
+  >;
+}
+
+export interface WebDavGetStateMessage {
+  type: MessageType.WEBDAV_GET_STATE;
+}
+
+export interface WebDavConfigureMessage {
+  type: MessageType.WEBDAV_CONFIGURE;
+  updates: Partial<import('@shared/webdav/webdav-types').WebDavConfig>;
+}
+
 export type CookieDiffStatus =
   | 'match'
   | 'value_changed'
@@ -571,7 +612,13 @@ export type Message =
   | SyncNowMessage
   | SyncGetStateMessage
   | SyncConfigureMessage
-  | SyncResolveConflictsMessage;
+  | SyncResolveConflictsMessage
+  | WebDavConnectMessage
+  | WebDavDisconnectMessage
+  | WebDavBackupNowMessage
+  | WebDavTestConnectionMessage
+  | WebDavGetStateMessage
+  | WebDavConfigureMessage;
 
 // ── Response Wrapper ─────────────────────────────────────────────
 

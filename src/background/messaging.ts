@@ -52,11 +52,19 @@ import { refreshAllActiveSessions } from './auto-refresh';
 import { getLogs, clearLogs } from '@shared/logger';
 import { getToken, revokeAccess, getGoogleUserId } from '@shared/sync/drive-client';
 import { getSyncConfig, setSyncConfig } from '@shared/sync/sync-store';
+import { setWebDavConfig } from '@shared/webdav/webdav-store';
 import {
   triggerSync,
   getSyncState,
   resolveConflicts,
 } from './drive-sync';
+import {
+  backupToWebDav,
+  connectWebDav,
+  disconnectWebDav,
+  getWebDavState,
+  testSavedWebDavConnection,
+} from './webdav-sync';
 
 type MessageHandler = (
   message: Message,
@@ -650,6 +658,40 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
     if (msg.type !== MessageType.SYNC_RESOLVE_CONFLICTS) return { success: false };
     const state = await resolveConflicts(msg.resolutions);
     return { success: true, data: state };
+  },
+
+  // ── WebDAV Backup handlers ──────────────────────────────────
+
+  [MessageType.WEBDAV_CONNECT]: async (msg) => {
+    if (msg.type !== MessageType.WEBDAV_CONNECT) return { success: false };
+    await connectWebDav(msg.config);
+    return { success: true };
+  },
+
+  [MessageType.WEBDAV_DISCONNECT]: async () => {
+    await disconnectWebDav();
+    return { success: true };
+  },
+
+  [MessageType.WEBDAV_BACKUP_NOW]: async () => {
+    const state = await backupToWebDav();
+    return { success: true, data: state };
+  },
+
+  [MessageType.WEBDAV_TEST_CONNECTION]: async (msg) => {
+    if (msg.type !== MessageType.WEBDAV_TEST_CONNECTION) return { success: false };
+    await testSavedWebDavConnection(msg.config);
+    return { success: true };
+  },
+
+  [MessageType.WEBDAV_GET_STATE]: async () => {
+    return { success: true, data: getWebDavState() };
+  },
+
+  [MessageType.WEBDAV_CONFIGURE]: async (msg) => {
+    if (msg.type !== MessageType.WEBDAV_CONFIGURE) return { success: false };
+    await setWebDavConfig(msg.updates);
+    return { success: true };
   },
 
   [MessageType.PING]: async () => {

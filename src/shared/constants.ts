@@ -1,5 +1,6 @@
 import type { ExtensionSettings, SecurityConfig, GracePeriodMs } from '@shared/types';
 import type { SyncConfig, SyncInterval } from '@shared/sync/sync-types';
+import type { WebDavConfig, WebDavMaxBackups, WebDavSyncInterval } from '@shared/webdav/webdav-types';
 
 export const ALARM_PERSIST_STATE = 'persist-state';
 export const ALARM_INTERVAL_MINUTES = 1;
@@ -17,6 +18,7 @@ export const STORAGE_KEYS = {
   SECURITY_CONFIG: 'securityConfig',
   SECURITY_GRACE_UNTIL: 'securityGraceUntil',
   SYNC_CONFIG: 'syncConfig',
+  WEBDAV_CONFIG: 'webDavConfig',
 } as const;
 
 export const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
@@ -46,6 +48,7 @@ export const GRACE_PERIOD_OPTIONS: { value: GracePeriodMs; label: string }[] = [
 export const LOG_BUFFER_MAX_SIZE = 2000;
 
 export const ALARM_DRIVE_SYNC = 'drive-sync';
+export const ALARM_WEBDAV_SYNC = 'webdav-sync';
 
 export const DEFAULT_SYNC_CONFIG: SyncConfig = {
   enabled: false,
@@ -62,6 +65,42 @@ export const SYNC_INTERVAL_OPTIONS: { value: SyncInterval; label: string }[] = [
   { value: 5, label: '5m' },
   { value: 15, label: '15m' },
   { value: 30, label: '30m' },
+];
+
+export const DEFAULT_WEBDAV_CONFIG: WebDavConfig = {
+  enabled: false,
+  host: '',
+  username: '',
+  password: '',
+  path: '/backup',
+  syncInterval: 0,
+  maxBackups: 0,
+  lastSyncAt: 0,
+  lastSyncError: '',
+  deviceId: '',
+};
+
+export const WEBDAV_SYNC_INTERVAL_OPTIONS: { value: WebDavSyncInterval; label: string }[] = [
+  { value: 0, label: 'Off' },
+  { value: 1, label: '1m' },
+  { value: 5, label: '5m' },
+  { value: 15, label: '15m' },
+  { value: 30, label: '30m' },
+  { value: 60, label: '1h' },
+  { value: 120, label: '2h' },
+  { value: 360, label: '6h' },
+  { value: 720, label: '12h' },
+  { value: 1440, label: '24h' },
+];
+
+export const WEBDAV_MAX_BACKUP_OPTIONS: { value: WebDavMaxBackups; label: string }[] = [
+  { value: 0, label: 'Unlimited' },
+  { value: 1, label: '1' },
+  { value: 3, label: '3' },
+  { value: 5, label: '5' },
+  { value: 10, label: '10' },
+  { value: 20, label: '20' },
+  { value: 50, label: '50' },
 ];
 
 export const DNR_RULE_ID_BASE = 1000;

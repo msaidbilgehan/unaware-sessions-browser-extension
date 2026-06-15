@@ -260,7 +260,7 @@ export async function applyFullData(data: FullExportData): Promise<void> {
 
 // ── Export Local Data ──────────────────────────────────────
 
-async function exportLocalData(): Promise<FullExportData> {
+export async function exportLocalData(): Promise<FullExportData> {
   // Single-scan reads: O(T) each instead of O(N×T) from per-session queries
   const [sessions, cookieSnapshots, storageSnapshots] = await Promise.all([
     listSessions(),

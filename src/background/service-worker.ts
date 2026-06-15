@@ -3,6 +3,7 @@ import {
   ALARM_INTERVAL_MINUTES,
   ALARM_AUTO_REFRESH,
   ALARM_DRIVE_SYNC,
+  ALARM_WEBDAV_SYNC,
 } from '@shared/constants';
 import { initMessaging } from './messaging';
 import { initTabTracker, hydrateTabMap, persistTabMap } from './tab-tracker';
@@ -12,8 +13,10 @@ import { initBadgeManager } from './badge-manager';
 import { cleanupStaleRules } from './dnr-manager';
 import { initAutoRefresh, refreshAllActiveSessions } from './auto-refresh';
 import { initDriveSync, handleDriveSyncAlarm } from './drive-sync';
+import { initWebDavSync, handleWebDavSyncAlarm } from './webdav-sync';
 import { initSettings } from '@shared/settings-store';
 import { initSyncStore } from '@shared/sync/sync-store';
+import { initWebDavStore } from '@shared/webdav/webdav-store';
 import { createLogger } from '@shared/logger';
 
 const log = createLogger('service-worker');
@@ -22,6 +25,7 @@ async function hydrateState(): Promise<void> {
   // Init settings first so the logger level is available for all subsequent modules
   await initSettings();
   await initSyncStore();
+  await initWebDavStore();
   await Promise.all([hydrateSessions(), hydrateTabMap()]);
 }
 
@@ -57,6 +61,9 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     } else if (alarm.name === ALARM_DRIVE_SYNC) {
       log.debug('Alarm: drive sync');
       await handleDriveSyncAlarm();
+    } else if (alarm.name === ALARM_WEBDAV_SYNC) {
+      log.debug('Alarm: WebDAV backup');
+      await handleWebDavSyncAlarm();
     }
   } catch (err) {
     log.warn('Alarm handler error', err);
@@ -73,4 +80,7 @@ initAutoRefresh().catch((err) => {
 });
 initDriveSync().catch((err) => {
   log.error('Failed to init drive-sync', err);
+});
+initWebDavSync().catch((err) => {
+  log.error('Failed to init webdav-sync', err);
 });

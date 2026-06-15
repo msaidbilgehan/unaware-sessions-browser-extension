@@ -12,6 +12,7 @@ import type {
   LogEntry,
 } from '@shared/types';
 import type { SyncConfig, SyncState, ConflictEntry } from '@shared/sync/sync-types';
+import type { WebDavConfig, WebDavState } from '@shared/webdav/webdav-types';
 
 function isConnectionError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
@@ -272,4 +273,34 @@ export function syncConfigure(updates: Partial<SyncConfig>): Promise<void> {
 
 export function syncResolveConflicts(resolutions: ConflictEntry[]): Promise<SyncState> {
   return sendMessage({ type: MessageType.SYNC_RESOLVE_CONFLICTS, resolutions });
+}
+
+// ── WebDAV Backup API ──────────────────────────────────────
+
+export function webDavConnect(
+  config: Pick<WebDavConfig, 'host' | 'username' | 'password' | 'path' | 'syncInterval' | 'maxBackups'>,
+): Promise<void> {
+  return sendMessage({ type: MessageType.WEBDAV_CONNECT, config });
+}
+
+export function webDavDisconnect(): Promise<void> {
+  return sendMessage({ type: MessageType.WEBDAV_DISCONNECT });
+}
+
+export function webDavBackupNow(): Promise<WebDavState> {
+  return sendMessage({ type: MessageType.WEBDAV_BACKUP_NOW });
+}
+
+export function webDavTestConnection(
+  config: Pick<WebDavConfig, 'host' | 'username' | 'password' | 'path' | 'syncInterval' | 'maxBackups'>,
+): Promise<void> {
+  return sendMessage({ type: MessageType.WEBDAV_TEST_CONNECTION, config });
+}
+
+export function webDavGetState(): Promise<WebDavState> {
+  return sendMessage({ type: MessageType.WEBDAV_GET_STATE });
+}
+
+export function webDavConfigure(updates: Partial<WebDavConfig>): Promise<void> {
+  return sendMessage({ type: MessageType.WEBDAV_CONFIGURE, updates });
 }
