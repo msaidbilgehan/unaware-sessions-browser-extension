@@ -1,5 +1,11 @@
 <script lang="ts">
   import Icon from '@shared/components/Icon.svelte';
+  import { _ } from 'svelte-i18n';
+  import '@shared/i18n';
+  import { locale } from '@shared/i18n';
+
+  // Force re-render when locale changes
+  $effect(() => { void $locale; });
 
   interface Props {
     query: string;
@@ -29,14 +35,14 @@
   </span>
   <input
     type="text"
-    placeholder="Search sessions..."
+    placeholder={$_('popup.search.placeholder')}
     value={query}
     oninput={handleInput}
     bind:this={inputRef}
-    aria-label="Search sessions"
+    aria-label={$_('popup.search.ariaLabel')}
   />
   {#if query}
-    <button class="clear-btn" onclick={handleClear} aria-label="Clear search">
+    <button class="clear-btn" onclick={handleClear} aria-label={$_('popup.search.clearSearch')}>
       <Icon name="x" size={11} />
     </button>
   {/if}

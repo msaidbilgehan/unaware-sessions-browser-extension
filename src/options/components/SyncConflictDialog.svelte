@@ -1,6 +1,12 @@
 <script lang="ts">
+  import { _ } from 'svelte-i18n';
+  import '@shared/i18n';
+  import { locale } from '@shared/i18n';
   import type { ConflictEntry } from '@shared/sync/sync-types';
   import Icon from '@shared/components/Icon.svelte';
+
+  // Force re-render when locale changes
+  $effect(() => { void $locale; });
 
   interface Props {
     conflicts: ConflictEntry[];
@@ -33,7 +39,7 @@
   }
 
   function formatTime(ts: number): string {
-    if (!ts) return 'unknown';
+    if (!ts) return $_('options.settings.unknown');
     return new Date(ts).toLocaleString();
   }
 </script>
@@ -48,17 +54,17 @@
     onclick={(e) => e.stopPropagation()}
     onkeydown={(e) => { if (e.key === 'Escape') oncancel(); }}
   >
-    <h2 id="conflict-title">Resolve Sync Conflicts</h2>
+    <h2 id="conflict-title">{$_('options.settings.resolveSyncConflicts')}</h2>
     <p class="description">
-      These items differ between local and cloud. Choose which version to keep.
+      {$_('options.settings.conflictDescription')}
     </p>
 
     <div class="bulk-actions">
       <button class="bulk-btn" onclick={setAllLocal}>
-        All Local
+        {$_('options.settings.allLocal')}
       </button>
       <button class="bulk-btn" onclick={setAllCloud}>
-        All Cloud
+        {$_('options.settings.allCloud')}
       </button>
     </div>
 
@@ -69,8 +75,8 @@
             <span class="conflict-session">{entry.sessionName}</span>
             <span class="conflict-origin">{entry.origin}</span>
             <div class="conflict-timestamps">
-              <span class="ts-label">Local: {formatTime(entry.localTimestamp)}</span>
-              <span class="ts-label">Cloud: {formatTime(entry.cloudTimestamp)}</span>
+              <span class="ts-label">{$_('options.settings.local')}: {formatTime(entry.localTimestamp)}</span>
+              <span class="ts-label">{$_('options.settings.cloud')}: {formatTime(entry.cloudTimestamp)}</span>
             </div>
           </div>
           <div class="resolution-toggle">
@@ -80,7 +86,7 @@
               onclick={() => setResolution(i, 'local')}
               aria-pressed={entry.resolution === 'local'}
             >
-              Local
+              {$_('options.settings.local')}
             </button>
             <button
               class="res-btn"
@@ -88,7 +94,7 @@
               onclick={() => setResolution(i, 'cloud')}
               aria-pressed={entry.resolution === 'cloud'}
             >
-              Cloud
+              {$_('options.settings.cloud')}
             </button>
           </div>
         </div>
@@ -96,10 +102,10 @@
     </div>
 
     <div class="dialog-actions">
-      <button class="btn cancel" onclick={oncancel}>Cancel</button>
+      <button class="btn cancel" onclick={oncancel}>{$_('common.cancel')}</button>
       <button class="btn primary" onclick={handleApply} disabled={!allResolved}>
         <Icon name="check" size={14} />
-        Apply
+        {$_('options.settings.apply')}
       </button>
     </div>
   </div>

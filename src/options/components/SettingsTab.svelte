@@ -1,5 +1,11 @@
 <script lang="ts">
+  import { _, locale } from 'svelte-i18n';
+  import { setLocale } from '@shared/i18n';
+  import '@shared/i18n';
   import { getTheme, toggleTheme, onThemeChange } from '@shared/theme-store';
+
+  // Force re-render when locale changes
+  $effect(() => { void $locale; });
   import type { ThemePreference } from '@shared/theme-store';
   import {
     getAutoRefreshInterval,
@@ -100,11 +106,11 @@
     await setAutoRefreshDefaultEnabled(enabled);
   }
 
-  const themeOptions: { value: ThemePreference; label: string; icon: string }[] = [
-    { value: 'light', label: 'Light', icon: 'sun' },
-    { value: 'dark', label: 'Dark', icon: 'moon' },
-    { value: 'system', label: 'System', icon: 'monitor' },
-  ];
+  const themeOptions = $derived([
+    { value: 'light' as ThemePreference, label: $_('options.settings.light'), icon: 'sun' },
+    { value: 'dark' as ThemePreference, label: $_('options.settings.dark'), icon: 'moon' },
+    { value: 'system' as ThemePreference, label: $_('options.settings.system'), icon: 'monitor' },
+  ]);
 
   // Isolation mode default
   let isolationDefault = $state<IsolationMode>(getIsolationModeDefault());
@@ -116,10 +122,10 @@
     return unsub;
   });
 
-  const isolationOptions: { value: IsolationMode; label: string; icon: string }[] = [
-    { value: 'soft', label: 'Soft', icon: 'shield' },
-    { value: 'strict', label: 'Strict', icon: 'lock' },
-  ];
+  const isolationOptions = $derived([
+    { value: 'soft' as IsolationMode, label: $_('options.settings.soft'), icon: 'shield' },
+    { value: 'strict' as IsolationMode, label: $_('options.settings.strict'), icon: 'lock' },
+  ]);
 
   async function handleIsolationDefaultChange(mode: IsolationMode) {
     await setIsolationModeDefault(mode);
@@ -221,7 +227,7 @@
     const confirm = pinConfirm.join('');
     if (confirm.length !== 4) return;
     if (pin !== confirm) {
-      pinError = 'PINs do not match';
+      pinError = $_('options.settings.pinsNoMatch');
       pinConfirm = ['', '', '', ''];
       focusFirstPin();
       return;
@@ -247,7 +253,7 @@
     if (pin.length !== 4) return;
     const valid = await verifyAndUnlock(pin);
     if (!valid) {
-      pinError = 'Incorrect passcode';
+      pinError = $_('options.settings.incorrectPasscode');
       pinDigits = ['', '', '', ''];
       focusFirstPin();
       return;
@@ -281,7 +287,7 @@
     const confirm = pinConfirm.join('');
     if (confirm.length !== 4) return;
     if (pin !== confirm) {
-      pinError = 'PINs do not match';
+      pinError = $_('options.settings.pinsNoMatch');
       pinConfirm = ['', '', '', ''];
       focusFirstPin();
       return;
@@ -356,20 +362,20 @@
     return unsub;
   });
 
-  const mergeOptions: { value: MergeStrategy; label: string }[] = [
-    { value: 'trust-cloud', label: 'Trust Cloud' },
-    { value: 'trust-local', label: 'Trust Local' },
-    { value: 'ask', label: 'Ask' },
-  ];
+  const mergeOptions = $derived([
+    { value: 'trust-cloud' as MergeStrategy, label: $_('options.settings.trustCloud') },
+    { value: 'trust-local' as MergeStrategy, label: $_('options.settings.trustLocal') },
+    { value: 'ask' as MergeStrategy, label: $_('options.settings.ask') },
+  ]);
 
   async function handleSyncConnect() {
     connecting = true;
     try {
       await syncConnect();
       syncCfg = getSyncConfig();
-      syncToast = { message: 'Connected to Google Drive', type: 'success' };
+      syncToast = { message: $_('options.settings.connectedDrive'), type: 'success' };
     } catch (err) {
-      syncToast = { message: `Connection failed: ${err instanceof Error ? err.message : 'Unknown error'}`, type: 'error' };
+      syncToast = { message: $_('options.settings.connectionFailed', { values: { error: err instanceof Error ? err.message : 'Unknown error' } }), type: 'error' };
     } finally {
       connecting = false;
     }
@@ -381,9 +387,9 @@
       await syncDisconnect();
       syncCfg = getSyncConfig();
       syncState = { status: 'idle', progress: '', conflicts: [] };
-      syncToast = { message: 'Disconnected from Google Drive', type: 'info' };
+      syncToast = { message: $_('options.settings.disconnectedDrive'), type: 'info' };
     } catch (err) {
-      syncToast = { message: `Disconnect failed: ${err instanceof Error ? err.message : 'Unknown error'}`, type: 'error' };
+      syncToast = { message: $_('options.settings.disconnectFailed', { values: { error: err instanceof Error ? err.message : 'Unknown error' } }), type: 'error' };
     }
   }
 
@@ -398,10 +404,10 @@
       } else if (state.status === 'error') {
         syncToast = { message: state.progress, type: 'error' };
       } else {
-        syncToast = { message: 'Sync completed', type: 'success' };
+        syncToast = { message: $_('options.settings.syncCompleted'), type: 'success' };
       }
     } catch (err) {
-      syncToast = { message: `Sync failed: ${err instanceof Error ? err.message : 'Unknown error'}`, type: 'error' };
+      syncToast = { message: $_('options.settings.syncFailed', { values: { error: err instanceof Error ? err.message : 'Unknown error' } }), type: 'error' };
     } finally {
       syncing = false;
     }
@@ -416,10 +422,10 @@
       if (state.status === 'error') {
         syncToast = { message: state.progress, type: 'error' };
       } else {
-        syncToast = { message: 'Sync completed with resolved conflicts', type: 'success' };
+        syncToast = { message: $_('options.settings.syncCompletedResolved'), type: 'success' };
       }
     } catch (err) {
-      syncToast = { message: `Sync failed: ${err instanceof Error ? err.message : 'Unknown error'}`, type: 'error' };
+      syncToast = { message: $_('options.settings.syncFailed', { values: { error: err instanceof Error ? err.message : 'Unknown error' } }), type: 'error' };
     } finally {
       syncing = false;
     }
@@ -450,6 +456,56 @@
 </script>
 
 <div class="settings-layout">
+  <!-- Language -->
+  <section class="card">
+    <div class="card-header">
+      <div class="card-icon">
+        <Icon name="globe" size={16} />
+      </div>
+      <div>
+        <h2>{$_('options.settings.language')}</h2>
+        <p class="description">{$_('options.settings.languageDesc')}</p>
+      </div>
+    </div>
+    <div class="setting-row">
+      <span class="setting-label">{$_('options.settings.language')}</span>
+      <div class="interval-options">
+        <button
+          class="interval-pill"
+          class:active={$locale === 'en'}
+          onclick={() => setLocale('en')}
+          aria-pressed={$locale === 'en'}
+        >
+          English
+        </button>
+        <button
+          class="interval-pill"
+          class:active={$locale === 'zh'}
+          onclick={() => setLocale('zh')}
+          aria-pressed={$locale === 'zh'}
+        >
+          中文
+        </button>
+        <button
+          class="interval-pill"
+          class:active={$locale === 'de'}
+          onclick={() => setLocale('de')}
+          aria-pressed={$locale === 'de'}
+        >
+          Deutsch
+        </button>
+        <button
+          class="interval-pill"
+          class:active={$locale === 'ja'}
+          onclick={() => setLocale('ja')}
+          aria-pressed={$locale === 'ja'}
+        >
+          日本語
+        </button>
+      </div>
+    </div>
+  </section>
+
   <!-- Appearance -->
   <section class="card">
     <div class="card-header">
@@ -457,8 +513,8 @@
         <Icon name="sun" size={16} />
       </div>
       <div>
-        <h2>Appearance</h2>
-        <p class="description">Choose how Unaware Sessions looks to you.</p>
+        <h2>{$_('options.settings.appearance')}</h2>
+        <p class="description">{$_('options.settings.appearanceDesc')}</p>
       </div>
     </div>
 
@@ -484,15 +540,15 @@
         <Icon name="shield" size={16} />
       </div>
       <div>
-        <h2>Cookie Isolation</h2>
+        <h2>{$_('options.settings.cookieIsolation')}</h2>
         <p class="description">
-          Controls how cookies are handled when switching sessions on domains without saved data.
+          {$_('options.settings.cookieIsolationDesc')}
         </p>
       </div>
     </div>
 
     <div class="setting-row">
-      <span class="setting-label">Default mode</span>
+      <span class="setting-label">{$_('options.settings.defaultMode')}</span>
       <div class="interval-options">
         {#each isolationOptions as opt (opt.value)}
           <button
@@ -512,13 +568,13 @@
       <div class="explainer-row">
         <Icon name="shield" size={14} />
         <div>
-          <strong>Soft</strong> — Preserves cookies on domains where the target session has no saved data. Prevents breaking unrelated services (e.g., Google) when switching between domain-specific sessions.
+          <strong>{$_('options.settings.soft')}</strong> — {$_('options.settings.softDesc')}
         </div>
       </div>
       <div class="explainer-row">
         <Icon name="lock" size={14} />
         <div>
-          <strong>Strict</strong> — Always clears cookies on switch, even when nothing will be restored. Use for domains that require full isolation between sessions.
+          <strong>{$_('options.settings.strict')}</strong> — {$_('options.settings.strictDesc')}
         </div>
       </div>
     </div>
@@ -531,15 +587,15 @@
         <Icon name="refresh-cw" size={16} />
       </div>
       <div>
-        <h2>Auto-Refresh</h2>
+        <h2>{$_('options.settings.autoRefresh')}</h2>
         <p class="description">
-          Periodically save session cookies and storage for all tracked tabs. When set to Off, all per-domain auto-refresh toggles are paused.
+          {$_('options.settings.autoRefreshDesc')}
         </p>
       </div>
     </div>
 
     <div class="setting-row">
-      <span class="setting-label">Refresh interval</span>
+      <span class="setting-label">{$_('options.settings.refreshInterval')}</span>
       <div class="interval-options">
         {#each intervalOptions as opt (opt.value)}
           <button
@@ -558,9 +614,9 @@
 
     <label class="toggle-row">
       <div class="toggle-info">
-        <span class="toggle-label">Auto-refresh for new domains</span>
+        <span class="toggle-label">{$_('options.settings.autoRefreshNewDomains')}</span>
         <span class="toggle-description">
-          Newly discovered domains in sessions will have auto-refresh turned on automatically.
+          {$_('options.settings.autoRefreshNewDomainsDesc')}
         </span>
       </div>
       <button
@@ -569,7 +625,7 @@
         onclick={() => handleDefaultEnabledChange(!defaultEnabled)}
         role="switch"
         aria-checked={defaultEnabled}
-        aria-label="Toggle auto-refresh for new domains"
+        aria-label={$_('options.settings.autoRefreshNewDomains')}
       >
         <span class="toggle-thumb"></span>
       </button>
@@ -583,9 +639,9 @@
         <Icon name="lock" size={16} />
       </div>
       <div>
-        <h2>Security</h2>
+        <h2>{$_('options.settings.security')}</h2>
         <p class="description">
-          Protect session switching and data export with a passcode or biometric authentication.
+          {$_('options.settings.securityDesc')}
         </p>
       </div>
     </div>
@@ -593,20 +649,20 @@
     <!-- Passcode toggle row -->
     <div class="toggle-row">
       <div class="toggle-info">
-        <span class="toggle-label">Passcode</span>
+        <span class="toggle-label">{$_('options.settings.passcode')}</span>
         <span class="toggle-description">
-          Require a 4-digit PIN to switch sessions, delete, or export data.
+          {$_('options.settings.passcodeDesc')}
         </span>
       </div>
       {#if passcodeOn && securityFlow === 'idle'}
         <div class="security-actions">
-          <button class="security-text-btn" onclick={startPasscodeChange}>Change</button>
+          <button class="security-text-btn" onclick={startPasscodeChange}>{$_('options.settings.change')}</button>
           <button
             class="toggle-switch on"
             onclick={startPasscodeDisable}
             role="switch"
             aria-checked={true}
-            aria-label="Disable passcode"
+            aria-label={$_('options.settings.disablePasscode')}
           >
             <span class="toggle-thumb"></span>
           </button>
@@ -617,7 +673,7 @@
           onclick={startPasscodeSetup}
           role="switch"
           aria-checked={false}
-          aria-label="Enable passcode"
+          aria-label={$_('options.settings.enablePasscode')}
         >
           <span class="toggle-thumb"></span>
         </button>
@@ -627,7 +683,7 @@
     <!-- Inline PIN entry flows -->
     {#if securityFlow === 'setup-enter'}
       <div class="pin-flow">
-        <span class="pin-flow-label">Enter a 4-digit passcode</span>
+        <span class="pin-flow-label">{$_('options.settings.enterPasscode')}</span>
         <div class="pin-row">
           {#each pinDigits as _, i}
             <input
@@ -645,19 +701,19 @@
           {/each}
         </div>
         <div class="pin-flow-actions">
-          <button class="security-text-btn" onclick={resetPinState}>Cancel</button>
+          <button class="security-text-btn" onclick={resetPinState}>{$_('common.cancel')}</button>
           <button
             class="security-text-btn primary"
             onclick={handleSetupEnterComplete}
             disabled={pinDigits.join('').length !== 4}
-          >Next</button>
+          >{$_('common.next')}</button>
         </div>
       </div>
     {/if}
 
     {#if securityFlow === 'setup-confirm'}
       <div class="pin-flow">
-        <span class="pin-flow-label">Confirm passcode</span>
+        <span class="pin-flow-label">{$_('options.settings.confirmPasscode')}</span>
         <div class="pin-row">
           {#each pinConfirm as _, i}
             <input
@@ -679,19 +735,19 @@
           <span class="pin-error">{pinError}</span>
         {/if}
         <div class="pin-flow-actions">
-          <button class="security-text-btn" onclick={resetPinState}>Cancel</button>
+          <button class="security-text-btn" onclick={resetPinState}>{$_('common.cancel')}</button>
           <button
             class="security-text-btn primary"
             onclick={handleSetupConfirmComplete}
             disabled={pinConfirm.join('').length !== 4}
-          >Save</button>
+          >{$_('common.save')}</button>
         </div>
       </div>
     {/if}
 
     {#if securityFlow === 'verify-then-disable' || securityFlow === 'verify-then-change' || securityFlow === 'verify-then-biometric'}
       <div class="pin-flow">
-        <span class="pin-flow-label">Enter current passcode</span>
+        <span class="pin-flow-label">{$_('options.settings.enterCurrentPasscode')}</span>
         <div class="pin-row">
           {#each pinDigits as _, i}
             <input
@@ -713,19 +769,19 @@
           <span class="pin-error">{pinError}</span>
         {/if}
         <div class="pin-flow-actions">
-          <button class="security-text-btn" onclick={resetPinState}>Cancel</button>
+          <button class="security-text-btn" onclick={resetPinState}>{$_('common.cancel')}</button>
           <button
             class="security-text-btn primary"
             onclick={handleVerifyComplete}
             disabled={pinDigits.join('').length !== 4}
-          >Verify</button>
+          >{$_('common.verify')}</button>
         </div>
       </div>
     {/if}
 
     {#if securityFlow === 'change-enter'}
       <div class="pin-flow">
-        <span class="pin-flow-label">Enter new passcode</span>
+        <span class="pin-flow-label">{$_('options.settings.enterNewPasscode')}</span>
         <div class="pin-row">
           {#each pinDigits as _, i}
             <input
@@ -743,19 +799,19 @@
           {/each}
         </div>
         <div class="pin-flow-actions">
-          <button class="security-text-btn" onclick={resetPinState}>Cancel</button>
+          <button class="security-text-btn" onclick={resetPinState}>{$_('common.cancel')}</button>
           <button
             class="security-text-btn primary"
             onclick={handleChangeEnterComplete}
             disabled={pinDigits.join('').length !== 4}
-          >Next</button>
+          >{$_('common.next')}</button>
         </div>
       </div>
     {/if}
 
     {#if securityFlow === 'change-confirm'}
       <div class="pin-flow">
-        <span class="pin-flow-label">Confirm new passcode</span>
+        <span class="pin-flow-label">{$_('options.settings.confirmNewPasscode')}</span>
         <div class="pin-row">
           {#each pinConfirm as _, i}
             <input
@@ -777,12 +833,12 @@
           <span class="pin-error">{pinError}</span>
         {/if}
         <div class="pin-flow-actions">
-          <button class="security-text-btn" onclick={resetPinState}>Cancel</button>
+          <button class="security-text-btn" onclick={resetPinState}>{$_('common.cancel')}</button>
           <button
             class="security-text-btn primary"
             onclick={handleChangeConfirmComplete}
             disabled={pinConfirm.join('').length !== 4}
-          >Save</button>
+          >{$_('common.save')}</button>
         </div>
       </div>
     {/if}
@@ -794,13 +850,13 @@
         <div class="toggle-info">
           <span class="toggle-label">
             <Icon name="fingerprint" size={14} class="inline-icon" />
-            Biometric
+            {$_('options.settings.biometric')}
           </span>
           <span class="toggle-description">
             {#if !passcodeOn}
-              Enable a passcode first to use biometric authentication.
+              {$_('options.settings.biometricEnableFirst')}
             {:else}
-              Use fingerprint or Face ID to authenticate instead of the passcode.
+              {$_('options.settings.biometricDesc')}
             {/if}
           </span>
         </div>
@@ -811,7 +867,7 @@
           disabled={!passcodeOn}
           role="switch"
           aria-checked={biometricOn}
-          aria-label="Toggle biometric authentication"
+          aria-label={$_('options.settings.toggleBiometric')}
         >
           <span class="toggle-thumb"></span>
         </button>
@@ -823,9 +879,9 @@
       <div class="divider"></div>
       <div class="setting-row">
         <div class="toggle-info">
-          <span class="setting-label">Grace period</span>
+          <span class="setting-label">{$_('options.settings.gracePeriod')}</span>
           <span class="toggle-description">
-            Skip re-authentication within this window after a successful check.
+            {$_('options.settings.gracePeriodDesc')}
           </span>
         </div>
         <div class="interval-options">
@@ -851,9 +907,9 @@
         <Icon name="cloud" size={16} />
       </div>
       <div>
-        <h2>Cloud Sync</h2>
+        <h2>{$_('options.settings.cloudSync')}</h2>
         <p class="description">
-          Sync session data to your Google Drive. Data is encrypted with your passphrase before leaving the browser.
+          {$_('options.settings.cloudSyncDesc')}
         </p>
       </div>
     </div>
@@ -866,10 +922,10 @@
       >
         {#if connecting}
           <span class="spinner-sm"></span>
-          Connecting...
+          {$_('common.connecting')}
         {:else}
           <Icon name="cloud" size={14} />
-          Connect to Google Drive
+          {$_('options.settings.connectDrive')}
         {/if}
       </button>
     {:else}
@@ -885,16 +941,16 @@
           {/if}
           <span class="sync-status-text">
             {#if syncing}
-              Syncing...
+              {$_('common.syncing')}
             {:else if syncState.status === 'error'}
-              Error
+              {$_('common.error')}
             {:else}
-              Connected
+              {$_('common.connected')}
             {/if}
           </span>
         </div>
         {#if syncCfg.lastSyncAt > 0}
-          <span class="sync-last-time">Last: {formatRelativeTime(syncCfg.lastSyncAt)}</span>
+          <span class="sync-last-time">{$_('options.settings.lastSync', { values: { time: formatRelativeTime(syncCfg.lastSyncAt) } })}</span>
         {/if}
       </div>
 
@@ -903,9 +959,9 @@
       <!-- Merge strategy -->
       <div class="setting-row">
         <div class="toggle-info">
-          <span class="setting-label">Merge strategy</span>
+          <span class="setting-label">{$_('options.settings.mergeStrategy')}</span>
           <span class="toggle-description">
-            How conflicts are resolved when both local and cloud data have changed.
+            {$_('options.settings.mergeStrategyDesc')}
           </span>
         </div>
         <div class="interval-options">
@@ -926,7 +982,7 @@
 
       <!-- Auto-sync interval -->
       <div class="setting-row">
-        <span class="setting-label">Auto-sync interval</span>
+        <span class="setting-label">{$_('options.settings.autoSyncInterval')}</span>
         <div class="interval-options">
           {#each SYNC_INTERVAL_OPTIONS as opt (opt.value)}
             <button
@@ -952,10 +1008,10 @@
         >
           {#if syncing}
             <span class="spinner-sm"></span>
-            Syncing...
+            {$_('common.syncing')}
           {:else}
             <Icon name="refresh-cw" size={14} />
-            Sync Now
+            {$_('options.settings.syncNow')}
           {/if}
         </button>
         <button
@@ -963,7 +1019,7 @@
           onclick={() => (showDisconnectConfirm = true)}
         >
           <Icon name="cloud-off" size={14} />
-          Disconnect
+          {$_('common.disconnect')}
         </button>
       </div>
 
@@ -972,7 +1028,7 @@
         <div class="explainer-row">
           <Icon name="lock" size={14} />
           <div>
-            Your data is encrypted with <strong>AES-256-GCM</strong> using your Google account identity before leaving the browser.
+            {$_('options.settings.encryptionDesc')}
           </div>
         </div>
       </div>
@@ -982,9 +1038,9 @@
 
 {#if showDisconnectConfirm}
   <ConfirmDialog
-    title="Disconnect Cloud Sync"
-    message="Disconnect from Google Drive? Your cloud data will remain on Drive but sync will stop. You can reconnect later."
-    confirmLabel="Disconnect"
+    title={$_('options.settings.disconnectTitle')}
+    message={$_('options.settings.disconnectMessage')}
+    confirmLabel={$_('common.disconnect')}
     danger={true}
     onconfirm={handleSyncDisconnect}
     oncancel={() => (showDisconnectConfirm = false)}

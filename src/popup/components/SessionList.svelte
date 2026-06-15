@@ -6,6 +6,12 @@
   import OnboardingEmpty from './OnboardingEmpty.svelte';
 
   import Icon from '@shared/components/Icon.svelte';
+  import { _ } from 'svelte-i18n';
+  import '@shared/i18n';
+  import { locale } from '@shared/i18n';
+
+  // Force re-render when locale changes
+  $effect(() => { void $locale; });
 
   interface Props {
     sessions: SessionProfile[];
@@ -151,7 +157,7 @@
   {:else if filteredSessions.length === 0}
     <div class="empty-search">
       <Icon name="search" size={16} />
-      <p>No sessions match "{searchQuery}"</p>
+      <p>{$_('popup.list.noSessionsMatch', { values: { query: searchQuery } })}</p>
     </div>
   {:else}
     <!-- Default (no session) option -->
@@ -166,16 +172,16 @@
       <span class="default-icon">
         <Icon name="globe" size={13} />
       </span>
-      <span class="default-label">Default (no session)</span>
+      <span class="default-label">{$_('popup.list.defaultLabel')}</span>
       {#if !activeSessionId}
-        <span class="default-badge">active</span>
+        <span class="default-badge">{$_('common.active')}</span>
       {/if}
     </div>
 
     {#if thisSiteSessions.length > 0}
       <div class="group">
         <div class="group-header">
-          <span class="group-label">This site</span>
+          <span class="group-label">{$_('popup.list.thisSite')}</span>
           <span class="group-line"></span>
         </div>
         {#each thisSiteSessions as session, i (session.id)}
@@ -210,7 +216,7 @@
           aria-expanded={effectiveShowOther}
         >
           <div class="group-header">
-            <span class="group-label">Other sessions</span>
+            <span class="group-label">{$_('popup.list.otherSessions')}</span>
             <span class="group-count">{otherSessions.length}</span>
             <span class="group-line"></span>
           </div>
@@ -232,7 +238,7 @@
                     <Icon name="chevron-right" size={10} />
                   </span>
                   <Icon name="folder" size={12} />
-                  <span class="domain-name">{domain || 'No data'}</span>
+                  <span class="domain-name">{domain || $_('popup.list.noData')}</span>
                   <span class="group-count">{domainSessions.length}</span>
                 </button>
                 {#if !isCollapsed}
@@ -273,7 +279,7 @@
 
     {#if thisSiteSessions.length === 0 && !effectiveShowOther}
       <div class="empty-site">
-        <p>No sessions for this site yet.</p>
+        <p>{$_('popup.list.noSessionsSite')}</p>
       </div>
     {/if}
   {/if}

@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { _ } from 'svelte-i18n';
+  import '@shared/i18n';
+  import { locale } from '@shared/i18n';
   import Icon from './Icon.svelte';
   import ConfirmDialog from './ConfirmDialog.svelte';
   import {
@@ -9,6 +12,9 @@
     verifyBiometric,
     resetSecurity,
   } from '@shared/security-store';
+
+  // Force re-render when locale changes
+  $effect(() => { void $locale; });
 
   interface Props {
     onauth: () => void;
@@ -156,7 +162,7 @@
         if (failCount >= MAX_ATTEMPTS) {
           startCooldown();
         }
-        error = failCount >= MAX_ATTEMPTS ? 'Too many attempts' : 'Incorrect passcode';
+        error = failCount >= MAX_ATTEMPTS ? $_('shared.tooManyAttempts') : $_('shared.incorrectPasscode');
         clearDigits();
       }
     } finally {
@@ -173,7 +179,7 @@
       if (valid) {
         onauth();
       } else {
-        error = 'Biometric verification failed';
+        error = $_('shared.biometricFailed');
       }
     } finally {
       verifying = false;
@@ -209,7 +215,7 @@
 
   function updateCooldownLabel() {
     const remaining = Math.ceil((cooldownUntil - Date.now()) / 1000);
-    cooldownLabel = `Try again in ${remaining}s`;
+    cooldownLabel = $_('shared.tryAgainIn', { values: { seconds: remaining } });
   }
 
   async function handleResetConfirm() {
@@ -235,8 +241,8 @@
       <div class="lock-icon">
         <Icon name="lock" size={20} />
       </div>
-      <h3 id="auth-title">Authentication Required</h3>
-      <p id="auth-desc">Verify your identity to continue</p>
+      <h3 id="auth-title">{$_('shared.authRequired')}</h3>
+      <p id="auth-desc">{$_('shared.verifyIdentity')}</p>
     </div>
 
     {#if showPasscode}
@@ -284,15 +290,15 @@
         disabled={verifying}
       >
         <Icon name="fingerprint" size={18} />
-        Use Biometric
+        {$_('shared.useBiometric')}
       </button>
     {/if}
 
     <div class="actions">
-      <button class="cancel-btn" onclick={oncancel}>Cancel</button>
+      <button class="cancel-btn" onclick={oncancel}>{$_('common.cancel')}</button>
       {#if showPasscode}
         <button class="forgot-btn" onclick={() => (showResetConfirm = true)}>
-          Forgot Passcode?
+          {$_('shared.forgotPasscode')}
         </button>
       {/if}
     </div>
@@ -301,9 +307,9 @@
 
 {#if showResetConfirm}
   <ConfirmDialog
-    title="Reset Security"
-    message="This will disable passcode and biometric authentication. Your session data will not be affected."
-    confirmLabel="Reset"
+    title={$_('shared.resetSecurity')}
+    message={$_('shared.resetSecurityMessage')}
+    confirmLabel={$_('shared.reset')}
     danger={true}
     onconfirm={handleResetConfirm}
     oncancel={() => (showResetConfirm = false)}

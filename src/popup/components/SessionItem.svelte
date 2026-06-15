@@ -3,7 +3,13 @@
   import { formatRelativeTime } from '@shared/utils';
   import Icon from '@shared/components/Icon.svelte';
   import InlineEdit from '@shared/components/InlineEdit.svelte';
+  import { _ } from 'svelte-i18n';
+  import '@shared/i18n';
+  import { locale } from '@shared/i18n';
   import SessionDetail from './SessionDetail.svelte';
+
+  // Force re-render when locale changes
+  $effect(() => { void $locale; });
 
   interface Props {
     session: SessionProfile;
@@ -89,7 +95,7 @@
   onclick={() => !isSwitching && onswitch(session.id)}
   onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && !isSwitching && (e.preventDefault(), onswitch(session.id))}
   oncontextmenu={handleContextMenu}
-  aria-label={isSwitching ? `Switching to ${session.name}...` : `Switch to session ${session.name}`}
+  aria-label={isSwitching ? $_('popup.switchingTo', { values: { name: session.name } }) : $_('popup.switchToSession', { values: { name: session.name } })}
   aria-busy={isSwitching}
   title={session.name}
   draggable={draggable && !isSwitching ? 'true' : undefined}
@@ -138,25 +144,25 @@
 
     <div class="badges">
       {#if session.pinned}
-        <span class="badge pin-badge" aria-label="Pinned">
+        <span class="badge pin-badge" aria-label={$_('popup.pinned')}>
           <Icon name="pin" size={9} />
         </span>
       {/if}
 
       {#if hasOriginData && !isActive}
-        <span class="badge data-badge" title="Has saved data for this site">
+        <span class="badge data-badge" title={$_('popup.hasSavedData')}>
           <Icon name="database" size={9} />
         </span>
       {/if}
 
       {#if tabCount > 0}
-        <span class="badge tab-badge" title="{tabCount} tab{tabCount === 1 ? '' : 's'}">
+        <span class="badge tab-badge" title={$_('popup.tabCount', { values: { count: tabCount } })}>
           {tabCount}
         </span>
       {/if}
 
       {#if isActive}
-        <span class="badge active-badge">active</span>
+        <span class="badge active-badge">{$_('common.active')}</span>
       {/if}
     </div>
 
@@ -165,11 +171,11 @@
         <button
           class="action-icon"
           onclick={toggleDetail}
-          aria-label={expanded ? 'Collapse details' : 'Expand details'}
+          aria-label={expanded ? $_('popup.collapseDetails') : $_('popup.expandDetails')}
         >
           <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={11} />
         </button>
-        <button class="action-icon danger" onclick={handleDelete} aria-label="Delete session {session.name}">
+        <button class="action-icon danger" onclick={handleDelete} aria-label={$_('popup.deleteSessionAria', { values: { name: session.name } })}>
           <Icon name="x" size={12} />
         </button>
       </div>

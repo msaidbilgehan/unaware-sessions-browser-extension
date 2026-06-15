@@ -1,7 +1,13 @@
 <script lang="ts">
+  import { _ } from 'svelte-i18n';
+  import '@shared/i18n';
+  import { locale } from '@shared/i18n';
   import { SvelteMap } from 'svelte/reactivity';
   import type { SessionProfile, SessionStats } from '@shared/types';
   import { getSessionStats } from '@shared/api';
+
+  // Force re-render when locale changes
+  $effect(() => { void $locale; });
 
   interface Props {
     sessions: SessionProfile[];
@@ -48,11 +54,11 @@
 
 {#if sessions.length > 0}
   <section>
-    <h2>Storage Usage</h2>
+    <h2>{$_('options.data.storageUsage')}</h2>
     {#if loading}
       <div class="loading">
         <div class="loading-spinner"></div>
-        <p>Loading storage data...</p>
+        <p>{$_('options.data.loadingStorageData')}</p>
       </div>
     {:else}
       <div class="dashboard">
@@ -68,12 +74,12 @@
                 <div
                   class="bar cookie-bar"
                   style="width: {((s.cookieBytes / maxBytes()) * 100).toFixed(1)}%"
-                  title="Cookies: {formatBytes(s.cookieBytes)}"
+                  title="{$_('popup.detail.cookies')}: {formatBytes(s.cookieBytes)}"
                 ></div>
                 <div
                   class="bar storage-bar"
                   style="width: {((s.storageBytes / maxBytes()) * 100).toFixed(1)}%"
-                  title="Storage: {formatBytes(s.storageBytes)}"
+                  title="{$_('popup.detail.storage')}: {formatBytes(s.storageBytes)}"
                 ></div>
               </div>
               <span class="size">{formatBytes(s.cookieBytes + s.storageBytes)}</span>
@@ -82,8 +88,8 @@
         {/each}
       </div>
       <div class="legend">
-        <span class="legend-item"><span class="legend-dot cookie"></span> Cookies</span>
-        <span class="legend-item"><span class="legend-dot storage"></span> Storage</span>
+        <span class="legend-item"><span class="legend-dot cookie"></span> {$_('popup.detail.cookies')}</span>
+        <span class="legend-item"><span class="legend-dot storage"></span> {$_('popup.detail.storage')}</span>
       </div>
     {/if}
   </section>

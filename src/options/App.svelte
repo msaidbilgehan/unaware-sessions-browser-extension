@@ -2,6 +2,9 @@
   import type { SessionProfile } from '@shared/types';
   import { listSessions } from '@shared/api';
   import { STORAGE_KEYS } from '@shared/constants';
+  import { _ } from 'svelte-i18n';
+  import '@shared/i18n';
+  import { locale } from '@shared/i18n';
   import TabBar from './components/TabBar.svelte';
   import SessionsTab from './components/SessionsTab.svelte';
   import ImportExportTab from './components/ImportExportTab.svelte';
@@ -14,13 +17,15 @@
   let loading = $state(true);
   let activeTab = $state('sessions');
 
-  const tabs = [
-    { id: 'sessions', label: 'Sessions', icon: 'layers' },
-    { id: 'settings', label: 'Settings', icon: 'settings' },
-    { id: 'import-export', label: 'Data', icon: 'arrow-right-left' },
-    { id: 'about', label: 'About', icon: 'info' },
-    { id: 'debug', label: 'Debug', icon: 'zap' },
-  ];
+  // Force tabs to re-derive when locale changes by reading $locale in the expression
+  // Using comma operator: evaluate $locale (for reactivity), then return the array
+  const tabs = $derived(($locale, [
+    { id: 'sessions', label: $_('options.tabSessions'), icon: 'layers' },
+    { id: 'settings', label: $_('options.tabSettings'), icon: 'settings' },
+    { id: 'import-export', label: $_('options.tabData'), icon: 'arrow-right-left' },
+    { id: 'about', label: $_('options.tabAbout'), icon: 'info' },
+    { id: 'debug', label: $_('options.tabDebug'), icon: 'zap' },
+  ]));
 
   // Full initial load with loading spinner — called once on mount
   async function loadSessions() {
@@ -86,8 +91,8 @@
     <div class="header-content">
       <AppLogo size={28} />
       <div class="header-text">
-        <h1>Unaware Sessions</h1>
-        <p class="subtitle">Manage your browsing sessions and extension preferences</p>
+        <h1>{$_('options.title')}</h1>
+        <p class="subtitle">{$_('options.subtitle')}</p>
       </div>
     </div>
   </div>
@@ -98,7 +103,7 @@
     {#if loading}
       <div class="loading">
         <div class="loading-spinner"></div>
-        <p>Loading sessions...</p>
+        <p>{$_('options.loadingSessions')}</p>
       </div>
     {:else if activeTab === 'sessions'}
       <SessionsTab {sessions} onupdate={loadSessions} />

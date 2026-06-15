@@ -3,6 +3,12 @@
   import ColorPicker from '@shared/components/ColorPicker.svelte';
   import EmojiPicker from '@shared/components/EmojiPicker.svelte';
   import Icon from '@shared/components/Icon.svelte';
+  import { _ } from 'svelte-i18n';
+  import '@shared/i18n';
+  import { locale } from '@shared/i18n';
+
+  // Force re-render when locale changes
+  $effect(() => { void $locale; });
 
   interface Props {
     oncreate: (name: string, color: string, emoji?: string) => void;
@@ -18,7 +24,7 @@
   function handleSubmit() {
     const trimmed = name.trim();
     if (!trimmed) {
-      error = 'Session name is required';
+      error = $_('popup.new.sessionNameRequired');
       return;
     }
     error = '';
@@ -36,10 +42,10 @@
 
 <div class="form">
   <div class="header">
-    <button class="back-btn" onclick={oncancel} aria-label="Back">
+    <button class="back-btn" onclick={oncancel} aria-label={$_('popup.new.back')}>
       <Icon name="arrow-left" size={16} />
     </button>
-    <span class="title">New Session</span>
+    <span class="title">{$_('popup.new.title')}</span>
   </div>
 
   <!-- Live preview -->
@@ -53,18 +59,18 @@
           <span class="preview-dot" style="background-color: {color}"></span>
         {/if}
       </span>
-      <span class="preview-name">{name || 'Session name'}</span>
+      <span class="preview-name">{name || $_('popup.new.sessionNamePreview')}</span>
     </div>
   </div>
 
   <div class="field">
-    <label for="session-name">Name</label>
+    <label for="session-name">{$_('popup.new.nameLabel')}</label>
     <input
       id="session-name"
       type="text"
       bind:value={name}
       onkeydown={handleKeydown}
-      placeholder="e.g., work-gmail"
+      placeholder={$_('popup.new.namePlaceholder')}
       class:has-error={!!error}
     />
     {#if error}
@@ -73,18 +79,18 @@
   </div>
 
   <div class="field">
-    <span class="label-text">Color</span>
+    <span class="label-text">{$_('popup.new.colorLabel')}</span>
     <ColorPicker selected={color} onchange={(c) => (color = c)} />
   </div>
 
   <div class="field">
-    <span class="label-text">Emoji <span class="optional">(optional)</span></span>
+    <span class="label-text">{$_('popup.new.emojiLabel')} <span class="optional">{$_('popup.new.optional')}</span></span>
     <EmojiPicker selected={emoji} onchange={(e) => (emoji = e)} />
   </div>
 
   <button class="create-btn" onclick={handleSubmit}>
     <Icon name="plus" size={14} />
-    Create Session
+    {$_('popup.new.createSession')}
   </button>
 </div>
 

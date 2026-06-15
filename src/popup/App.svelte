@@ -50,6 +50,12 @@
   import ContextMenu from './components/ContextMenu.svelte';
   import type { ContextMenuItem } from './components/ContextMenu.svelte';
   import KeyboardOverlay from './components/KeyboardOverlay.svelte';
+  import { _ } from 'svelte-i18n';
+  import '@shared/i18n';
+  import { locale } from '@shared/i18n';
+
+  // Force re-render when locale changes
+  $effect(() => { void $locale; });
 
   // Primary data
   let sessions = $state<SessionProfile[]>([]);
@@ -205,7 +211,7 @@
 
       view = 'list';
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Failed to create session', 'error');
+      showToast(err instanceof Error ? err.message : $_('popup.failedToCreate'), 'error');
     }
   }
 
@@ -219,7 +225,7 @@
         currentTabEntry = { sessionId, origin: currentOrigin };
         sessions = await listSessions();
       } catch (err) {
-        showToast(err instanceof Error ? err.message : 'Failed to switch session', 'error');
+        showToast(err instanceof Error ? err.message : $_('popup.failedToSwitch'), 'error');
       } finally {
         switchingSessionId = null;
       }
@@ -230,9 +236,9 @@
     const session = sessions.find((s) => s.id === sessionId);
     if (!session) return;
     confirmData = {
-      title: 'Delete Session',
-      message: `Delete "${session.name}"? Cookie and storage data will be permanently removed.`,
-      confirmLabel: 'Delete',
+      title: $_('popup.deleteSessionTitle'),
+      message: $_('popup.deleteSessionMessage', { values: { name: session.name } }),
+      confirmLabel: $_('common.delete'),
       danger: true,
       onconfirm: () => executeDelete(session),
     };
@@ -248,12 +254,12 @@
           currentTabEntry = undefined;
         }
         deletedSession = session;
-        showToast(`"${session.name}" deleted`, 'info', {
-          label: 'Undo',
+        showToast($_('popup.sessionDeleted', { values: { name: session.name } }), 'info', {
+          label: $_('popup.undo'),
           onclick: handleUndoDelete,
         });
       } catch (err) {
-        showToast(err instanceof Error ? err.message : 'Failed to delete session', 'error');
+        showToast(err instanceof Error ? err.message : $_('popup.failedToDelete'), 'error');
       }
     });
   }
@@ -265,9 +271,9 @@
       sessions = await listSessions();
       deletedSession = null;
       toastData = null;
-      showToast('Session restored', 'success');
+      showToast($_('popup.sessionRestored'), 'success');
     } catch {
-      showToast('Failed to restore session', 'error');
+      showToast($_('popup.failedToRestore'), 'error');
     }
   }
 
@@ -277,7 +283,7 @@
       const updated = await updateSession(sessionId, { name: newName });
       sessions = sessions.map((s) => (s.id === sessionId ? updated : s));
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Failed to rename session', 'error');
+      showToast(err instanceof Error ? err.message : $_('popup.failedToRename'), 'error');
     }
   }
 
@@ -287,7 +293,7 @@
       await clearOriginData(currentTab.id);
       currentTabEntry = undefined;
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Failed to clear session', 'error');
+      showToast(err instanceof Error ? err.message : $_('popup.failedToClear'), 'error');
     }
   }
 
@@ -312,9 +318,9 @@
         }
       }
 
-      showToast(currentTabEntry ? 'Session data updated' : 'Session detected', 'success');
+      showToast(currentTabEntry ? $_('popup.sessionDataUpdated') : $_('popup.sessionDetected'), 'success');
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Failed to update', 'error');
+      showToast(err instanceof Error ? err.message : $_('popup.failedToUpdate'), 'error');
     } finally {
       refreshing = false;
     }
@@ -327,7 +333,7 @@
         .map((id) => sessions.find((s) => s.id === id))
         .filter((s): s is SessionProfile => s !== undefined);
     } catch {
-      showToast('Failed to reorder sessions', 'error');
+      showToast($_('popup.failedToReorder'), 'error');
     }
   }
 
@@ -337,38 +343,38 @@
 
     const items: ContextMenuItem[] = [
       {
-        label: 'Rename',
+        label: $_('contextMenu.rename'),
         icon: 'edit-2',
         onclick: () => {
           editingSessionId = sessionId;
         },
       },
       {
-        label: 'Duplicate',
+        label: $_('contextMenu.duplicate'),
         icon: 'copy',
         onclick: async () => {
           try {
             await duplicateSessionApi(sessionId);
             sessions = await listSessions();
           } catch {
-            showToast('Failed to duplicate session', 'error');
+            showToast($_('popup.failedToDuplicate'), 'error');
           }
         },
       },
       {
-        label: session.pinned ? 'Unpin' : 'Pin',
+        label: session.pinned ? $_('contextMenu.unpin') : $_('contextMenu.pin'),
         icon: 'pin',
         onclick: async () => {
           try {
             const updated = await updateSession(sessionId, { pinned: !session.pinned });
             sessions = sessions.map((s) => (s.id === sessionId ? updated : s));
           } catch {
-            showToast('Failed to update session', 'error');
+            showToast($_('popup.failedToUpdate'), 'error');
           }
         },
       },
       {
-        label: 'Delete',
+        label: $_('contextMenu.delete'),
         icon: 'trash-2',
         danger: true,
         onclick: () => handleDeleteRequest(sessionId),
@@ -410,6 +416,71 @@
 
   $effect(() => {
     loadState();
+  });
+
+  // Real-time tab tracking: update current tab info when user switches tabs or navigates.
+  // Critical for side panel which stays open across tab switches.
+  $effect(() => {
+    async function handleTabActivated(activeInfo: chrome.tabs.TabActiveInfo) {
+      try {
+        const tab = await chrome.tabs.get(activeInfo.tabId);
+        // Only update if the tab is in the current window
+        if (tab && !tab.url?.startsWith('chrome://')) {
+          currentTab = tab;
+          if (tab.id) {
+            currentTabEntry = await getSessionForTab(tab.id);
+            const origin = tab.url ? extractOrigin(tab.url) : '';
+            // Auto-detect session if no mapping
+            if (!currentTabEntry && origin && tab.id) {
+              const detectedId = await detectSession(origin, tab.id);
+              if (detectedId) {
+                await assignTab(tab.id, detectedId, origin);
+                currentTabEntry = { sessionId: detectedId, origin };
+              }
+            }
+            // Refresh origin data availability
+            if (origin) {
+              const ids = await getSessionsForOrigin(origin);
+              sessionsWithOriginData = new Set(ids);
+            } else {
+              sessionsWithOriginData = new Set();
+            }
+          }
+        }
+      } catch {
+        // Tab may have been closed — ignore
+      }
+    }
+
+    function handleTabUpdated(tabId: number, changeInfo: chrome.tabs.TabChangeInfo, tab: chrome.tabs.Tab) {
+      // Only react to URL changes on the active tab
+      if (changeInfo.url && currentTab?.id === tabId) {
+        currentTab = tab;
+        // Re-evaluate session for new URL (async, fire-and-forget)
+        const origin = extractOrigin(changeInfo.url);
+        getSessionForTab(tabId).then(async (entry) => {
+          currentTabEntry = entry;
+          if (!entry && origin && tabId) {
+            const detectedId = await detectSession(origin, tabId);
+            if (detectedId) {
+              await assignTab(tabId, detectedId, origin);
+              currentTabEntry = { sessionId: detectedId, origin };
+            }
+          }
+          if (origin) {
+            const ids = await getSessionsForOrigin(origin);
+            sessionsWithOriginData = new Set(ids);
+          }
+        });
+      }
+    }
+
+    chrome.tabs.onActivated.addListener(handleTabActivated);
+    chrome.tabs.onUpdated.addListener(handleTabUpdated);
+    return () => {
+      chrome.tabs.onActivated.removeListener(handleTabActivated);
+      chrome.tabs.onUpdated.removeListener(handleTabUpdated);
+    };
   });
 
   // Silently update when storage changes externally (e.g., auto-refresh, settings page, context menu).
@@ -516,12 +587,14 @@
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <main onkeydown={handleKeydown}>
+
+
   {#if loading}
     <div class="popup-content">
       <div class="header">
         <div class="header-title">
           <AppLogo size={20} />
-          <h1>Sessions</h1>
+          <h1>{$_('popup.title')}</h1>
         </div>
       </div>
       <div class="loading-skeleton">
@@ -547,15 +620,15 @@
       <div class="header">
         <div class="header-title">
           <AppLogo size={20} />
-          <h1>Sessions</h1>
+          <h1>{$_('popup.title')}</h1>
         </div>
         <div class="header-actions">
           <ThemeToggle />
           <button
             class="icon-btn"
             onclick={() => chrome.runtime.openOptionsPage()}
-            aria-label="Settings"
-            title="Settings"
+            aria-label={$_('popup.settingsTooltip')}
+            title={$_('popup.settingsTooltip')}
           >
             <Icon name="settings" size={15} />
           </button>
@@ -602,7 +675,7 @@
 
       <button class="new-btn" onclick={() => (view = 'new')}>
         <Icon name="plus" size={14} />
-        New Session
+        {$_('popup.newSession')}
       </button>
     </div>
   {/if}
@@ -652,8 +725,18 @@
 <style>
   main {
     width: 380px;
+    min-width: 320px;
+    max-width: 480px;
     min-height: 200px;
     background: var(--color-bg-primary);
+  }
+
+  /* Side panel mode: allow wider layout when viewport exceeds popup max */
+  @media (min-width: 481px) {
+    main {
+      width: 100%;
+      max-width: none;
+    }
   }
 
   .popup-content {
