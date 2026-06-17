@@ -29,16 +29,30 @@ export async function deriveKey(passphrase: string, salt: Uint8Array): Promise<C
   );
 }
 
+export async function compressText(text: string): Promise<Uint8Array> {
+  const bytes = new TextEncoder().encode(text);
+  const stream = new Response(bytes as any).body!.pipeThrough(new CompressionStream('gzip'));
+  const buffer = await new Response(stream).arrayBuffer();
+  return new Uint8Array(buffer);
+}
+
+export async function decompressText(compressedBytes: Uint8Array): Promise<string> {
+  const stream = new Response(compressedBytes as any).body!.pipeThrough(new DecompressionStream('gzip'));
+  const buffer = await new Response(stream).arrayBuffer();
+  return new TextDecoder().decode(buffer);
+}
+
 export async function encrypt(data: FullExportData, passphrase: string): Promise<EncryptedPayload> {
   const salt = crypto.getRandomValues(new Uint8Array(SALT_LENGTH));
   const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
   const key = await deriveKey(passphrase, salt);
 
-  const plaintext = new TextEncoder().encode(JSON.stringify(data));
-  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plaintext);
+  const plaintextString = JSON.stringify(data);
+  const compressedBytes = await compressText(plaintextString);
+  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, compressedBytes.buffer as ArrayBuffer);
 
   return {
-    v: 1,
+    v: 2,
     salt: saltToBase64(salt),
     iv: saltToBase64(iv),
     ct: saltToBase64(new Uint8Array(ciphertext)),
@@ -67,7 +81,12 @@ export async function decrypt(
     throw new Error('Decryption failed — encryption key mismatch or corrupted data');
   }
 
-  const json = new TextDecoder().decode(decrypted);
+  let json: string;
+  if (payload.v === 2) {
+    json = await decompressText(new Uint8Array(decrypted));
+  } else {
+    json = new TextDecoder().decode(decrypted);
+  }
   return JSON.parse(json) as FullExportData;
 }
 

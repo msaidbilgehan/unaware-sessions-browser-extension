@@ -51,6 +51,8 @@
     webDavDisconnect,
     webDavGetState,
     webDavTestConnection,
+    webDavListBackups,
+    webDavRestore,
   } from '@shared/api';
   import {
     getSyncConfig,
@@ -69,24 +71,17 @@
     onWebDavConfigChange,
     setWebDavConfig,
   } from '@shared/webdav/webdav-store';
-  import { encrypt } from '@shared/sync/crypto-engine';
-  import {
-    deleteWebDavFile,
-    listWebDavFiles,
-    putWebDavFile,
-    testWebDavConnection,
-  } from '@shared/webdav/webdav-client';
   import type {
     WebDavConfig,
     WebDavConnectionConfig,
     WebDavMaxBackups,
     WebDavState,
     WebDavSyncInterval,
+    WebDavFile,
   } from '@shared/webdav/webdav-types';
   import { formatRelativeTime, generateId } from '@shared/utils';
 
   let theme = $state<ThemePreference>(getTheme());
-
   $effect(() => {
     const unsub = onThemeChange((t) => {
       theme = t;
@@ -103,7 +98,6 @@
 
   // Auto-refresh interval
   let refreshInterval = $state<AutoRefreshInterval>(getAutoRefreshInterval());
-
   $effect(() => {
     const unsub = onSettingsChange((settings) => {
       refreshInterval = settings.autoRefreshInterval;
@@ -121,8 +115,6 @@
   async function handleIntervalChange(value: AutoRefreshInterval) {
     await setAutoRefreshInterval(value);
   }
-
-  // Auto-refresh default for new domains
   let defaultEnabled = $state<boolean>(getAutoRefreshDefaultEnabled());
 
   $effect(() => {
@@ -495,9 +487,21 @@
   let webDavHost = $state(webDavCfg.host);
   let webDavUsername = $state(webDavCfg.username);
   let webDavPassword = $state(webDavCfg.password);
+  let webDavEncryptionPassword = $state(webDavCfg.encryptionPassword || '');
+  let showWebDavEncryptionPassword = $state(false);
   let webDavPath = $state(webDavCfg.path);
   let webDavSyncInterval = $state<WebDavSyncInterval>(webDavCfg.syncInterval);
   let webDavMaxBackups = $state<WebDavMaxBackups>(webDavCfg.maxBackups);
+  let webDavSkipFileData = $state(webDavCfg.skipFileData || false);
+
+  // Backup manager state
+  let webDavBackups = $state<WebDavFile[]>([]);
+  let webDavBackupsLoading = $state(false);
+  let webDavBackupPage = $state(1);
+  let showWebDavRestoreConfirm = $state<WebDavFile | null>(null);
+  let showWebDavDeleteConfirm = $state<WebDavFile | null>(null);
+  let webDavBackupRestoring = $state(false);
+  let webDavBackupDeleting = $state(false);
 
   $effect(() => {
     initWebDavStore().then(() => {
@@ -515,9 +519,11 @@
     webDavHost = config.host;
     webDavUsername = config.username;
     webDavPassword = config.password;
+    webDavEncryptionPassword = config.encryptionPassword || '';
     webDavPath = config.path;
     webDavSyncInterval = config.syncInterval;
     webDavMaxBackups = config.maxBackups;
+    webDavSkipFileData = config.skipFileData || false;
   }
 
   async function refreshWebDavState() {
@@ -539,9 +545,11 @@
       host: webDavHost.trim(),
       username: webDavUsername.trim(),
       password: webDavPassword,
+      encryptionPassword: webDavEncryptionPassword.trim(),
       path: webDavPath.trim() || '/backup',
       syncInterval: webDavSyncInterval,
       maxBackups: webDavMaxBackups,
+      skipFileData: webDavSkipFileData,
     };
   }
 
@@ -550,9 +558,11 @@
       host: webDavHost.trim(),
       username: webDavUsername.trim(),
       password: webDavPassword ? '***' : '',
+      encryptionPassword: webDavEncryptionPassword ? '***' : '',
       path: webDavPath.trim() || '/backup',
       syncInterval: webDavSyncInterval,
       maxBackups: webDavMaxBackups,
+      skipFileData: webDavSkipFileData,
     };
   }
 
@@ -578,80 +588,48 @@
     });
   }
 
-  function toWebDavConnectionConfig(config: WebDavConfig): WebDavConnectionConfig {
-    return {
-      host: config.host,
-      username: config.username,
-      password: config.password,
-      path: config.path,
-    };
-  }
-
-  function getWebDavPassphrase(config: WebDavConfig) {
-    return `webdav:${config.host}:${config.username}:${config.password}`;
-  }
-
-  function sanitizeWebDavFileToken(value: string) {
-    return value.replace(/[^a-zA-Z0-9_-]/g, '_');
-  }
-
-  function formatWebDavBackupTimestamp(date: Date) {
-    const parts = [
-      date.getFullYear(),
-      date.getMonth() + 1,
-      date.getDate(),
-      date.getHours(),
-      date.getMinutes(),
-      date.getSeconds(),
-    ];
-    return parts.map((part, index) => (index === 0 ? String(part) : String(part).padStart(2, '0'))).join('');
-  }
-
-  function buildWebDavBackupFileName(deviceId: string) {
-    return `unaware-sessions.${formatWebDavBackupTimestamp(new Date())}.${sanitizeWebDavFileToken(deviceId)}.webdav.json`;
-  }
-
-  async function pruneOldWebDavBackups(config: WebDavConfig) {
-    if (config.maxBackups <= 0) return;
-
-    const deviceToken = `.${sanitizeWebDavFileToken(config.deviceId || 'device')}.`;
-    const files = await listWebDavFiles(toWebDavConnectionConfig(config));
-    const backups = files
-      .filter((file) => {
-        return (
-          file.fileName.startsWith('unaware-sessions.') &&
-          file.fileName.endsWith('.webdav.json') &&
-          file.fileName.includes(deviceToken)
-        );
-      })
-      .sort((a, b) => {
-        const byModified = b.lastModified - a.lastModified;
-        return byModified !== 0 ? byModified : b.fileName.localeCompare(a.fileName);
-      });
-
-    for (const file of backups.slice(config.maxBackups)) {
-      await deleteWebDavFile(toWebDavConnectionConfig(config), file.fileName);
+  async function loadWebDavBackups() {
+    if (!webDavCfg.enabled || !webDavCfg.host) return;
+    webDavBackupsLoading = true;
+    try {
+      webDavBackups = await webDavListBackups();
+      // Sort backups by modified time descending
+      webDavBackups.sort((a, b) => b.lastModified - a.lastModified);
+    } catch (err) {
+      console.error('[WebDAV] Failed to load backups', err);
+      syncToast = { message: $_('options.settings.webdavListFailed', { values: { error: err instanceof Error ? err.message : String(err) } }), type: 'error' };
+    } finally {
+      webDavBackupsLoading = false;
     }
   }
 
-  async function backupToWebDavFromOptions(): Promise<WebDavState> {
-    await saveWebDavConfigLocally();
-    const config = getWebDavConfig();
-    if (!config.host) {
-      throw new Error('WebDAV host is required');
+  async function handleWebDavRestore(file: WebDavFile) {
+    showWebDavRestoreConfirm = null;
+    webDavBackupRestoring = true;
+    try {
+      await webDavRestore(file.fileName);
+      syncToast = { message: $_('options.settings.webdavRestoreSucceeded'), type: 'success' };
+    } catch (err) {
+      console.error('[WebDAV] Restore failed', err);
+      syncToast = { message: $_('options.settings.webdavRestoreFailed', { values: { error: err instanceof Error ? err.message : String(err) } }), type: 'error' };
+    } finally {
+      webDavBackupRestoring = false;
     }
+  }
 
-    webDavState = { status: 'syncing', progress: 'Backing up to WebDAV...' };
-    const data = await exportFull();
-    const encrypted = await encrypt(data, getWebDavPassphrase(config));
-    const fileName = buildWebDavBackupFileName(config.deviceId || 'device');
-
-    await putWebDavFile(toWebDavConnectionConfig(config), fileName, JSON.stringify(encrypted));
-    await pruneOldWebDavBackups(config);
-    await setWebDavConfig({ lastSyncAt: Date.now(), lastSyncError: '' });
-
-    webDavState = { status: 'idle', progress: '' };
-    return webDavState;
+  async function handleWebDavDeleteBackup(file: WebDavFile) {
+    showWebDavDeleteConfirm = null;
+    webDavBackupDeleting = true;
+    try {
+      await webDavDeleteFile(file.fileName);
+      syncToast = { message: $_('options.settings.webdavDeleteSucceeded'), type: 'success' };
+      await loadWebDavBackups();
+    } catch (err) {
+      console.error('[WebDAV] Delete failed', err);
+      syncToast = { message: $_('options.settings.webdavDeleteFailed', { values: { error: err instanceof Error ? err.message : String(err) } }), type: 'error' };
+    } finally {
+      webDavBackupDeleting = false;
+    }
   }
 
   async function handleWebDavSaveAccount() {
@@ -749,20 +727,14 @@
   async function handleWebDavBackupNow() {
     webDavBackingUp = true;
     try {
-      let state: WebDavState;
-      try {
-        state = await webDavBackupNow();
-      } catch (err) {
-        if (!isUnknownMessageTypeError(err)) throw err;
-        console.warn('[WebDAV] Service worker is missing WEBDAV_BACKUP_NOW, backing up from options page fallback');
-        state = await backupToWebDavFromOptions();
-      }
+      const state = await webDavBackupNow();
       webDavState = state;
       await refreshWebDavConfigFromStore();
       if (state.status === 'error') {
         syncToast = { message: state.progress, type: 'error' };
       } else {
         syncToast = { message: $_('options.settings.webdavBackupCompleted'), type: 'success' };
+        await loadWebDavBackups();
       }
     } catch (err) {
       logWebDavError('Backup', err);
@@ -789,6 +761,7 @@
   $effect(() => {
     if (webDavCfg.enabled) {
       refreshWebDavState();
+      loadWebDavBackups();
     }
   });
 
@@ -1427,6 +1400,26 @@
           autocomplete="current-password"
         />
       </label>
+      <label class="field">
+        <span class="field-label">{$_('options.settings.webdavEncryptionPassword')}</span>
+        <div class="password-input-container">
+          <input
+            class="text-input"
+            type={showWebDavEncryptionPassword ? 'text' : 'password'}
+            bind:value={webDavEncryptionPassword}
+            placeholder={$_('options.settings.webdavEncryptionPasswordPlaceholder')}
+            autocomplete="new-password"
+          />
+          <button
+            type="button"
+            class="password-toggle-btn"
+            onclick={() => (showWebDavEncryptionPassword = !showWebDavEncryptionPassword)}
+            aria-label="Toggle passphrase visibility"
+          >
+            <Icon name={showWebDavEncryptionPassword ? 'eye-off' : 'eye'} size={16} />
+          </button>
+        </div>
+      </label>
     </div>
 
     {#if webDavCfg.enabled}
@@ -1498,6 +1491,27 @@
         {/each}
       </div>
     </div>
+
+    <div class="divider"></div>
+
+    <label class="toggle-row">
+      <div class="toggle-info">
+        <span class="toggle-label">{$_('options.settings.webdavSkipFileData')}</span>
+        <span class="toggle-description">
+          {$_('options.settings.webdavSkipFileDataDesc')}
+        </span>
+      </div>
+      <button
+        class="toggle-switch"
+        class:on={webDavSkipFileData}
+        onclick={() => { webDavSkipFileData = !webDavSkipFileData; saveWebDavConfigLocally(); }}
+        role="switch"
+        aria-checked={webDavSkipFileData}
+        aria-label={$_('options.settings.webdavSkipFileData')}
+      >
+        <span class="toggle-thumb"></span>
+      </button>
+    </label>
 
     <div class="divider"></div>
 
@@ -1574,6 +1588,116 @@
       </div>
     </div>
   </section>
+
+  {#if webDavCfg.enabled}
+    <!-- WebDAV Backup Manager -->
+    <section class="card webdav-backup-manager">
+      <div class="card-header">
+        <div class="card-icon">
+          <Icon name="archive" size={16} />
+        </div>
+        <div>
+          <h2>{$_('options.settings.backupsManager')}</h2>
+          <p class="description">{$_('options.settings.backupsManagerDesc')}</p>
+        </div>
+      </div>
+
+      <div class="backup-manager-actions">
+        <button class="security-text-btn" onclick={loadWebDavBackups} disabled={webDavBackupsLoading}>
+          {#if webDavBackupsLoading}
+            <span class="spinner-sm"></span>
+            {$_('common.loading')}
+          {:else}
+            <Icon name="refresh-cw" size={14} />
+            {$_('options.settings.refresh')}
+          {/if}
+        </button>
+      </div>
+
+      {#if webDavBackupsLoading && webDavBackups.length === 0}
+        <div class="backup-manager-loading">
+          <span class="spinner"></span>
+        </div>
+      {:else if webDavBackups.length === 0}
+        <div class="no-backups-state">
+          <Icon name="info" size={24} />
+          <p>{$_('options.settings.noBackups')}</p>
+        </div>
+      {:else}
+        <div class="table-container">
+          <table class="backups-table">
+            <thead>
+              <tr>
+                <th>{$_('options.settings.fileName')}</th>
+                <th>{$_('options.settings.modifiedAt')}</th>
+                <th>{$_('options.settings.fileSize')}</th>
+                <th>{$_('options.settings.actions')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each webDavBackups.slice((webDavBackupPage - 1) * 5, webDavBackupPage * 5) as file}
+                <tr>
+                  <td class="file-name-cell" title={file.fileName}>
+                    <span class="file-name-txt">{file.fileName}</span>
+                  </td>
+                  <td>{new Date(file.lastModified).toLocaleString()}</td>
+                  <td>{(file.size / 1024).toFixed(1)} KB</td>
+                  <td>
+                    <div class="action-buttons">
+                      <button
+                        class="action-btn restore-btn"
+                        onclick={() => (showWebDavRestoreConfirm = file)}
+                        disabled={webDavBackupRestoring}
+                        title={$_('options.settings.restore')}
+                      >
+                        <Icon name="download" size={14} />
+                        <span>{$_('options.settings.restore')}</span>
+                      </button>
+                      <button
+                        class="action-btn delete-btn"
+                        onclick={() => (showWebDavDeleteConfirm = file)}
+                        disabled={webDavBackupDeleting}
+                        title={$_('options.settings.delete')}
+                      >
+                        <Icon name="trash" size={14} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+
+        {#if Math.ceil(webDavBackups.length / 5) > 1}
+          <div class="pagination">
+            <button
+              class="pagination-btn"
+              disabled={webDavBackupPage === 1}
+              onclick={() => (webDavBackupPage = webDavBackupPage - 1)}
+            >
+              {$_('options.settings.prevPage')}
+            </button>
+            <span class="pagination-info">
+              {$_('options.settings.page', {
+                values: {
+                  current: webDavBackupPage,
+                  total: Math.ceil(webDavBackups.length / 5)
+                }
+              })}
+            </span>
+            <button
+              class="pagination-btn"
+              disabled={webDavBackupPage === Math.ceil(webDavBackups.length / 5)}
+              onclick={() => (webDavBackupPage = webDavBackupPage + 1)}
+            >
+              {$_('options.settings.nextPage')}
+            </button>
+          </div>
+        {/if}
+      {/if}
+    </section>
+  {/if}
 </div>
 
 {#if showDisconnectConfirm}
@@ -1595,6 +1719,28 @@
     danger={true}
     onconfirm={handleWebDavDisconnect}
     oncancel={() => (showWebDavDisconnectConfirm = false)}
+  />
+{/if}
+
+{#if showWebDavRestoreConfirm}
+  <ConfirmDialog
+    title={$_('options.settings.webdavRestoreConfirmTitle')}
+    message={$_('options.settings.webdavRestoreConfirmMessage', { values: { file: showWebDavRestoreConfirm.fileName } })}
+    confirmLabel={$_('options.settings.restore')}
+    danger={true}
+    onconfirm={() => handleWebDavRestore(showWebDavRestoreConfirm!)}
+    oncancel={() => (showWebDavRestoreConfirm = null)}
+  />
+{/if}
+
+{#if showWebDavDeleteConfirm}
+  <ConfirmDialog
+    title={$_('options.settings.webdavDeleteConfirmTitle')}
+    message={$_('options.settings.webdavDeleteConfirmMessage', { values: { file: showWebDavDeleteConfirm.fileName } })}
+    confirmLabel={$_('options.settings.delete')}
+    danger={true}
+    onconfirm={() => handleWebDavDeleteBackup(showWebDavDeleteConfirm!)}
+    oncancel={() => (showWebDavDeleteConfirm = null)}
   />
 {/if}
 
@@ -2099,6 +2245,204 @@
 
   .security-text-btn :global(svg) {
     vertical-align: -2px;
+  }
+
+  /* Password toggle input */
+  .password-input-container {
+    position: relative;
+    display: flex;
+    align-items: center;
+    width: 100%;
+  }
+
+  .password-input-container :global(.text-input) {
+    width: 100%;
+    padding-right: 40px !important;
+  }
+
+  .password-toggle-btn {
+    position: absolute;
+    right: 12px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--color-text-tertiary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px;
+    border-radius: var(--radius-sm);
+    transition: all var(--transition-fast);
+  }
+
+  .password-toggle-btn:hover {
+    color: var(--color-text-primary);
+    background-color: var(--color-interactive-hover);
+  }
+
+  /* WebDAV Backup Manager */
+  .webdav-backup-manager {
+    margin-top: var(--space-6);
+  }
+
+  .backup-manager-actions {
+    display: flex;
+    justify-content: flex-start;
+    margin-bottom: var(--space-4);
+  }
+
+  .backup-manager-loading {
+    display: flex;
+    justify-content: center;
+    padding: var(--space-8) 0;
+  }
+
+  .no-backups-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-8) 0;
+    color: var(--color-text-tertiary);
+  }
+
+  .no-backups-state p {
+    margin: 0;
+    font-size: var(--text-sm);
+  }
+
+  .table-container {
+    overflow-x: auto;
+    border: 1px solid var(--color-border-secondary);
+    border-radius: var(--radius-lg);
+    background: var(--color-bg-primary);
+  }
+
+  .backups-table {
+    width: 100%;
+    border-collapse: collapse;
+    text-align: left;
+    font-size: var(--text-sm);
+  }
+
+  .backups-table th,
+  .backups-table td {
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--color-border-secondary);
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+  }
+
+  .backups-table th {
+    font-weight: var(--font-semibold);
+    color: var(--color-text-primary);
+    background: var(--color-bg-secondary);
+  }
+
+  .backups-table tbody tr:last-child td {
+    border-bottom: none;
+  }
+
+  .backups-table tbody tr:hover {
+    background: var(--color-interactive-hover);
+  }
+
+  .file-name-cell {
+    max-width: 250px;
+    overflow: hidden;
+  }
+
+  .file-name-txt {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--color-text-primary);
+    font-weight: var(--font-medium);
+  }
+
+  .action-buttons {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .action-btn {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-1-5) var(--space-3);
+    border-radius: var(--radius-md);
+    font-size: var(--text-xs);
+    font-weight: var(--font-medium);
+    cursor: pointer;
+    background: var(--color-bg-primary);
+    border: 1px solid var(--color-border-primary);
+    color: var(--color-text-secondary);
+    transition: all var(--transition-fast);
+  }
+
+  .action-btn:hover:not(:disabled) {
+    background: var(--color-interactive-hover);
+  }
+
+  .restore-btn {
+    color: var(--color-accent);
+    border-color: var(--color-accent-soft);
+    background: var(--color-accent-soft);
+  }
+
+  .restore-btn:hover:not(:disabled) {
+    background: var(--color-accent);
+    color: var(--color-text-inverse);
+    border-color: var(--color-accent);
+  }
+
+  .delete-btn {
+    padding: var(--space-1-5);
+    color: var(--color-error);
+    border-color: var(--color-error-soft);
+  }
+
+  .delete-btn:hover:not(:disabled) {
+    background: var(--color-error);
+    color: var(--color-text-inverse);
+    border-color: var(--color-error);
+  }
+
+  .pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-4);
+    margin-top: var(--space-4);
+  }
+
+  .pagination-btn {
+    padding: var(--space-1-5) var(--space-3);
+    border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-md);
+    background: var(--color-bg-primary);
+    color: var(--color-text-secondary);
+    font-size: var(--text-xs);
+    font-weight: var(--font-medium);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .pagination-btn:hover:not(:disabled) {
+    background: var(--color-interactive-hover);
+    color: var(--color-text-primary);
+  }
+
+  .pagination-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .pagination-info {
+    font-size: var(--text-xs);
+    color: var(--color-text-tertiary);
   }
 
   @media (max-width: 640px) {

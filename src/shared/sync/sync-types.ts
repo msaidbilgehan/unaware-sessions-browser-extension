@@ -48,7 +48,7 @@ export interface SyncManifest {
 // ── Encrypted Payload (stored on Drive) ────────────────────
 
 export interface EncryptedPayload {
-  v: 1;
+  v: 1 | 2;
   salt: string;
   iv: string;
   ct: string;

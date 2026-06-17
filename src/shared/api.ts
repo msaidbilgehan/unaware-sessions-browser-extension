@@ -304,3 +304,15 @@ export function webDavGetState(): Promise<WebDavState> {
 export function webDavConfigure(updates: Partial<WebDavConfig>): Promise<void> {
   return sendMessage({ type: MessageType.WEBDAV_CONFIGURE, updates });
 }
+
+export function webDavListBackups(): Promise<import('@shared/webdav/webdav-types').WebDavFile[]> {
+  return sendMessage({ type: MessageType.WEBDAV_LIST_BACKUPS });
+}
+
+export function webDavRestore(fileName: string): Promise<void> {
+  return sendMessage({ type: MessageType.WEBDAV_RESTORE, fileName });
+}
+
+export function webDavDeleteFile(fileName: string): Promise<void> {
+  return sendMessage({ type: MessageType.WEBDAV_DELETE_FILE, fileName });
+}

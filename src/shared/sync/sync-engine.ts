@@ -260,7 +260,7 @@ export async function applyFullData(data: FullExportData): Promise<void> {
 
 // ── Export Local Data ──────────────────────────────────────
 
-export async function exportLocalData(): Promise<FullExportData> {
+export async function exportLocalData(options?: { skipFileData?: boolean }): Promise<FullExportData> {
   // Single-scan reads: O(T) each instead of O(N×T) from per-session queries
   const [sessions, cookieSnapshots, storageSnapshots] = await Promise.all([
     listSessions(),
@@ -268,12 +268,20 @@ export async function exportLocalData(): Promise<FullExportData> {
     storageStore.getAllSnapshots(),
   ]);
 
+  let filteredStorage = storageSnapshots;
+  if (options?.skipFileData) {
+    filteredStorage = storageSnapshots.map((snap) => ({
+      ...snap,
+      indexedDB: undefined,
+    }));
+  }
+
   return {
     version: 1,
     exportedAt: Date.now(),
     sessions,
     cookieSnapshots,
-    storageSnapshots,
+    storageSnapshots: filteredStorage,
   };
 }
 

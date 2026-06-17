@@ -78,6 +78,8 @@ export const DEFAULT_WEBDAV_CONFIG: WebDavConfig = {
   lastSyncAt: 0,
   lastSyncError: '',
   deviceId: '',
+  encryptionPassword: '',
+  skipFileData: false,
 };
 
 export const WEBDAV_SYNC_INTERVAL_OPTIONS: { value: WebDavSyncInterval; label: string }[] = [

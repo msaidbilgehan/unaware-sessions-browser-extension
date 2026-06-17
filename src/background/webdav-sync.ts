@@ -1,7 +1,7 @@
 import { ALARM_WEBDAV_SYNC } from '@shared/constants';
-import { encrypt } from '@shared/sync/crypto-engine';
-import { exportLocalData } from '@shared/sync/sync-engine';
-import type { WebDavConfig, WebDavConnectionConfig, WebDavState } from '@shared/webdav/webdav-types';
+import { decrypt, encrypt } from '@shared/sync/crypto-engine';
+import { applyFullData, exportLocalData } from '@shared/sync/sync-engine';
+import type { WebDavConfig, WebDavConnectionConfig, WebDavState, WebDavFile } from '@shared/webdav/webdav-types';
 import {
   getWebDavConfig,
   isWebDavEnabled,
@@ -10,6 +10,7 @@ import {
 } from '@shared/webdav/webdav-store';
 import {
   deleteWebDavFile,
+  getWebDavFile,
   listWebDavFiles,
   putWebDavFile,
   testWebDavConnection,
@@ -122,7 +123,7 @@ export async function backupToWebDav(): Promise<WebDavState> {
 
   try {
     log.info('WebDAV backup: exporting local data');
-    const localData = await exportLocalData();
+    const localData = await exportLocalData({ skipFileData: config.skipFileData });
     const encrypted = await encrypt(localData, getWebDavPassphrase(config));
     const fileName = buildBackupFileName(config.deviceId || 'device');
 
@@ -216,7 +217,64 @@ function sanitizeFileToken(value: string): string {
 }
 
 function getWebDavPassphrase(config: WebDavConfig): string {
+  if (config.encryptionPassword) {
+    return `webdav-custom:${config.encryptionPassword}`;
+  }
   return `webdav:${config.host}:${config.username}:${config.password}`;
+}
+
+export async function listWebDavBackups(): Promise<WebDavFile[]> {
+  const config = getWebDavConfig();
+  if (!config.enabled || !config.host) {
+    throw new Error('WebDAV is not configured');
+  }
+  const files = await listWebDavFiles(toConnectionConfig(config));
+  return files.filter((file) => {
+    return (
+      file.fileName.startsWith(BACKUP_PREFIX) &&
+      file.fileName.endsWith(BACKUP_SUFFIX)
+    );
+  });
+}
+
+export async function restoreFromWebDav(fileName: string): Promise<void> {
+  const config = getWebDavConfig();
+  if (!config.enabled || !config.host) {
+    throw new Error('WebDAV is not configured');
+  }
+
+  currentWebDavState = { status: 'syncing', progress: `Downloading backup ${fileName}...` };
+  try {
+    log.info('WebDAV restore: downloading backup file', { fileName });
+    const content = await getWebDavFile(toConnectionConfig(config), fileName);
+    
+    currentWebDavState = { status: 'syncing', progress: 'Decrypting backup...' };
+    log.info('WebDAV restore: decrypting payload');
+    const encryptedPayload = JSON.parse(content);
+    const localData = await decrypt(encryptedPayload, getWebDavPassphrase(config));
+    
+    currentWebDavState = { status: 'syncing', progress: 'Restoring local data...' };
+    log.info('WebDAV restore: applying data');
+    await applyFullData(localData);
+
+    currentWebDavState = { status: 'idle', progress: '' };
+    log.info('WebDAV restore: completed successfully');
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    currentWebDavState = { status: 'error', progress: msg };
+    log.error('WebDAV restore failed', err);
+    console.error('[WebDAV] Restore failed', err);
+    throw err;
+  }
+}
+
+export async function deleteWebDavBackup(fileName: string): Promise<void> {
+  const config = getWebDavConfig();
+  if (!config.enabled || !config.host) {
+    throw new Error('WebDAV is not configured');
+  }
+  log.info('WebDAV delete backup: deleting file', { fileName });
+  await deleteWebDavFile(toConnectionConfig(config), fileName);
 }
 
 function toConnectionConfig(config: WebDavConfig): WebDavConnectionConfig {
@@ -236,6 +294,11 @@ export async function handleWebDavSyncAlarm(): Promise<void> {
     return;
   }
 
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    log.debug('WebDAV sync alarm fired but navigator is offline, skipping');
+    return;
+  }
+
   const { host } = getWebDavConfig();
   if (!host) {
     log.debug('WebDAV sync alarm fired but no host configured');
@@ -243,7 +306,11 @@ export async function handleWebDavSyncAlarm(): Promise<void> {
   }
 
   log.info('WebDAV sync alarm: triggering backup');
-  await backupToWebDav();
+  try {
+    await backupToWebDav();
+  } catch (err) {
+    log.error('WebDAV auto-backup failed', err);
+  }
 }
 
 // ── Alarm Management ───────────────────────────────────────

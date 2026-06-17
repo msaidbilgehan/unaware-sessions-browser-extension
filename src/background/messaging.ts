@@ -61,8 +61,11 @@ import {
 import {
   backupToWebDav,
   connectWebDav,
+  deleteWebDavBackup,
   disconnectWebDav,
   getWebDavState,
+  listWebDavBackups,
+  restoreFromWebDav,
   testSavedWebDavConnection,
 } from './webdav-sync';
 
@@ -691,6 +694,23 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
   [MessageType.WEBDAV_CONFIGURE]: async (msg) => {
     if (msg.type !== MessageType.WEBDAV_CONFIGURE) return { success: false };
     await setWebDavConfig(msg.updates);
+    return { success: true };
+  },
+
+  [MessageType.WEBDAV_LIST_BACKUPS]: async () => {
+    const backups = await listWebDavBackups();
+    return { success: true, data: backups };
+  },
+
+  [MessageType.WEBDAV_RESTORE]: async (msg) => {
+    if (msg.type !== MessageType.WEBDAV_RESTORE) return { success: false };
+    await restoreFromWebDav(msg.fileName);
+    return { success: true };
+  },
+
+  [MessageType.WEBDAV_DELETE_FILE]: async (msg) => {
+    if (msg.type !== MessageType.WEBDAV_DELETE_FILE) return { success: false };
+    await deleteWebDavBackup(msg.fileName);
     return { success: true };
   },
 

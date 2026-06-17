@@ -104,7 +104,38 @@ export async function ensureCollection(config: WebDavConnectionConfig): Promise<
   for (const segment of segments) {
     current += `/${segment}`;
     const url = getCollectionUrl(config, current);
-    await webDavRequest(config, url, { method: 'MKCOL' }, [200, 201, 204, 405]);
+    try {
+      // First check if collection already exists via PROPFIND Depth 0
+      await webDavRequest(
+        config,
+        url,
+        {
+          method: 'PROPFIND',
+          headers: {
+            Depth: '0',
+            'Content-Type': 'application/xml; charset=utf-8',
+          },
+          body: XML_PROPFIND_BODY,
+        },
+        [200, 207],
+      );
+      // If it exists, skip MKCOL
+      continue;
+    } catch (err) {
+      // If it does not exist or fails, proceed with MKCOL
+      // Some servers might return 423 Locked if the folder is managed or already being accessed
+      // We also handle 405 (Method Not Allowed) which often means it's already a collection
+      try {
+        await webDavRequest(config, url, { method: 'MKCOL' }, [200, 201, 204, 405]);
+      } catch (mkcolErr) {
+        if (mkcolErr instanceof Error && (mkcolErr.message.includes('423') || mkcolErr.message.includes('405'))) {
+          // If MKCOL fails with 423 or 405, it might already exist or be locked by the server
+          // We'll proceed and let the subsequent operation (like PUT) fail if there's a real issue
+          continue;
+        }
+        throw mkcolErr;
+      }
+    }
   }
 }
 
@@ -153,37 +184,61 @@ export async function deleteWebDavFile(
   await webDavRequest(config, getFileUrl(config, fileName), { method: 'DELETE' }, [200, 202, 204, 404]);
 }
 
-export async function listWebDavFiles(config: WebDavConnectionConfig): Promise<WebDavFile[]> {
-  await ensureCollection(config);
+export async function getWebDavFile(
+  config: WebDavConnectionConfig,
+  fileName: string,
+): Promise<string> {
   const res = await webDavRequest(
     config,
-    getCollectionUrl(config),
-    {
-      method: 'PROPFIND',
-      headers: {
-        Depth: '1',
-        'Content-Type': 'application/xml; charset=utf-8',
-      },
-      body: XML_PROPFIND_BODY,
-    },
-    [207],
+    getFileUrl(config, fileName),
+    { method: 'GET' },
+    [200],
   );
-  const xml = await res.text();
-  return parseWebDavFileList(xml, getCollectionUrl(config));
+  return res.text();
+}
+
+export async function listWebDavFiles(config: WebDavConnectionConfig): Promise<WebDavFile[]> {
+  try {
+    const res = await webDavRequest(
+      config,
+      getCollectionUrl(config),
+      {
+        method: 'PROPFIND',
+        headers: {
+          Depth: '1',
+          'Content-Type': 'application/xml; charset=utf-8',
+        },
+        body: XML_PROPFIND_BODY,
+      },
+      [207],
+    );
+    const xml = await res.text();
+    return parseWebDavFileList(xml, getCollectionUrl(config));
+  } catch (err) {
+    // If the directory does not exist (404), return an empty list of backups
+    if (err instanceof Error && err.message.includes('failed with 404')) {
+      return [];
+    }
+    throw err;
+  }
 }
 
 function parseWebDavFileList(xml: string, collectionUrl: string): WebDavFile[] {
-  const responses = xml.match(/<[^:>]*:?response[\s\S]*?<\/[^:>]*:?response>/gi) ?? [];
+  const responses = getResponseBlocks(xml);
   const collectionPath = new URL(collectionUrl).pathname.replace(/\/+$/, '/');
   const files: WebDavFile[] = [];
 
   for (const response of responses) {
-    const href = decodeXml(readXmlTag(response, 'href') ?? '');
+    const href = decodeXml(getTagContent(response, 'href') ?? '');
     if (!href) continue;
 
-    const hrefPath = hrefToPath(href);
+    const hrefPath = hrefToPath(href, collectionUrl);
     if (hrefPath.replace(/\/+$/, '/') === collectionPath) continue;
     if (hrefPath.endsWith('/')) continue;
+
+    // Skip directories by checking resourcetype
+    const resourceType = getTagContent(response, 'resourcetype') ?? '';
+    if (resourceType.toLowerCase().includes('collection')) continue;
 
     const fileName = decodeURIComponent(hrefPath.split('/').filter(Boolean).at(-1) ?? '');
     if (!fileName) continue;
@@ -191,17 +246,30 @@ function parseWebDavFileList(xml: string, collectionUrl: string): WebDavFile[] {
     files.push({
       fileName,
       href,
-      lastModified: Date.parse(readXmlTag(response, 'getlastmodified') ?? '') || 0,
-      size: Number(readXmlTag(response, 'getcontentlength') ?? 0) || 0,
+      lastModified: Date.parse(getTagContent(response, 'getlastmodified') ?? '') || 0,
+      size: Number(getTagContent(response, 'getcontentlength') ?? 0) || 0,
     });
   }
 
   return files;
 }
 
-function readXmlTag(xml: string, tagName: string): string | null {
-  const re = new RegExp(`<[^:>]*:?${tagName}[^>]*>([\\s\\S]*?)<\\/[^:>]*:?${tagName}>`, 'i');
-  return re.exec(xml)?.[1]?.trim() ?? null;
+function getResponseBlocks(xml: string): string[] {
+  const blocks: string[] = [];
+  // Handle various namespace prefixes and whitespace
+  const regex = /<([^>]*:?response)(?:\s[^>]*)?>([\s\S]*?)<\/\1>/gi;
+  let match;
+  while ((match = regex.exec(xml)) !== null) {
+    blocks.push(match[0]);
+  }
+  return blocks;
+}
+
+function getTagContent(xml: string, tagName: string): string | null {
+  // Case-insensitive match for the tag name, allowing any namespace prefix
+  const regex = new RegExp(`<([^>]*:?${tagName})(?:\\s[^>]*)?>([\\s\\S]*?)<\\/\\1>`, 'i');
+  const match = regex.exec(xml);
+  return match ? match[2].trim() : null;
 }
 
 function decodeXml(value: string): string {
@@ -213,9 +281,9 @@ function decodeXml(value: string): string {
     .replace(/&apos;/g, "'");
 }
 
-function hrefToPath(href: string): string {
+function hrefToPath(href: string, base?: string): string {
   try {
-    return new URL(href).pathname;
+    return new URL(href, base).pathname;
   } catch {
     return href.split('?')[0];
   }

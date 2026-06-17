@@ -230,6 +230,9 @@ export enum MessageType {
   WEBDAV_TEST_CONNECTION = 'WEBDAV_TEST_CONNECTION',
   WEBDAV_GET_STATE = 'WEBDAV_GET_STATE',
   WEBDAV_CONFIGURE = 'WEBDAV_CONFIGURE',
+  WEBDAV_LIST_BACKUPS = 'WEBDAV_LIST_BACKUPS',
+  WEBDAV_RESTORE = 'WEBDAV_RESTORE',
+  WEBDAV_DELETE_FILE = 'WEBDAV_DELETE_FILE',
 }
 
 export interface CreateSessionMessage {
@@ -505,6 +508,20 @@ export interface WebDavConfigureMessage {
   updates: Partial<import('@shared/webdav/webdav-types').WebDavConfig>;
 }
 
+export interface WebDavListBackupsMessage {
+  type: MessageType.WEBDAV_LIST_BACKUPS;
+}
+
+export interface WebDavRestoreMessage {
+  type: MessageType.WEBDAV_RESTORE;
+  fileName: string;
+}
+
+export interface WebDavDeleteFileMessage {
+  type: MessageType.WEBDAV_DELETE_FILE;
+  fileName: string;
+}
+
 export type CookieDiffStatus =
   | 'match'
   | 'value_changed'
@@ -618,7 +635,10 @@ export type Message =
   | WebDavBackupNowMessage
   | WebDavTestConnectionMessage
   | WebDavGetStateMessage
-  | WebDavConfigureMessage;
+  | WebDavConfigureMessage
+  | WebDavListBackupsMessage
+  | WebDavRestoreMessage
+  | WebDavDeleteFileMessage;
 
 // ── Response Wrapper ─────────────────────────────────────────────
 

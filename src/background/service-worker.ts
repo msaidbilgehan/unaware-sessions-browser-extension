@@ -29,8 +29,7 @@ async function hydrateState(): Promise<void> {
   await Promise.all([hydrateSessions(), hydrateTabMap()]);
 }
 
-// Hydrate on every SW wake (top-level runs each time the worker starts)
-hydrateState().catch((err) => {
+const hydrationPromise = hydrateState().catch((err) => {
   log.error('Failed to hydrate state', err);
 });
 
@@ -51,6 +50,7 @@ chrome.runtime.onStartup.addListener(() => {
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   try {
+    await hydrationPromise;
     if (alarm.name === ALARM_PERSIST_STATE) {
       log.debug('Alarm: persisting tab map and cleaning stale rules');
       await persistTabMap();
