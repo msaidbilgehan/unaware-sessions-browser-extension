@@ -63,12 +63,17 @@ export async function buildLocalManifest(
     }),
   );
 
+  const siteConfigsHash = data.siteConfigs
+    ? await sha256Hex(JSON.stringify(data.siteConfigs))
+    : undefined;
+
   return {
     version: 1,
     updatedAt: Date.now(),
     deviceId,
     checksums,
     sessionChecksums,
+    siteConfigsHash,
   };
 }
 
@@ -208,12 +213,19 @@ export function mergeData(
   // Merge session profiles: union by ID
   const mergedSessions = mergeSessionProfiles(localData.sessions, remoteData.sessions);
 
+  // Merge site configurations: key-by-key (origin) union. Local config wins on conflicts.
+  const mergedSiteConfigs = {
+    ...(remoteData.siteConfigs ?? {}),
+    ...(localData.siteConfigs ?? {}),
+  };
+
   return {
     version: 1,
     exportedAt: Date.now(),
     sessions: mergedSessions,
     cookieSnapshots: mergedCookies,
     storageSnapshots: mergedStorage,
+    siteConfigs: mergedSiteConfigs,
   };
 }
 
@@ -455,7 +467,9 @@ export async function executeSyncCycle(
       (k) => localManifest.sessionChecksums[k] === remoteManifest.sessionChecksums[k],
     );
 
-  if (allSame && sessionsSame) {
+  const siteConfigsSame = localManifest.siteConfigsHash === remoteManifest.siteConfigsHash;
+
+  if (allSame && sessionsSame && siteConfigsSame) {
     log.info('Sync: no changes detected');
     await setSyncConfig({ lastSyncAt: Date.now(), lastSyncError: '' });
     return { status: 'idle', progress: '', conflicts: [] };

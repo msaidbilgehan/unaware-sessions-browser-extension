@@ -43,6 +43,7 @@ export interface SyncManifest {
   deviceId: string;
   checksums: Record<string, string>;
   sessionChecksums: Record<string, string>;
+  siteConfigsHash?: string;
 }
 
 // ── Encrypted Payload (stored on Drive) ────────────────────
