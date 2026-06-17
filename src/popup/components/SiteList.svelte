@@ -101,30 +101,20 @@
   // Track the URL that actually resolved successfully (for pre-filling edit dialog)
   let resolvedFaviconUrls = $state<Record<string, string>>({});
 
-  function getInitialFaviconSrc(origin: string, domain: string): string {
+  function getInitialFaviconSrc(origin: string): string {
     // If user has set a custom iconUrl, use it directly
     const custom = siteConfigs[origin]?.iconUrl;
     if (custom) return custom;
-    if (faviconSource === 'google') {
-      return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=32`;
-    }
-    return `${origin}/favicon.ico`;
+    return `chrome-extension://${chrome.runtime.id}/_favicon/?pageUrl=${encodeURIComponent(origin)}&size=32`;
   }
 
-  function handleFaviconError(origin: string, domain: string, e: Event) {
-    const img = e.currentTarget as HTMLImageElement;
-    if ((faviconStates[origin] ?? 'init') === 'init' && faviconSource === 'direct_then_google') {
-      const googleUrl = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=32`;
-      faviconStates = { ...faviconStates, [origin]: 'google' };
-      img.src = googleUrl;
-      return;
-    }
+  function handleFaviconError(origin: string) {
     faviconStates = { ...faviconStates, [origin]: 'failed' };
   }
 
   function handleFaviconLoad(origin: string, e: Event) {
     const img = e.currentTarget as HTMLImageElement;
-    if (img.naturalWidth === 0) { handleFaviconError(origin, extractDomain(origin), e); return; }
+    if (img.naturalWidth === 0) { handleFaviconError(origin); return; }
     faviconStates = { ...faviconStates, [origin]: 'loaded' };
     // Record the resolved URL so the edit dialog can pre-fill it
     resolvedFaviconUrls = { ...resolvedFaviconUrls, [origin]: img.src };
@@ -132,7 +122,7 @@
 
   // Returns the URL currently shown in the img element (resolved or initial)
   function getCurrentFaviconUrl(site: SiteEntry): string {
-    return resolvedFaviconUrls[site.origin] ?? getInitialFaviconSrc(site.origin, site.domain);
+    return resolvedFaviconUrls[site.origin] ?? getInitialFaviconSrc(site.origin);
   }
 
   // ── Context menu ───────────────────────────────────────────────
@@ -200,11 +190,9 @@
               {#if !isFailed}
                 <img
                   class="favicon"
-                  src={getInitialFaviconSrc(site.origin, site.domain)}
+                  src={getInitialFaviconSrc(site.origin)}
                   alt=""
-                  width="20"
-                  height="20"
-                  onerror={(e) => handleFaviconError(site.origin, site.domain, e)}
+                  onerror={() => handleFaviconError(site.origin)}
                   onload={(e) => handleFaviconLoad(site.origin, e)}
                 />
               {:else}
