@@ -19,7 +19,13 @@ export const STORAGE_KEYS = {
   SECURITY_GRACE_UNTIL: 'securityGraceUntil',
   SYNC_CONFIG: 'syncConfig',
   WEBDAV_CONFIG: 'webDavConfig',
+  // Per-origin site customizations in popup site list { name?, iconUrl? }
+  // Favicon binaries are NOT stored — only the URL string is persisted.
+  SITE_CONFIGS: 'siteConfigs',
 } as const;
+
+
+
 
 export const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
   autoRefreshInterval: 0,
@@ -29,7 +35,9 @@ export const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
   includeIndexedDB: true,
   maskBinaryValues: true,
   maxValueSize: 204800, // 200KB
+  faviconSource: 'direct_then_google',
 };
+
 
 export const DEFAULT_SECURITY_CONFIG: SecurityConfig = {
   passcodeEnabled: false,

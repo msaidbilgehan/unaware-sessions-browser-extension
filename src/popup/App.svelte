@@ -15,6 +15,7 @@
     onSettingsChange,
     onDomainRefreshChange,
     onDomainIsolationChange,
+    getSettings,
   } from '@shared/settings-store';
   import { STORAGE_KEYS } from '@shared/constants';
   import {
@@ -75,6 +76,9 @@
   // WebDAV Backup state
   let webDavCfg = $state<WebDavConfig>(getWebDavConfig());
   let webDavBackingUp = $state(false);
+
+  // Favicon source for site list (read from settings, reactive to changes)
+  let faviconSource = $state(getSettings().faviconSource ?? 'direct_then_google');
 
   // View routing
   let view = $state<'list' | 'new'>('list');
@@ -725,6 +729,7 @@
         oncontextmenu={handleContextMenu}
         oncreate={() => (view = 'new')}
         ondragend={handleReorder}
+        {faviconSource}
       />
 
       <button class="new-btn" onclick={() => (view = 'new')}>

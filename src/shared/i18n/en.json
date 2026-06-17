@@ -79,7 +79,12 @@
       "defaultLabel": "Default (no session)",
       "noSessionsMatch": "No sessions match \"{query}\"",
       "noSessionsSite": "No sessions for this site yet.",
-      "noData": "No data"
+      "noData": "No data",
+      "sites": "Sites",
+      "openSite": "Open {domain}",
+      "editSite": "Edit site",
+      "resetIcon": "Reset icon",
+      "siteNamePlaceholder": "Site name"
     },
     "new": {
       "title": "New Session",

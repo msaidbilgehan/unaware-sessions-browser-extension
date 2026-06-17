@@ -79,7 +79,13 @@
       "defaultLabel": "デフォルト（セッションなし）",
       "noSessionsMatch": "「{query}」に一致するセッションがありません",
       "noSessionsSite": "このサイトにはまだセッションがありません。",
-      "noData": "データなし"
+      "noData": "データなし",
+      "sites": "サイト",
+      "openSite": "{domain} を開く",
+      "editSite": "サイトを編集",
+      "resetIcon": "アイコンをリセット",
+      "siteNamePlaceholder": "サイト名"
+
     },
     "new": {
       "title": "新しいセッション",

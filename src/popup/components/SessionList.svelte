@@ -1,9 +1,10 @@
 <script lang="ts">
-  import type { SessionProfile } from '@shared/types';
+  import type { SessionProfile, FaviconSource } from '@shared/types';
   import { SvelteSet } from 'svelte/reactivity';
   import { extractDomain } from '@shared/utils';
   import SessionItem from './SessionItem.svelte';
   import OnboardingEmpty from './OnboardingEmpty.svelte';
+  import SiteList from './SiteList.svelte';
 
   import Icon from '@shared/components/Icon.svelte';
   import { _ } from 'svelte-i18n';
@@ -30,6 +31,7 @@
     oncontextmenu: (e: MouseEvent, sessionId: string) => void;
     oncreate: () => void;
     ondragend: (orderedIds: string[]) => void;
+    faviconSource?: FaviconSource;
   }
 
   let {
@@ -49,6 +51,7 @@
     oncontextmenu,
     oncreate,
     ondragend,
+    faviconSource = 'direct_then_google',
   }: Props = $props();
 
   let dragIndex = $state<number | null>(null);
@@ -287,6 +290,9 @@
         {/if}
       </div>
     {/if}
+
+    <!-- Site list: all origins known to any session -->
+    <SiteList {sessionOriginMap} {faviconSource} />
 
     {#if thisSiteSessions.length === 0 && !effectiveShowOther}
       <div class="empty-site">

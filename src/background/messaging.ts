@@ -397,13 +397,17 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
     const sessions = await listSessions();
 
     // Collect all cookie + storage snapshots for every session in parallel
-    const [cookieResults, storageResults] = await Promise.all([
+    const [cookieResults, storageResults, siteConfigsResult] = await Promise.all([
       Promise.all(sessions.map((s) => cookieStore.getAllSnapshotsForSession(s.id))),
       Promise.all(sessions.map((s) => storageStore.getAllSnapshotsForSession(s.id))),
+      chrome.storage.local.get(STORAGE_KEYS.SITE_CONFIGS),
     ]);
 
     const cookieSnapshots: CookieSnapshot[] = cookieResults.flat();
     const storageSnapshots: StorageSnapshot[] = storageResults.flat();
+    const siteConfigs = (siteConfigsResult[STORAGE_KEYS.SITE_CONFIGS] as
+      | Record<string, { name?: string; iconUrl?: string }>
+      | undefined) ?? {};
 
     const data: FullExportData = {
       version: 1,
@@ -411,6 +415,7 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
       sessions,
       cookieSnapshots,
       storageSnapshots,
+      siteConfigs,
     };
 
     return { success: true, data };
@@ -452,6 +457,17 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
       }
 
       imported++;
+    }
+
+    // Restore site customizations (origin-scoped, no sessionId remapping needed)
+    if (data.siteConfigs && Object.keys(data.siteConfigs).length > 0) {
+      // Merge with existing configs rather than overwrite
+      const existing = await chrome.storage.local.get(STORAGE_KEYS.SITE_CONFIGS);
+      const merged = {
+        ...((existing[STORAGE_KEYS.SITE_CONFIGS] as Record<string, unknown>) ?? {}),
+        ...data.siteConfigs,
+      };
+      await chrome.storage.local.set({ [STORAGE_KEYS.SITE_CONFIGS]: merged });
     }
 
     await rebuildContextMenu();

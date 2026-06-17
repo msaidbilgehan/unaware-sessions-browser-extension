@@ -79,7 +79,13 @@
       "defaultLabel": "Standard (keine Sitzung)",
       "noSessionsMatch": "Keine Sitzungen entsprechen \"{query}\"",
       "noSessionsSite": "Noch keine Sitzungen für diese Seite.",
-      "noData": "Keine Daten"
+      "noData": "Keine Daten",
+      "sites": "Webseiten",
+      "openSite": "{domain} öffnen",
+      "editSite": "Website bearbeiten",
+      "resetIcon": "Symbol zurücksetzen",
+      "siteNamePlaceholder": "Webseitenname"
+
     },
     "new": {
       "title": "Neue Sitzung",

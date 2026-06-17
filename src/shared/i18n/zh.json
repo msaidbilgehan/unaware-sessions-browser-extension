@@ -79,7 +79,13 @@
       "defaultLabel": "默认（无会话）",
       "noSessionsMatch": "没有匹配「{query}」的会话",
       "noSessionsSite": "此站点暂无会话。",
-      "noData": "无数据"
+      "noData": "无数据",
+      "sites": "站点",
+      "openSite": "打开 {domain}",
+      "editSite": "编辑站点",
+      "resetIcon": "重置图标",
+      "siteNamePlaceholder": "站点名称"
+
     },
     "new": {
       "title": "新建会话",

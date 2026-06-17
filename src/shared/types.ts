@@ -76,6 +76,14 @@ export type IsolationMode = 'soft' | 'strict';
  */
 export type LogLevel = 'off' | 'error' | 'warn' | 'info' | 'debug';
 
+/** Controls how site favicons are fetched in the popup site list.
+ * - 'direct': Try fetching favicon directly from the site first.
+ * - 'google': Use Google S2 favicon service only.
+ * - 'direct_then_google': Try direct first, fall back to Google (default).
+ * Favicon binaries are never persisted — only this config key is stored/backed up.
+ */
+export type FaviconSource = 'direct' | 'google' | 'direct_then_google';
+
 export interface ExtensionSettings {
   autoRefreshInterval: AutoRefreshInterval;
   autoRefreshDefaultEnabled: boolean;
@@ -85,6 +93,8 @@ export interface ExtensionSettings {
   includeIndexedDB: boolean;
   maskBinaryValues: boolean;
   maxValueSize: number; // in bytes
+  // Site list favicon strategy (popup)
+  faviconSource: FaviconSource;
 }
 
 // ── Security ────────────────────────────────────────────────────
@@ -415,7 +425,14 @@ export interface FullExportData {
   sessions: SessionProfile[];
   cookieSnapshots: CookieSnapshot[];
   storageSnapshots: StorageSnapshot[];
+  /**
+   * Per-origin site customizations shown in the popup site list.
+   * Only URL strings are stored — no favicon binaries.
+   * Optional for backward compatibility with older backups.
+   */
+  siteConfigs?: Record<string, { name?: string; iconUrl?: string }>;
 }
+
 
 export interface ExportFullMessage {
   type: MessageType.EXPORT_FULL;

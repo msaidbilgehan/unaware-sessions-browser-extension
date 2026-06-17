@@ -10,6 +10,7 @@ import { sha256Hex, encrypt, decrypt } from './crypto-engine';
 import { findFile, createFile, updateFile, downloadFile, getToken } from './drive-client';
 import { getSyncConfig, setSyncConfig } from './sync-store';
 import { getSettings } from '@shared/settings-store';
+import { STORAGE_KEYS } from '@shared/constants';
 import { listSessions, deleteAllSessions, batchSetSessions } from '@background/session-manager';
 import { cookieStore } from '@background/cookie-store';
 import { storageStore } from '@background/storage-store';
@@ -257,6 +258,11 @@ export async function applyFullData(data: FullExportData): Promise<void> {
     ...data.cookieSnapshots.map((snap) => cookieStore.save(snap)),
     ...data.storageSnapshots.map((snap) => storageStore.save(snap)),
   ]);
+
+  // Restore site customizations if present (optional field — older backups won't have it)
+  if (data.siteConfigs && Object.keys(data.siteConfigs).length > 0) {
+    await chrome.storage.local.set({ [STORAGE_KEYS.SITE_CONFIGS]: data.siteConfigs });
+  }
 }
 
 // ── Data Processing Helpers ──────────────────────────────────
@@ -318,11 +324,16 @@ export async function exportLocalData(options?: { skipFileData?: boolean }): Pro
   const maxSize = settings.maxValueSize;
 
   // Single-scan reads: O(T) each instead of O(N×T) from per-session queries
-  const [sessions, cookieSnapshots, storageSnapshots] = await Promise.all([
+  const [sessions, cookieSnapshots, storageSnapshots, siteConfigsResult] = await Promise.all([
     listSessions(),
     cookieStore.getAllSnapshots(),
     storageStore.getAllSnapshots(),
+    chrome.storage.local.get(STORAGE_KEYS.SITE_CONFIGS),
   ]);
+
+  const siteConfigs = (siteConfigsResult[STORAGE_KEYS.SITE_CONFIGS] as
+    | Record<string, { name?: string; iconUrl?: string }>
+    | undefined) ?? {};
 
   // Process cookies
   const processedCookies = cookieSnapshots.map((snap) => ({
@@ -353,6 +364,7 @@ export async function exportLocalData(options?: { skipFileData?: boolean }): Pro
     sessions,
     cookieSnapshots: processedCookies,
     storageSnapshots: processedStorage,
+    siteConfigs,
   };
 }
 
