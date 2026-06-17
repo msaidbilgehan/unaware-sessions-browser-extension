@@ -124,7 +124,8 @@ export async function backupToWebDav(): Promise<WebDavState> {
   try {
     log.info('WebDAV backup: exporting local data');
     const localData = await exportLocalData({ skipFileData: config.skipFileData });
-    const encrypted = await encrypt(localData, getWebDavPassphrase(config));
+    const passphrase = await getWebDavPassphrase(config);
+    const encrypted = await encrypt(localData, passphrase);
     const fileName = buildBackupFileName(config.deviceId || 'device');
 
     log.info('WebDAV backup: uploading encrypted payload', { fileName });
@@ -216,11 +217,21 @@ function sanitizeFileToken(value: string): string {
   return value.replace(/[^a-zA-Z0-9_-]/g, '_');
 }
 
-function getWebDavPassphrase(config: WebDavConfig): string {
+async function getWebDavPassphrase(config: WebDavConfig): Promise<string> {
   if (config.encryptionPassword) {
     return `webdav-custom:${config.encryptionPassword}`;
   }
-  return `webdav:${config.host}:${config.username}:${config.password}`;
+
+  // If no custom password, use the persistent backupKey
+  if (config.backupKey) {
+    return `webdav-key:${config.backupKey}`;
+  }
+
+  // Generate and save a new backupKey if it doesn't exist
+  const newKey = generateId();
+  log.info('Generating new WebDAV backup key');
+  await setWebDavConfig({ backupKey: newKey });
+  return `webdav-key:${newKey}`;
 }
 
 export async function listWebDavBackups(): Promise<WebDavFile[]> {
@@ -251,7 +262,8 @@ export async function restoreFromWebDav(fileName: string): Promise<void> {
     currentWebDavState = { status: 'syncing', progress: 'Decrypting backup...' };
     log.info('WebDAV restore: decrypting payload');
     const encryptedPayload = JSON.parse(content);
-    const localData = await decrypt(encryptedPayload, getWebDavPassphrase(config));
+    const passphrase = await getWebDavPassphrase(config);
+    const localData = await decrypt(encryptedPayload, passphrase);
     
     currentWebDavState = { status: 'syncing', progress: 'Restoring local data...' };
     log.info('WebDAV restore: applying data');

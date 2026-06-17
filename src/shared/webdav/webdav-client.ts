@@ -237,6 +237,8 @@ function parseWebDavFileList(xml: string, collectionUrl: string): WebDavFile[] {
     if (hrefPath.endsWith('/')) continue;
 
     // Skip directories by checking resourcetype
+    // Some servers return <d:resourcetype><d:collection/></d:resourcetype>
+    // Others might return <d:resourcetype /> for files
     const resourceType = getTagContent(response, 'resourcetype') ?? '';
     if (resourceType.toLowerCase().includes('collection')) continue;
 
@@ -256,7 +258,8 @@ function parseWebDavFileList(xml: string, collectionUrl: string): WebDavFile[] {
 
 function getResponseBlocks(xml: string): string[] {
   const blocks: string[] = [];
-  // Handle various namespace prefixes and whitespace
+  // Use a more specific regex to avoid over-matching
+  // Matches <d:response>...</d:response> or <response>...</response>
   const regex = /<([^>]*:?response)(?:\s[^>]*)?>([\s\S]*?)<\/\1>/gi;
   let match;
   while ((match = regex.exec(xml)) !== null) {
@@ -265,11 +268,32 @@ function getResponseBlocks(xml: string): string[] {
   return blocks;
 }
 
+/**
+ * Robustly extracts the inner content of an XML tag within a specific block.
+ * Handles:
+ * 1. Namespace prefixes (e.g., <d:prop>, <D:prop>, <prop>)
+ * 2. Attributes (e.g., <d:prop xmlns:d="...">)
+ * 3. Self-closing tags (returns empty string)
+ * 4. Nested tags (returns the raw inner XML)
+ */
 function getTagContent(xml: string, tagName: string): string | null {
-  // Case-insensitive match for the tag name, allowing any namespace prefix
-  const regex = new RegExp(`<([^>]*:?${tagName})(?:\\s[^>]*)?>([\\s\\S]*?)<\\/\\1>`, 'i');
-  const match = regex.exec(xml);
-  return match ? match[2].trim() : null;
+  // 1. Try to find a normal opening/closing tag pair
+  // This regex matches <prefix:tagName ...>content</prefix:tagName>
+  const fullTagRegex = new RegExp(`<([^>]*:?${tagName})(?:\\s[^>]*)?>([\\s\\S]*?)<\\/\\1>`, 'i');
+  const fullMatch = fullTagRegex.exec(xml);
+  if (fullMatch) {
+    return fullMatch[2].trim();
+  }
+
+  // 2. Try to find a self-closing tag
+  // This regex matches <prefix:tagName ... />
+  const selfClosingRegex = new RegExp(`<([^>]*:?${tagName})(?:\\s[^>]*)?/>`, 'i');
+  const selfMatch = selfClosingRegex.exec(xml);
+  if (selfMatch) {
+    return ''; // Self-closing tag means it exists but has no content
+  }
+
+  return null;
 }
 
 function decodeXml(value: string): string {

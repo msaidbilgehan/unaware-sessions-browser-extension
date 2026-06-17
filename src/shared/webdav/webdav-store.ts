@@ -35,6 +35,8 @@ function notifyListeners(): void {
 const OBFUSCATION_PREFIX = 'obf:';
 const OBFUSCATION_KEY = 'unaware-sessions-webdav-salt';
 
+function obfuscate(str: string): string;
+function obfuscate(str: undefined): undefined;
 function obfuscate(str: string | undefined): string | undefined {
   if (!str) return str;
   const chars = str.split('').map((char, i) =>
@@ -43,6 +45,8 @@ function obfuscate(str: string | undefined): string | undefined {
   return OBFUSCATION_PREFIX + btoa(unescape(encodeURIComponent(chars.join(''))));
 }
 
+function deobfuscate(str: string): string;
+function deobfuscate(str: undefined): undefined;
 function deobfuscate(str: string | undefined): string | undefined {
   if (!str) return str;
   if (!str.startsWith(OBFUSCATION_PREFIX)) return str; // Migration: return as is if not obfuscated
@@ -66,8 +70,9 @@ export async function setWebDavConfig(updates: Partial<WebDavConfig>): Promise<v
   const toSave = { ...newConfig };
 
   // Obfuscate sensitive fields before saving
-  if (toSave.password) toSave.password = obfuscate(toSave.password);
-  if (toSave.encryptionPassword) toSave.encryptionPassword = obfuscate(toSave.encryptionPassword);
+  if (toSave.password) toSave.password = obfuscate(toSave.password) as string;
+  if (toSave.encryptionPassword) toSave.encryptionPassword = obfuscate(toSave.encryptionPassword) as string;
+  if (toSave.backupKey) toSave.backupKey = obfuscate(toSave.backupKey) as string;
 
   webDavConfig = newConfig; // Keep plain text in memory
   await chrome.storage.local.set({
@@ -91,8 +96,9 @@ export async function initWebDavStore(): Promise<void> {
 
   if (stored) {
     // Deobfuscate sensitive fields after loading
-    if (stored.password) stored.password = deobfuscate(stored.password);
-    if (stored.encryptionPassword) stored.encryptionPassword = deobfuscate(stored.encryptionPassword);
+    if (stored.password) stored.password = deobfuscate(stored.password) as string;
+    if (stored.encryptionPassword) stored.encryptionPassword = deobfuscate(stored.encryptionPassword) as string;
+    if (stored.backupKey) stored.backupKey = deobfuscate(stored.backupKey) as string;
     webDavConfig = { ...DEFAULT_WEBDAV_CONFIG, ...stored };
   } else {
     webDavConfig = { ...DEFAULT_WEBDAV_CONFIG };
@@ -109,8 +115,9 @@ export async function initWebDavStore(): Promise<void> {
     if (STORAGE_KEYS.WEBDAV_CONFIG in changes) {
       const updated = changes[STORAGE_KEYS.WEBDAV_CONFIG].newValue as WebDavConfig | undefined;
       if (updated) {
-        if (updated.password) updated.password = deobfuscate(updated.password);
-        if (updated.encryptionPassword) updated.encryptionPassword = deobfuscate(updated.encryptionPassword);
+        if (updated.password) updated.password = deobfuscate(updated.password) as string;
+        if (updated.encryptionPassword) updated.encryptionPassword = deobfuscate(updated.encryptionPassword) as string;
+        if (updated.backupKey) updated.backupKey = deobfuscate(updated.backupKey) as string;
         webDavConfig = { ...DEFAULT_WEBDAV_CONFIG, ...updated };
       } else {
         webDavConfig = { ...DEFAULT_WEBDAV_CONFIG };

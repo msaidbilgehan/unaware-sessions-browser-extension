@@ -75,12 +75,16 @@ initMessaging();
 initTabTracker();
 initContextMenu();
 initBadgeManager();
-initAutoRefresh().catch((err) => {
-  log.error('Failed to init auto-refresh', err);
-});
-initDriveSync().catch((err) => {
-  log.error('Failed to init drive-sync', err);
-});
-initWebDavSync().catch((err) => {
-  log.error('Failed to init webdav-sync', err);
+
+// Wait for hydration before initializing sync modules
+hydrationPromise.then(() => {
+  initAutoRefresh().catch((err) => {
+    log.error('Failed to init auto-refresh', err);
+  });
+  initDriveSync().catch((err) => {
+    log.error('Failed to init drive-sync', err);
+  });
+  initWebDavSync().catch((err) => {
+    log.error('Failed to init webdav-sync', err);
+  });
 });

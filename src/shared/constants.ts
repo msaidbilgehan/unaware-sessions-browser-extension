@@ -79,6 +79,7 @@ export const DEFAULT_WEBDAV_CONFIG: WebDavConfig = {
   lastSyncError: '',
   deviceId: '',
   encryptionPassword: '',
+  backupKey: '',
   skipFileData: false,
 };
 

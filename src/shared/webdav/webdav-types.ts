@@ -16,6 +16,7 @@ export interface WebDavConfig {
   lastSyncError: string;
   deviceId: string;
   encryptionPassword?: string;
+  backupKey?: string;
   skipFileData?: boolean;
 }
 
