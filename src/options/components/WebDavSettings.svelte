@@ -45,6 +45,7 @@
   let webDavHost = $state(webDavCfg.host);
   let webDavUsername = $state(webDavCfg.username);
   let webDavPassword = $state(webDavCfg.password);
+  let showWebDavPassword = $state(false);
   let webDavEncryptionPassword = $state(webDavCfg.encryptionPassword || '');
   let showWebDavEncryptionPassword = $state(false);
   let webDavPath = $state(webDavCfg.path);
@@ -367,12 +368,22 @@
     </label>
     <label class="field">
       <span class="field-label">{$_('options.settings.webdavPassword')}</span>
-      <input
-        class="text-input"
-        type="password"
-        bind:value={webDavPassword}
-        autocomplete="current-password"
-      />
+      <div class="password-input-container">
+        <input
+          class="text-input"
+          type={showWebDavPassword ? 'text' : 'password'}
+          bind:value={webDavPassword}
+          autocomplete="current-password"
+        />
+        <button
+          type="button"
+          class="password-toggle-btn"
+          onclick={() => (showWebDavPassword = !showWebDavPassword)}
+          aria-label="Toggle password visibility"
+        >
+          <Icon name={showWebDavPassword ? 'eye-off' : 'eye'} size={16} />
+        </button>
+      </div>
     </label>
     <label class="field">
       <span class="field-label">{$_('options.settings.webdavEncryptionPassword')}</span>
@@ -794,66 +805,6 @@
     color: var(--color-text-primary);
     background: var(--color-bg-elevated);
     box-shadow: var(--shadow-xs);
-  }
-
-  .toggle-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-6);
-    cursor: pointer;
-  }
-
-  .toggle-info {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-1);
-  }
-
-  .toggle-label {
-    font-size: var(--text-sm);
-    font-weight: var(--font-medium);
-    color: var(--color-text-primary);
-  }
-
-  .toggle-description {
-    font-size: var(--text-xs);
-    color: var(--color-text-tertiary);
-    line-height: var(--leading-relaxed);
-  }
-
-  .toggle-switch {
-    position: relative;
-    width: 40px;
-    height: 22px;
-    background: var(--color-bg-tertiary);
-    border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-full);
-    cursor: pointer;
-    transition: all var(--transition-smooth);
-    flex-shrink: 0;
-    padding: 0;
-  }
-
-  .toggle-switch.on {
-    background: var(--color-accent);
-    border-color: var(--color-accent);
-  }
-
-  .toggle-thumb {
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 16px;
-    height: 16px;
-    background: var(--color-interactive-thumb);
-    border-radius: var(--radius-full);
-    box-shadow: var(--shadow-sm);
-    transition: transform var(--transition-spring);
-  }
-
-  .toggle-switch.on .toggle-thumb {
-    transform: translateX(18px);
   }
 
   .webdav-grid {

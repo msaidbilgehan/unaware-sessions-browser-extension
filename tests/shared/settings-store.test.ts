@@ -47,6 +47,7 @@ describe('initSettings', () => {
 
   it('loads stored settings from chrome.storage.local', async () => {
     const stored: ExtensionSettings = {
+      ...DEFAULT_EXTENSION_SETTINGS,
       autoRefreshInterval: 60,
       autoRefreshDefaultEnabled: true,
       isolationModeDefault: 'soft',
