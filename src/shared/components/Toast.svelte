@@ -20,7 +20,7 @@
 
 <div
   class="toast {type}"
-  transition:fly={{ y: 40, duration: 200 }}
+  transition:fly={{ y: -40, duration: 200 }}
   role="status"
   aria-live="polite"
 >
@@ -36,9 +36,11 @@
 <style>
   .toast {
     position: fixed;
-    bottom: var(--space-5);
-    left: var(--space-5);
-    right: var(--space-5);
+    top: var(--space-5);
+    left: 50%;
+    transform: translateX(-50%);
+    width: fit-content;
+    max-width: calc(100% - var(--space-5) * 2);
     display: flex;
     align-items: center;
     gap: var(--space-4);
