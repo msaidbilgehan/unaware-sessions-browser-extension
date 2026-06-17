@@ -152,6 +152,8 @@
 </script>
 
 <div class="session-list">
+
+  
   {#if sessions.length === 0}
     <OnboardingEmpty {oncreate} />
   {:else if filteredSessions.length === 0}
@@ -160,6 +162,8 @@
       <p>{$_('popup.list.noSessionsMatch', { values: { query: searchQuery } })}</p>
     </div>
   {:else}
+
+  
     <!-- Default (no session) option -->
     <div
       class="default-item"
@@ -177,6 +181,8 @@
         <span class="default-badge">{$_('common.active')}</span>
       {/if}
     </div>
+
+    
 
     {#if thisSiteSessions.length > 0}
       <div class="group">
@@ -207,7 +213,15 @@
         {/each}
       </div>
     {/if}
+       <!-- Site list: all origins known to any session -->
+    <SiteList {sessionOriginMap} {faviconSource} />
 
+    {#if thisSiteSessions.length === 0 && !effectiveShowOther}
+      <div class="empty-site">
+        <p>{$_('popup.list.noSessionsSite')}</p>
+      </div>
+    {/if}
+<!-- 
     {#if otherSessions.length > 0}
       <div class="group">
         <button
@@ -286,16 +300,9 @@
           </div>
         {/if}
       </div>
-    {/if}
+    {/if} -->
 
-    <!-- Site list: all origins known to any session -->
-    <SiteList {sessionOriginMap} {faviconSource} />
-
-    {#if thisSiteSessions.length === 0 && !effectiveShowOther}
-      <div class="empty-site">
-        <p>{$_('popup.list.noSessionsSite')}</p>
-      </div>
-    {/if}
+ 
   {/if}
 </div>
 
