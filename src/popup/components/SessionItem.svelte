@@ -17,7 +17,7 @@
     isSwitching?: boolean;
     hasOriginData?: boolean;
     tabCount?: number;
-    onswitch: (sessionId: string) => void;
+    onswitch?: (sessionId: string) => void;
     ondelete: (sessionId: string) => void;
     onrename: (sessionId: string, newName: string) => void;
     oncontextmenu?: (e: MouseEvent, sessionId: string) => void;
@@ -87,13 +87,14 @@
   class="session-item"
   class:active={isActive}
   class:switching={isSwitching}
-  role="button"
-  tabindex="0"
+  class:clickable={!!onswitch && !isSwitching}
+  role={onswitch ? "button" : undefined}
+  tabindex={onswitch ? "0" : undefined}
   style="--session-color: {session.color}"
   onmouseenter={() => (showActions = true)}
   onmouseleave={() => (showActions = false)}
-  onclick={() => !isSwitching && onswitch(session.id)}
-  onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && !isSwitching && (e.preventDefault(), onswitch(session.id))}
+  onclick={() => onswitch && !isSwitching && onswitch(session.id)}
+  onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && onswitch && !isSwitching && (e.preventDefault(), onswitch(session.id))}
   oncontextmenu={handleContextMenu}
   aria-label={isSwitching ? $_('popup.switchingTo', { values: { name: session.name } }) : $_('popup.switchToSession', { values: { name: session.name } })}
   aria-busy={isSwitching}
@@ -190,12 +191,15 @@
 <style>
   .session-item {
     border-radius: var(--radius-lg);
-    cursor: pointer;
     transition: all var(--transition-smooth);
     position: relative;
     background: var(--color-bg-elevated);
     border: 1px solid var(--color-border-secondary);
     border-left: 3px solid var(--session-color);
+  }
+
+  .session-item.clickable {
+    cursor: pointer;
   }
 
   .session-item:hover,

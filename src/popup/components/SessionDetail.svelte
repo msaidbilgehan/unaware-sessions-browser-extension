@@ -78,9 +78,19 @@
     {#if stats.origins.length > 0}
       <div class="origins">
         {#each stats.origins as origin}
-          <span class="origin-tag">
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <span
+            class="origin-tag clickable"
+            onclick={(e) => {
+              e.stopPropagation();
+              chrome.tabs.create({ url: origin });
+            }}
+            title={$_('popup.openWebsite')}
+          >
             <Icon name="globe" size={9} />
             {origin.replace(/^https?:\/\//, '')}
+            <Icon name="external-link" size={8} class="open-icon" />
           </span>
         {/each}
       </div>
@@ -197,5 +207,25 @@
     background: var(--color-bg-tertiary);
     padding: var(--space-1) var(--space-3);
     border-radius: var(--radius-full);
+  }
+
+  .origin-tag.clickable {
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .origin-tag.clickable:hover {
+    background: var(--color-interactive-hover);
+    color: var(--color-text-primary);
+  }
+
+  .origin-tag :global(.open-icon) {
+    opacity: 0.5;
+    margin-left: var(--space-1);
+    transition: opacity var(--transition-fast);
+  }
+
+  .origin-tag.clickable:hover :global(.open-icon) {
+    opacity: 0.9;
   }
 </style>

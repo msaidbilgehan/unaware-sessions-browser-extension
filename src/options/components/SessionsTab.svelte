@@ -340,17 +340,29 @@
   {:else}
     {#each domainGroups() as group (group.domain)}
       <div class="domain-folder">
-        <button class="domain-header" onclick={() => toggleDomain(group.domain)}>
-          <span class="domain-chevron">
-            <Icon
-              name={collapsedDomains.has(group.domain) ? 'chevron-right' : 'chevron-down'}
-              size={13}
-            />
-          </span>
-          <Icon name={group.domain === 'Ungrouped' ? 'folder-open' : 'globe'} size={14} />
-          <span class="domain-name">{group.domain}</span>
-          <span class="domain-count">{group.sessions.length}</span>
-        </button>
+        <div class="domain-header-row">
+          <button class="domain-header" onclick={() => toggleDomain(group.domain)}>
+            <span class="domain-chevron">
+              <Icon
+                name={collapsedDomains.has(group.domain) ? 'chevron-right' : 'chevron-down'}
+                size={13}
+              />
+            </span>
+            <Icon name={group.domain === 'Ungrouped' ? 'folder-open' : 'globe'} size={14} />
+            <span class="domain-name">{group.domain}</span>
+            <span class="domain-count">{group.sessions.length}</span>
+          </button>
+          {#if group.domain !== 'Ungrouped'}
+            <button
+              class="icon-btn sm open-domain-btn"
+              onclick={() => window.open('https://' + group.domain, '_blank')}
+              title={$_('options.sessions.openWebsite')}
+              aria-label="Open website"
+            >
+              <Icon name="external-link" size={11} />
+            </button>
+          {/if}
+        </div>
 
         {#if !collapsedDomains.has(group.domain)}
           <div class="domain-sessions">
@@ -855,21 +867,32 @@
     box-shadow: var(--shadow-xs);
   }
 
+  .domain-header-row {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    transition: background var(--transition-fast);
+  }
+
+  .domain-header-row:hover {
+    background: var(--color-interactive-hover);
+  }
+
   .domain-header {
     display: flex;
     align-items: center;
     gap: var(--space-3);
-    width: 100%;
+    flex: 1;
     padding: var(--space-4) var(--space-5);
     background: none;
     border: none;
     cursor: pointer;
     font-family: var(--font-sans);
-    transition: background var(--transition-fast);
   }
 
-  .domain-header:hover {
-    background: var(--color-interactive-hover);
+  .open-domain-btn {
+    margin-right: var(--space-4);
+    flex-shrink: 0;
   }
 
   .domain-chevron {

@@ -42,7 +42,7 @@ describe('crypto-engine', () => {
       const passphrase = 'my-secure-passphrase';
       const encrypted = await encrypt(TEST_DATA, passphrase);
 
-      expect(encrypted.v).toBe(1);
+      expect(encrypted.v).toBe(2);
       expect(encrypted.salt).toBeTruthy();
       expect(encrypted.iv).toBeTruthy();
       expect(encrypted.ct).toBeTruthy();
@@ -71,7 +71,7 @@ describe('crypto-engine', () => {
     it('encrypted payload has correct structure', async () => {
       const encrypted = await encrypt(TEST_DATA, 'test');
 
-      expect(encrypted).toHaveProperty('v', 1);
+      expect(encrypted).toHaveProperty('v', 2);
       expect(typeof encrypted.salt).toBe('string');
       expect(typeof encrypted.iv).toBe('string');
       expect(typeof encrypted.ct).toBe('string');

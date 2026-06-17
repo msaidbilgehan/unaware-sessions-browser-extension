@@ -229,18 +229,30 @@
             {#each domainGroups as [domain, domainSessions] (domain)}
               {@const isCollapsed = collapsedDomains.has(domain)}
               <div class="domain-folder">
-                <button
-                  class="domain-toggle"
-                  onclick={() => toggleDomain(domain)}
-                  aria-expanded={!isCollapsed}
-                >
-                  <span class="domain-chevron" class:open={!isCollapsed}>
-                    <Icon name="chevron-right" size={10} />
-                  </span>
-                  <Icon name="folder" size={12} />
-                  <span class="domain-name">{domain || $_('popup.list.noData')}</span>
-                  <span class="group-count">{domainSessions.length}</span>
-                </button>
+                <div class="domain-toggle-row">
+                  <button
+                    class="domain-toggle"
+                    onclick={() => toggleDomain(domain)}
+                    aria-expanded={!isCollapsed}
+                  >
+                    <span class="domain-chevron" class:open={!isCollapsed}>
+                      <Icon name="chevron-right" size={10} />
+                    </span>
+                    <Icon name="folder" size={12} />
+                    <span class="domain-name">{domain || $_('popup.list.noData')}</span>
+                    <span class="group-count">{domainSessions.length}</span>
+                  </button>
+                  {#if domain}
+                    <button
+                      class="open-domain-btn"
+                      onclick={() => chrome.tabs.create({ url: 'https://' + domain })}
+                      title={$_('popup.openWebsite')}
+                      aria-label="Open website"
+                    >
+                      <Icon name="external-link" size={10} />
+                    </button>
+                  {/if}
+                </div>
                 {#if !isCollapsed}
                   <div class="domain-items">
                     {#each domainSessions as session (session.id)}
@@ -255,7 +267,6 @@
                           isSwitching={session.id === switchingSessionId}
                           hasOriginData={false}
                           tabCount={tabCounts[session.id] ?? 0}
-                          {onswitch}
                           {ondelete}
                           {onrename}
                           forceEditing={editingSessionId === session.id}
@@ -443,6 +454,12 @@
     gap: var(--space-1);
   }
 
+  .domain-toggle-row {
+    display: flex;
+    align-items: center;
+    width: 100%;
+  }
+
   .domain-toggle {
     display: flex;
     align-items: center;
@@ -456,7 +473,26 @@
     color: var(--color-text-tertiary);
     border-radius: var(--radius-md);
     transition: color var(--transition-fast);
-    width: 100%;
+    flex: 1;
+  }
+
+  .open-domain-btn {
+    padding: var(--space-1);
+    border-radius: var(--radius-sm);
+    color: var(--color-text-tertiary);
+    background: none;
+    border: none;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .open-domain-btn:hover {
+    color: var(--color-text-primary);
+    background: var(--color-interactive-hover);
   }
 
   .domain-toggle:hover {

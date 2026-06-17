@@ -34,7 +34,14 @@
     saveSessionData,
     clearOriginData,
     detectSession,
+    webDavBackupNow,
   } from '@shared/api';
+  import {
+    getWebDavConfig,
+    initWebDavStore,
+    onWebDavConfigChange,
+  } from '@shared/webdav/webdav-store';
+  import type { WebDavConfig } from '@shared/webdav/webdav-types';
   import { fly } from 'svelte/transition';
   import Icon from '@shared/components/Icon.svelte';
   import ThemeToggle from '@shared/components/ThemeToggle.svelte';
@@ -64,6 +71,10 @@
   let sessionOriginMap = $state<Record<string, string[]>>({});
   let currentTab = $state<chrome.tabs.Tab | undefined>(undefined);
   let currentTabEntry = $state<TabSessionEntry | undefined>(undefined);
+
+  // WebDAV Backup state
+  let webDavCfg = $state<WebDavConfig>(getWebDavConfig());
+  let webDavBackingUp = $state(false);
 
   // View routing
   let view = $state<'list' | 'new'>('list');
@@ -581,6 +592,34 @@
     await setDomainIsolationMode(currentDomain, newMode);
   }
 
+  $effect(() => {
+    initWebDavStore().then(() => {
+      webDavCfg = getWebDavConfig();
+    });
+    const unsub = onWebDavConfigChange((config) => {
+      webDavCfg = config;
+    });
+    return unsub;
+  });
+
+  async function handleWebDavBackup() {
+    if (webDavBackingUp) return;
+    webDavBackingUp = true;
+    try {
+      const state = await webDavBackupNow();
+      if (state.status === 'error') {
+        showToast(state.progress || $_('options.settings.webdavBackupFailed'), 'error');
+      } else {
+        showToast($_('options.settings.webdavBackupCompleted'), 'success');
+      }
+    } catch (err) {
+      console.error('[WebDAV Backup] Error backing up:', err);
+      showToast(err instanceof Error ? err.message : $_('options.settings.webdavBackupFailed'), 'error');
+    } finally {
+      webDavBackingUp = false;
+    }
+  }
+
   // Auto-refresh is handled by the service worker alarm (background/auto-refresh.ts).
   // The storage listener above picks up changes and updates the UI quietly.
 </script>
@@ -624,6 +663,21 @@
         </div>
         <div class="header-actions">
           <ThemeToggle />
+          {#if webDavCfg.enabled}
+            <button
+              class="icon-btn"
+              onclick={handleWebDavBackup}
+              disabled={webDavBackingUp}
+              aria-label={$_('popup.webdavBackupTooltip')}
+              title={$_('popup.webdavBackupTooltip')}
+            >
+              {#if webDavBackingUp}
+                <span class="spinner-sm"></span>
+              {:else}
+                <Icon name="upload" size={15} />
+              {/if}
+            </button>
+          {/if}
           <button
             class="icon-btn"
             onclick={() => chrome.runtime.openOptionsPage()}
@@ -845,5 +899,19 @@
 
   .skel-item.short {
     width: 60%;
+  }
+
+  .spinner-sm {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    border-top-color: currentColor;
+    animation: spin 0.8s linear infinite;
+    display: inline-block;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
   }
 </style>
