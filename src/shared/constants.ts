@@ -26,6 +26,9 @@ export const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
   autoRefreshDefaultEnabled: false,
   isolationModeDefault: 'soft',
   logLevel: 'off',
+  includeIndexedDB: true,
+  maskBinaryValues: true,
+  maxValueSize: 204800, // 200KB
 };
 
 export const DEFAULT_SECURITY_CONFIG: SecurityConfig = {
@@ -80,7 +83,6 @@ export const DEFAULT_WEBDAV_CONFIG: WebDavConfig = {
   deviceId: '',
   encryptionPassword: '',
   backupKey: '',
-  skipFileData: false,
 };
 
 export const WEBDAV_SYNC_INTERVAL_OPTIONS: { value: WebDavSyncInterval; label: string }[] = [

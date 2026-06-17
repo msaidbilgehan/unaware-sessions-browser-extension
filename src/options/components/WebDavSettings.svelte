@@ -50,7 +50,6 @@
   let webDavPath = $state(webDavCfg.path);
   let webDavSyncInterval = $state<WebDavSyncInterval>(webDavCfg.syncInterval);
   let webDavMaxBackups = $state<WebDavMaxBackups>(webDavCfg.maxBackups);
-  let webDavSkipFileData = $state(webDavCfg.skipFileData || false);
 
   // Backup manager state
   let webDavBackups = $state<WebDavFile[]>([]);
@@ -82,7 +81,6 @@
     webDavPath = config.path;
     webDavSyncInterval = config.syncInterval;
     webDavMaxBackups = config.maxBackups;
-    webDavSkipFileData = config.skipFileData || false;
   }
 
   async function refreshWebDavState() {
@@ -108,7 +106,6 @@
       path: webDavPath.trim() || '/backup',
       syncInterval: webDavSyncInterval,
       maxBackups: webDavMaxBackups,
-      skipFileData: webDavSkipFileData,
     };
   }
 
@@ -121,7 +118,6 @@
       path: webDavPath.trim() || '/backup',
       syncInterval: webDavSyncInterval,
       maxBackups: webDavMaxBackups,
-      skipFileData: webDavSkipFileData,
     };
   }
 
@@ -469,27 +465,6 @@
       {/each}
     </div>
   </div>
-
-  <div class="divider"></div>
-
-  <label class="toggle-row">
-    <div class="toggle-info">
-      <span class="toggle-label">{$_('options.settings.webdavSkipFileData')}</span>
-      <span class="toggle-description">
-        {$_('options.settings.webdavSkipFileDataDesc')}
-      </span>
-    </div>
-    <button
-      class="toggle-switch"
-      class:on={webDavSkipFileData}
-      onclick={() => { webDavSkipFileData = !webDavSkipFileData; saveWebDavConfigLocally(); }}
-      role="switch"
-      aria-checked={webDavSkipFileData}
-      aria-label={$_('options.settings.webdavSkipFileData')}
-    >
-      <span class="toggle-thumb"></span>
-    </button>
-  </label>
 
   <div class="divider"></div>
 

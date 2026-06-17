@@ -9,6 +9,7 @@ import type {
 import { sha256Hex, encrypt, decrypt } from './crypto-engine';
 import { findFile, createFile, updateFile, downloadFile, getToken } from './drive-client';
 import { getSyncConfig, setSyncConfig } from './sync-store';
+import { getSettings } from '@shared/settings-store';
 import { listSessions, deleteAllSessions, batchSetSessions } from '@background/session-manager';
 import { cookieStore } from '@background/cookie-store';
 import { storageStore } from '@background/storage-store';
@@ -258,9 +259,64 @@ export async function applyFullData(data: FullExportData): Promise<void> {
   ]);
 }
 
+// ── Data Processing Helpers ──────────────────────────────────
+
+function processStorageRecord(
+  record: Record<string, string>,
+  maskBinary: boolean,
+  maxSize: number,
+): Record<string, string> {
+  const processed: Record<string, string> = {};
+  for (const [key, value] of Object.entries(record)) {
+    let val = value;
+
+    // 1. Size capping
+    if (val.length > maxSize) {
+      val = val.slice(0, maxSize) + '... [TRUNCATED]';
+    }
+
+    // 2. Binary masking
+    if (maskBinary) {
+      const isDataUrl = val.startsWith('data:');
+      const hasNull = val.includes('\0');
+      let controlChars = 0;
+      const scanLen = Math.min(val.length, 100);
+      for (let i = 0; i < scanLen; i++) {
+        const code = val.charCodeAt(i);
+        if (code < 32 && code !== 9 && code !== 10 && code !== 13) controlChars++;
+      }
+
+      if (isDataUrl || hasNull || (scanLen > 0 && controlChars / scanLen > 0.1)) {
+        val = '[BINARY DATA MASKED]';
+      }
+    }
+
+    processed[key] = val;
+  }
+  return processed;
+}
+
+function processCookies(
+  cookies: chrome.cookies.Cookie[],
+  maxSize: number,
+): chrome.cookies.Cookie[] {
+  return cookies.map((c) => {
+    let value = c.value;
+    if (value.length > maxSize) {
+      value = value.slice(0, maxSize) + '... [TRUNCATED]';
+    }
+    return { ...c, value };
+  });
+}
+
 // ── Export Local Data ──────────────────────────────────────
 
 export async function exportLocalData(options?: { skipFileData?: boolean }): Promise<FullExportData> {
+  const settings = getSettings();
+  const includeIDB = options?.skipFileData === false || (options?.skipFileData === undefined && settings.includeIndexedDB);
+  const maskBinary = settings.maskBinaryValues;
+  const maxSize = settings.maxValueSize;
+
   // Single-scan reads: O(T) each instead of O(N×T) from per-session queries
   const [sessions, cookieSnapshots, storageSnapshots] = await Promise.all([
     listSessions(),
@@ -268,20 +324,35 @@ export async function exportLocalData(options?: { skipFileData?: boolean }): Pro
     storageStore.getAllSnapshots(),
   ]);
 
-  let filteredStorage = storageSnapshots;
-  if (options?.skipFileData) {
-    filteredStorage = storageSnapshots.map((snap) => ({
+  // Process cookies
+  const processedCookies = cookieSnapshots.map((snap) => ({
+    ...snap,
+    cookies: processCookies(snap.cookies, maxSize),
+  }));
+
+  // Process storage
+  const processedStorage = storageSnapshots.map((snap) => {
+    const s: StorageSnapshot = {
       ...snap,
-      indexedDB: undefined,
-    }));
-  }
+      localStorage: processStorageRecord(snap.localStorage, maskBinary, maxSize),
+      sessionStorage: processStorageRecord(snap.sessionStorage, maskBinary, maxSize),
+    };
+
+    if (includeIDB) {
+      s.indexedDB = snap.indexedDB;
+    } else {
+      s.indexedDB = undefined;
+    }
+
+    return s;
+  });
 
   return {
     version: 1,
     exportedAt: Date.now(),
     sessions,
-    cookieSnapshots,
-    storageSnapshots: filteredStorage,
+    cookieSnapshots: processedCookies,
+    storageSnapshots: processedStorage,
   };
 }
 

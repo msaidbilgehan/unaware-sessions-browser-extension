@@ -15,6 +15,8 @@
     setAutoRefreshDefaultEnabled,
     setIsolationModeDefault,
     onSettingsChange,
+    getSettings,
+    updateDataSettings,
   } from '@shared/settings-store';
   import type { AutoRefreshInterval, IsolationMode, GracePeriodMs } from '@shared/types';
   import { GRACE_PERIOD_OPTIONS } from '@shared/constants';
@@ -341,6 +343,28 @@
     await setGracePeriodDuration(ms);
   }
 
+  // ── Data Policy state ─────────────────────────────────────
+  let includeIndexedDB = $state(getSettings().includeIndexedDB);
+  let maskBinaryValues = $state(getSettings().maskBinaryValues);
+  let maxValueSize = $state(getSettings().maxValueSize / 1024); // KB
+
+  $effect(() => {
+    const unsub = onSettingsChange((settings) => {
+      includeIndexedDB = settings.includeIndexedDB;
+      maskBinaryValues = settings.maskBinaryValues;
+      maxValueSize = settings.maxValueSize / 1024;
+    });
+    return unsub;
+  });
+
+  async function handleDataSettingChange() {
+    await updateDataSettings({
+      includeIndexedDB,
+      maskBinaryValues,
+      maxValueSize: maxValueSize * 1024,
+    });
+  }
+
   // ── Cloud Sync state ──────────────────────────────────────
 
   let syncCfg = $state<SyncConfig>(getSyncConfig());
@@ -628,6 +652,81 @@
         <span class="toggle-thumb"></span>
       </button>
     </label>
+  </section>
+
+  <!-- Data Policy -->
+  <section class="card">
+    <div class="card-header">
+      <div class="card-icon">
+        <Icon name="database" size={16} />
+      </div>
+      <div>
+        <h2>{$_('options.settings.dataPolicy')}</h2>
+        <p class="description">
+          {$_('options.settings.dataPolicyDesc')}
+        </p>
+      </div>
+    </div>
+
+    <label class="toggle-row">
+      <div class="toggle-info">
+        <span class="toggle-label">{$_('options.settings.includeIndexedDB')}</span>
+        <span class="toggle-description">
+          {$_('options.settings.includeIndexedDBDesc')}
+        </span>
+      </div>
+      <button
+        class="toggle-switch"
+        class:on={includeIndexedDB}
+        onclick={() => { includeIndexedDB = !includeIndexedDB; handleDataSettingChange(); }}
+        role="switch"
+        aria-checked={includeIndexedDB}
+      >
+        <span class="toggle-thumb"></span>
+      </button>
+    </label>
+
+    <div class="divider"></div>
+
+    <label class="toggle-row">
+      <div class="toggle-info">
+        <span class="toggle-label">{$_('options.settings.maskBinaryValues')}</span>
+        <span class="toggle-description">
+          {$_('options.settings.maskBinaryValuesDesc')}
+        </span>
+      </div>
+      <button
+        class="toggle-switch"
+        class:on={maskBinaryValues}
+        onclick={() => { maskBinaryValues = !maskBinaryValues; handleDataSettingChange(); }}
+        role="switch"
+        aria-checked={maskBinaryValues}
+      >
+        <span class="toggle-thumb"></span>
+      </button>
+    </label>
+
+    <div class="divider"></div>
+
+    <div class="setting-row">
+      <div class="toggle-info">
+        <span class="setting-label">{$_('options.settings.maxValueSize')}</span>
+        <span class="toggle-description">
+          {$_('options.settings.maxValueSizeDesc')}
+        </span>
+      </div>
+      <div class="size-input-wrapper">
+        <input
+          type="number"
+          min="1"
+          max="10240"
+          bind:value={maxValueSize}
+          onchange={handleDataSettingChange}
+          class="text-input size-input"
+        />
+        <span class="size-unit">KB</span>
+      </div>
+    </div>
   </section>
 
   <!-- Security -->
@@ -1415,6 +1514,25 @@
   .pin-flow-actions {
     display: flex;
     gap: var(--space-3);
+  }
+
+  /* Data Policy specific */
+  .size-input-wrapper {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .size-input {
+    width: 100px;
+    text-align: right;
+    padding: var(--space-2) var(--space-3);
+  }
+
+  .size-unit {
+    font-size: var(--text-xs);
+    color: var(--color-text-tertiary);
+    font-weight: var(--font-medium);
   }
 
   :global(.inline-icon) {

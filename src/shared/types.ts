@@ -81,6 +81,10 @@ export interface ExtensionSettings {
   autoRefreshDefaultEnabled: boolean;
   isolationModeDefault: IsolationMode;
   logLevel: LogLevel;
+  // Data processing settings
+  includeIndexedDB: boolean;
+  maskBinaryValues: boolean;
+  maxValueSize: number; // in bytes
 }
 
 // ── Security ────────────────────────────────────────────────────

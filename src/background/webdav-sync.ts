@@ -123,7 +123,7 @@ export async function backupToWebDav(): Promise<WebDavState> {
 
   try {
     log.info('WebDAV backup: exporting local data');
-    const localData = await exportLocalData({ skipFileData: config.skipFileData });
+    const localData = await exportLocalData();
     const passphrase = await getWebDavPassphrase(config);
     const encrypted = await encrypt(localData, passphrase);
     const fileName = buildBackupFileName(config.deviceId || 'device');

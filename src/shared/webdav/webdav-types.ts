@@ -17,7 +17,6 @@ export interface WebDavConfig {
   deviceId: string;
   encryptionPassword?: string;
   backupKey?: string;
-  skipFileData?: boolean;
 }
 
 export interface WebDavConnectionConfig {

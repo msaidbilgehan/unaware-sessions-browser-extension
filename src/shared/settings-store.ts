@@ -60,6 +60,18 @@ export function getLogLevel(): LogLevel {
   return currentSettings.logLevel;
 }
 
+export function getIncludeIndexedDB(): boolean {
+  return currentSettings.includeIndexedDB;
+}
+
+export function getMaskBinaryValues(): boolean {
+  return currentSettings.maskBinaryValues;
+}
+
+export function getMaxValueSize(): number {
+  return currentSettings.maxValueSize;
+}
+
 // ── Settings Listeners ──────────────────────────────────────────
 
 export function onSettingsChange(listener: (settings: ExtensionSettings) => void): () => void {
@@ -171,6 +183,14 @@ export async function setDomainIsolationMode(
 export async function setLogLevel(level: LogLevel): Promise<void> {
   currentSettings = { ...currentSettings, logLevel: level };
   applyLogLevel(level);
+  await chrome.storage.local.set({
+    [STORAGE_KEYS.EXTENSION_SETTINGS]: currentSettings,
+  });
+  notifySettingsListeners();
+}
+
+export async function updateDataSettings(updates: Partial<Pick<ExtensionSettings, 'includeIndexedDB' | 'maskBinaryValues' | 'maxValueSize'>>): Promise<void> {
+  currentSettings = { ...currentSettings, ...updates };
   await chrome.storage.local.set({
     [STORAGE_KEYS.EXTENSION_SETTINGS]: currentSettings,
   });
