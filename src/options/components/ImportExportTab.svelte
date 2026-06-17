@@ -10,6 +10,7 @@
   import Icon from '@shared/components/Icon.svelte';
   import DragDropZone from './DragDropZone.svelte';
   import ImportDiff from './ImportDiff.svelte';
+  import WebDavSettings from './WebDavSettings.svelte';
 
   // Force re-render when locale changes
   $effect(() => { void $locale; });
@@ -367,6 +368,8 @@
       </div>
     {/if}
   </section>
+
+  <WebDavSettings />
 
   <!-- Data Management card -->
   <section class="card danger-zone">

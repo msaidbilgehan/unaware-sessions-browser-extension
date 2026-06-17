@@ -38,7 +38,6 @@
   import Toast from '@shared/components/Toast.svelte';
   import ConfirmDialog from '@shared/components/ConfirmDialog.svelte';
   import SyncConflictDialog from './SyncConflictDialog.svelte';
-  import WebDavSettings from './WebDavSettings.svelte';
   import {
     syncConnect,
     syncDisconnect,
@@ -1033,8 +1032,6 @@
       </div>
     {/if}
   </section>
-
-  <WebDavSettings />
 </div>
 
 {#if showDisconnectConfirm}
