@@ -113,10 +113,7 @@
     });
   });
 
-  // Auto-expand other sessions when no site-specific sessions exist
-  const effectiveShowOther = $derived(
-    showOtherSessions || (thisSiteSessions.length === 0 && otherSessions.length > 0),
-  );
+  const effectiveShowOther = $derived(showOtherSessions);
 
   function toggleDomain(domain: string) {
     if (collapsedDomains.has(domain)) collapsedDomains.delete(domain);
