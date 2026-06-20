@@ -311,7 +311,7 @@ src/
   - Build with `vite build`
   - Generate `.zip` of `dist/`
   - Write store listing (description, screenshots, privacy policy)
-  - Published: [Chrome Web Store](https://chromewebstore.google.com/detail/browser-automata/pfpfakjgmkfmcimgknmnebloclkbfhbh)
+  - Published: [Chrome Web Store](https://chromewebstore.google.com/detail/unaware-sessions/pfpfakjgmkfmcimgknmnebloclkbfhbh)
 - [ ] Firefox Add-ons (AMO):
   - Build with Firefox-specific manifest adjustments
   - Generate `.zip` of `dist/firefox`

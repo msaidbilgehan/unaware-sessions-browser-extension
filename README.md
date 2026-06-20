@@ -2,11 +2,11 @@
 
 **Open-source, privacy-first multi-session browser manager — local by default, with opt-in encrypted cloud sync.**
 
-[![Chrome Web Store](https://img.shields.io/chrome-web-store/v/pfpfakjgmkfmcimgknmnebloclkbfhbh?style=flat-square&logo=google-chrome&logoColor=white&label=Chrome%20Extension)](https://chromewebstore.google.com/detail/browser-automata/pfpfakjgmkfmcimgknmnebloclkbfhbh)
+[![Chrome Web Store](https://img.shields.io/chrome-web-store/v/pfpfakjgmkfmcimgknmnebloclkbfhbh?style=flat-square&logo=google-chrome&logoColor=white&label=Chrome%20Extension)](https://chromewebstore.google.com/detail/unaware-sessions/pfpfakjgmkfmcimgknmnebloclkbfhbh)
 
 ## End User Installation
 
-1. Install **Unaware Sessions** directly from the [Chrome Web Store](https://chromewebstore.google.com/detail/browser-automata/pfpfakjgmkfmcimgknmnebloclkbfhbh).
+1. Install **Unaware Sessions** directly from the [Chrome Web Store](https://chromewebstore.google.com/detail/unaware-sessions/pfpfakjgmkfmcimgknmnebloclkbfhbh).
 2. Click **Add to Chrome**.
 
 ![Sessions Tab — Overview](assets/settings-sessions.png)

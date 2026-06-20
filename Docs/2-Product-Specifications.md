@@ -11,7 +11,7 @@
 Unaware Sessions is a privacy-first, open-source browser extension that provides isolated browsing sessions within a single browser window. Each session maintains its own cookies, localStorage, sessionStorage, and IndexedDB — all stored locally by default. An optional Google Drive sync keeps sessions in sync across devices, with all data encrypted end-to-end (AES-256-GCM) before leaving the device.
 
 **Target:** Manifest V3 (mandatory for Chrome Web Store distribution).  
-**Published:** [Chrome Web Store](https://chromewebstore.google.com/detail/browser-automata/pfpfakjgmkfmcimgknmnebloclkbfhbh)
+**Published:** [Chrome Web Store](https://chromewebstore.google.com/detail/unaware-sessions/pfpfakjgmkfmcimgknmnebloclkbfhbh)
 
 ---
 

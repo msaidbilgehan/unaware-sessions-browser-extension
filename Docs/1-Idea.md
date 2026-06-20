@@ -156,7 +156,7 @@ Unaware Sessions Browser Extension fills the gap: lightweight session isolation 
 
 ### Install from the Chrome Web Store
 
-Install **Unaware Sessions** directly from the [Chrome Web Store](https://chromewebstore.google.com/detail/browser-automata/pfpfakjgmkfmcimgknmnebloclkbfhbh) and click **Add to Chrome**.
+Install **Unaware Sessions** directly from the [Chrome Web Store](https://chromewebstore.google.com/detail/unaware-sessions/pfpfakjgmkfmcimgknmnebloclkbfhbh) and click **Add to Chrome**.
 
 ### Install from Source
 
