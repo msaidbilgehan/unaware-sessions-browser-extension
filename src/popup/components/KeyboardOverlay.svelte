@@ -1,5 +1,11 @@
 <script lang="ts">
   import type { SessionProfile } from '@shared/types';
+  import { _ } from 'svelte-i18n';
+  import '@shared/i18n';
+  import { locale } from '@shared/i18n';
+
+  // Force re-render when locale changes
+  $effect(() => { void $locale; });
 
   interface Props {
     sessions: SessionProfile[];
@@ -38,10 +44,10 @@
     role="dialog"
     tabindex="-1"
     aria-modal="true"
-    aria-label="Quick Switch"
+    aria-label={$_('popup.keyboard.title')}
   >
-    <h3>Quick Switch</h3>
-    <p class="hint">Press a number to switch</p>
+    <h3>{$_('popup.keyboard.title')}</h3>
+    <p class="hint">{$_('popup.keyboard.hint')}</p>
     <div class="session-list">
       {#each sessions.slice(0, 9) as session, i}
         <div class="session-row">
@@ -51,7 +57,7 @@
         </div>
       {/each}
     </div>
-    <p class="dismiss-hint">Press any key to close</p>
+    <p class="dismiss-hint">{$_('popup.keyboard.dismissHint')}</p>
   </div>
 </div>
 

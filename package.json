@@ -22,7 +22,8 @@
     "release:major": "npm version major && git push origin --follow-tags"
   },
   "dependencies": {
-    "svelte": "^5.0.0"
+    "svelte": "^5.0.0",
+    "svelte-i18n": "^4.0.1"
   },
   "devDependencies": {
     "@crxjs/vite-plugin": "^2.0.0-beta.27",

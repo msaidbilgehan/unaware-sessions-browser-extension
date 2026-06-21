@@ -41,6 +41,11 @@ Privacy-first, open-source browser extension for isolated browsing sessions with
 - **Chromium:** Snapshot & Swap (cookie API + content script storage swap + DNR rules)
 - **Firefox:** `contextualIdentities` API for native isolation where available
 
+## Prerequisites
+
+- **Node.js** `^18.18.0 || ^20.9.0 || >=21.1.0`
+- **pnpm** `10.30.3`
+
 ## Commands
 
 ```bash

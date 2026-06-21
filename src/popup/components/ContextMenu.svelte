@@ -62,9 +62,9 @@
     btns[index]?.focus();
   }
 
-  // Clamp to popup bounds
-  const clampedX = $derived(Math.min(x, 380 - 160));
-  const clampedY = $derived(Math.min(y, 500));
+  // Clamp to viewport bounds (supports both popup and side panel widths)
+  const clampedX = $derived(Math.min(x, window.innerWidth - 160));
+  const clampedY = $derived(Math.min(y, window.innerHeight - 100));
 
   function handleItemClick(item: ContextMenuItem) {
     item.onclick();

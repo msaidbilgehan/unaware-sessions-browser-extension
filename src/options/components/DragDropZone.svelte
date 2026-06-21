@@ -1,5 +1,11 @@
 <script lang="ts">
+  import { _ } from 'svelte-i18n';
+  import '@shared/i18n';
+  import { locale } from '@shared/i18n';
   import Icon from '@shared/components/Icon.svelte';
+
+  // Force re-render when locale changes
+  $effect(() => { void $locale; });
 
   interface Props {
     onfiles: (files: FileList) => void;
@@ -34,13 +40,13 @@
   ondragleave={handleDragLeave}
   ondrop={handleDrop}
   role="region"
-  aria-label="Drop files here"
+  aria-label={$_('options.data.dropFilesHere')}
 >
   <div class="drop-icon">
     <Icon name="upload" size={20} />
   </div>
-  <p class="drop-text">Drag and drop a JSON file here</p>
-  <p class="drop-hint">or use the button below</p>
+  <p class="drop-text">{$_('options.data.dragDropFile')}</p>
+  <p class="drop-hint">{$_('options.data.orUseButton')}</p>
 </div>
 
 <style>

@@ -2,6 +2,12 @@
   import type { SessionStats } from '@shared/types';
   import { getSessionStats } from '@shared/api';
   import Icon from '@shared/components/Icon.svelte';
+  import { _ } from 'svelte-i18n';
+  import '@shared/i18n';
+  import { locale } from '@shared/i18n';
+
+  // Force re-render when locale changes
+  $effect(() => { void $locale; });
 
   interface Props {
     sessionId: string;
@@ -20,7 +26,7 @@
         stats = s;
       })
       .catch((err) => {
-        error = err instanceof Error ? err.message : 'Failed to load stats';
+        error = err instanceof Error ? err.message : $_('popup.detail.failedToLoad');
       })
       .finally(() => {
         loading = false;
@@ -46,7 +52,7 @@
     <div class="error-row">
       <Icon name="alert-triangle" size={12} />
       <span class="error-text">{error}</span>
-      <button class="retry-btn" onclick={() => { loading = true; error = ''; getSessionStats(sessionId).then((s) => { stats = s; }).catch((err) => { error = err instanceof Error ? err.message : 'Failed'; }).finally(() => { loading = false; }); }} aria-label="Retry">
+      <button class="retry-btn" onclick={() => { loading = true; error = ''; getSessionStats(sessionId).then((s) => { stats = s; }).catch((err) => { error = err instanceof Error ? err.message : $_('popup.detail.failedToLoad'); }).finally(() => { loading = false; }); }} aria-label={$_('common.retry')}>
         <Icon name="refresh-cw" size={11} />
       </button>
     </div>
@@ -54,19 +60,19 @@
     <div class="stat-grid">
       <div class="stat">
         <span class="stat-value">{stats.tabCount}</span>
-        <span class="stat-label">Tabs</span>
+        <span class="stat-label">{$_('popup.detail.tabs')}</span>
       </div>
       <div class="stat">
         <span class="stat-value">{stats.cookieCount}</span>
-        <span class="stat-label">Cookies</span>
+        <span class="stat-label">{$_('popup.detail.cookies')}</span>
       </div>
       <div class="stat">
         <span class="stat-value">{formatBytes(stats.storageBytes)}</span>
-        <span class="stat-label">Storage</span>
+        <span class="stat-label">{$_('popup.detail.storage')}</span>
       </div>
       <div class="stat">
         <span class="stat-value">{stats.idbDatabases}</span>
-        <span class="stat-label">IDB</span>
+        <span class="stat-label">{$_('popup.detail.idb')}</span>
       </div>
     </div>
     {#if stats.origins.length > 0}

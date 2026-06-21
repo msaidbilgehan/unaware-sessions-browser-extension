@@ -1,6 +1,12 @@
 <script lang="ts">
+  import { _ } from 'svelte-i18n';
+  import '@shared/i18n';
+  import { locale } from '@shared/i18n';
   import Icon from '@shared/components/Icon.svelte';
   import { GITHUB_URL, OPENCOLLECTIVE_URL } from '@shared/constants';
+
+  // Force re-render when locale changes
+  $effect(() => { void $locale; });
 
   const extensionVersion = chrome.runtime.getManifest().version;
 </script>
@@ -15,17 +21,17 @@
       <div>
         <h2>Unaware Sessions</h2>
         <div class="badges">
-          <span class="badge version">v{extensionVersion}</span>
+          <span class="badge version">{$_('options.about.version', { values: { version: extensionVersion } })}</span>
           <span class="badge privacy">
             <Icon name="lock" size={9} />
-            100% Local
+            {$_('options.about.localBadge')}
           </span>
         </div>
       </div>
     </div>
 
     <p class="about-text">
-      Privacy-first multi-session browser manager. Open-source, entirely local. Zero network calls, zero analytics, zero telemetry.
+      {$_('options.about.aboutText')}
     </p>
 
     <div class="link-cards">
@@ -34,8 +40,8 @@
           <Icon name="github" size={16} />
         </div>
         <div class="link-info">
-          <span class="link-title">GitHub Repository</span>
-          <span class="link-desc">Source code, issues, and contributions</span>
+          <span class="link-title">{$_('options.about.githubRepo')}</span>
+          <span class="link-desc">{$_('options.about.githubDesc')}</span>
         </div>
         <Icon name="external-link" size={12} />
       </a>
@@ -49,9 +55,9 @@
         <Icon name="heart" size={16} />
       </div>
       <div>
-        <h2>Support the Project</h2>
+        <h2>{$_('options.about.supportTitle')}</h2>
         <p class="description">
-          If you find Unaware Sessions useful, consider supporting its development.
+          {$_('options.about.supportDesc')}
         </p>
       </div>
     </div>
@@ -67,8 +73,8 @@
           <Icon name="heart" size={16} />
         </div>
         <div class="link-info">
-          <span class="link-title">Donate on Open Collective</span>
-          <span class="link-desc">Help fund development and hosting</span>
+          <span class="link-title">{$_('options.about.donate')}</span>
+          <span class="link-desc">{$_('options.about.donateDesc')}</span>
         </div>
         <Icon name="external-link" size={12} />
       </a>
@@ -78,8 +84,8 @@
           <Icon name="globe" size={16} />
         </div>
         <div class="link-info">
-          <span class="link-title">View Sponsors &amp; Backers</span>
-          <span class="link-desc">See who supports this project</span>
+          <span class="link-title">{$_('options.about.viewSponsors')}</span>
+          <span class="link-desc">{$_('options.about.viewSponsorsDesc')}</span>
         </div>
         <Icon name="external-link" size={12} />
       </a>

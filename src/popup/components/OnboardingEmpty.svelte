@@ -1,5 +1,11 @@
 <script lang="ts">
   import Icon from '@shared/components/Icon.svelte';
+  import { _ } from 'svelte-i18n';
+  import '@shared/i18n';
+  import { locale } from '@shared/i18n';
+
+  // Force re-render when locale changes
+  $effect(() => { void $locale; });
 
   interface Props {
     oncreate: () => void;
@@ -13,29 +19,29 @@
     <Icon name="shield" size={28} />
   </div>
 
-  <h3>Private Browsing Sessions</h3>
-  <p class="subtitle">Keep your accounts separate in one browser.</p>
+  <h3>{$_('popup.onboarding.title')}</h3>
+  <p class="subtitle">{$_('popup.onboarding.subtitle')}</p>
 
   <div class="steps">
     <div class="step">
       <span class="step-number">1</span>
-      <span class="step-text">Create a session</span>
+      <span class="step-text">{$_('popup.onboarding.step1')}</span>
     </div>
     <div class="step-connector"></div>
     <div class="step">
       <span class="step-number">2</span>
-      <span class="step-text">Visit a website</span>
+      <span class="step-text">{$_('popup.onboarding.step2')}</span>
     </div>
     <div class="step-connector"></div>
     <div class="step">
       <span class="step-number">3</span>
-      <span class="step-text">Switch to keep data separate</span>
+      <span class="step-text">{$_('popup.onboarding.step3')}</span>
     </div>
   </div>
 
   <button class="create-btn" onclick={oncreate}>
     <Icon name="plus" size={14} />
-    Create your first session
+    {$_('popup.onboarding.createFirst')}
   </button>
 </div>
 

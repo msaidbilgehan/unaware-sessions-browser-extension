@@ -1,10 +1,16 @@
 <script lang="ts">
+  import { _ } from 'svelte-i18n';
+  import '@shared/i18n';
+  import { locale } from '@shared/i18n';
   import type {
     SessionProfile,
     CookieDiffResult,
     RestoreFailureEntry,
     LogEntry,
   } from '@shared/types';
+
+  // Force re-render when locale changes
+  $effect(() => { void $locale; });
   import type { LogLevel } from '@shared/types';
   import {
     getCookieDiff,
@@ -66,7 +72,7 @@
     try {
       diffResult = await getCookieDiff(selectedSessionId, originInput.trim());
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Failed to run diff', 'error');
+      showToast(err instanceof Error ? err.message : $_('options.debug.failedRunDiff'), 'error');
     } finally {
       diffLoading = false;
     }
@@ -77,7 +83,7 @@
     try {
       failures = await getRestoreFailures();
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Failed to load failures', 'error');
+      showToast(err instanceof Error ? err.message : $_('options.debug.failedLoadFailures'), 'error');
     } finally {
       failuresLoading = false;
     }
@@ -96,14 +102,17 @@
       : [],
   );
 
-  const statusLabels: Record<string, string> = {
-    match: 'Match',
-    value_changed: 'Value Changed',
-    flags_changed: 'Flags Changed',
-    missing_in_browser: 'Missing in Browser',
-    extra_in_browser: 'Extra in Browser',
-    expired: 'Expired',
-  };
+  function statusLabel(status: string): string {
+    const map: Record<string, string> = {
+      match: $_('options.debug.match'),
+      value_changed: $_('options.debug.valueChanged'),
+      flags_changed: $_('options.debug.flagsChanged'),
+      missing_in_browser: $_('options.debug.missingInBrowser'),
+      extra_in_browser: $_('options.debug.extraInBrowser'),
+      expired: $_('options.debug.expired'),
+    };
+    return map[status] ?? status;
+  }
 
   const statusColors: Record<string, string> = {
     match: 'status-match',
@@ -160,7 +169,7 @@
     try {
       logs = await getExtensionLogs();
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Failed to load logs', 'error');
+      showToast(err instanceof Error ? err.message : $_('options.debug.failedLoadLogs'), 'error');
     } finally {
       logsLoading = false;
     }
@@ -170,15 +179,15 @@
     try {
       await clearExtensionLogs();
       logs = [];
-      showToast('Logs cleared', 'success');
+      showToast($_('options.debug.logsCleared'), 'success');
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Failed to clear logs', 'error');
+      showToast(err instanceof Error ? err.message : $_('options.debug.failedClearLogs'), 'error');
     }
   }
 
   function exportLogs() {
     if (logs.length === 0) {
-      showToast('No logs to export', 'info');
+      showToast($_('options.debug.noLogsExport'), 'info');
       return;
     }
     const exportData = {
@@ -220,16 +229,16 @@
         <Icon name="search" size={16} />
       </div>
       <div>
-        <h2>Cookie Diff Tool</h2>
+        <h2>{$_('options.debug.cookieDiff')}</h2>
         <p class="description">
-          Compare saved session cookies against live browser cookies for a given origin.
+          {$_('options.debug.cookieDiffDesc')}
         </p>
       </div>
     </div>
 
     <div class="diff-controls">
       <div class="control-row">
-        <label class="control-label" for="origin-input">Origin URL</label>
+        <label class="control-label" for="origin-input">{$_('options.debug.originUrl')}</label>
         <input
           id="origin-input"
           type="text"
@@ -241,7 +250,7 @@
       </div>
 
       <div class="control-row">
-        <label class="control-label" for="session-select">Session</label>
+        <label class="control-label" for="session-select">{$_('options.debug.session')}</label>
         <select id="session-select" class="select-input" bind:value={selectedSessionId}>
           {#each sessions as session}
             <option value={session.id}>
@@ -259,10 +268,10 @@
       >
         {#if diffLoading}
           <span class="spinner"></span>
-          Running...
+          {$_('options.debug.running')}
         {:else}
           <Icon name="search" size={14} />
-          Run Diff
+          {$_('options.debug.runDiff')}
         {/if}
       </button>
     </div>
@@ -272,49 +281,49 @@
       <div class="summary-bar">
         <div class="summary-meta">
           <span class="meta-item">
-            Snapshot: <strong>{diffResult.totalSnapshot}</strong> cookies
+            {$_('options.debug.snapshot')}: <strong>{diffResult.totalSnapshot}</strong> {$_('options.debug.cookiesCount', { values: { count: diffResult.totalSnapshot } })}
           </span>
           <span class="meta-item">
-            Live: <strong>{diffResult.totalLive}</strong> cookies
+            {$_('options.debug.live')}: <strong>{diffResult.totalLive}</strong> {$_('options.debug.cookiesCount', { values: { count: diffResult.totalLive } })}
           </span>
           {#if diffResult.snapshotTimestamp}
             <span class="meta-item">
-              Saved: <strong>{formatTimestamp(diffResult.snapshotTimestamp)}</strong>
+              {$_('options.debug.saved')}: <strong>{formatTimestamp(diffResult.snapshotTimestamp)}</strong>
             </span>
           {:else}
-            <span class="meta-item meta-warning">No snapshot found</span>
+            <span class="meta-item meta-warning">{$_('options.debug.noSnapshot')}</span>
           {/if}
         </div>
 
         <div class="summary-chips">
           {#if diffResult.summary.missingInBrowser > 0}
             <span class="chip chip-error">
-              {diffResult.summary.missingInBrowser} missing
+              {$_('options.debug.missing', { values: { count: diffResult.summary.missingInBrowser } })}
             </span>
           {/if}
           {#if diffResult.summary.expired > 0}
             <span class="chip chip-error">
-              {diffResult.summary.expired} expired
+              {$_('options.debug.expired', { values: { count: diffResult.summary.expired } })}
             </span>
           {/if}
           {#if diffResult.summary.valueChanged > 0}
             <span class="chip chip-warning">
-              {diffResult.summary.valueChanged} changed
+              {$_('options.debug.changed', { values: { count: diffResult.summary.valueChanged } })}
             </span>
           {/if}
           {#if diffResult.summary.flagsChanged > 0}
             <span class="chip chip-info">
-              {diffResult.summary.flagsChanged} flags
+              {$_('options.debug.flags', { values: { count: diffResult.summary.flagsChanged } })}
             </span>
           {/if}
           {#if diffResult.summary.extraInBrowser > 0}
             <span class="chip chip-info">
-              {diffResult.summary.extraInBrowser} extra
+              {$_('options.debug.extra', { values: { count: diffResult.summary.extraInBrowser } })}
             </span>
           {/if}
           {#if diffResult.summary.matched > 0}
             <span class="chip chip-success">
-              {diffResult.summary.matched} matched
+              {$_('options.debug.matched', { values: { count: diffResult.summary.matched } })}
             </span>
           {/if}
         </div>
@@ -322,9 +331,9 @@
 
       <!-- Filter -->
       <div class="filter-row">
-        <label class="control-label" for="filter-select">Filter</label>
+        <label class="control-label" for="filter-select">{$_('options.debug.filter')}</label>
         <select id="filter-select" class="select-input select-sm" bind:value={filterStatus}>
-          <option value="all">All ({diffResult.entries.length})</option>
+          <option value="all">{$_('options.debug.all', { values: { count: diffResult.entries.length } })}</option>
           {#each Object.entries(diffResult.summary) as [key, count]}
             {#if count > 0}
               <option
@@ -340,7 +349,7 @@
                           ? 'extra_in_browser'
                           : key}
               >
-                {statusLabels[
+                {statusLabel(
                   key === 'matched'
                     ? 'match'
                     : key === 'valueChanged'
@@ -352,7 +361,7 @@
                           : key === 'extraInBrowser'
                             ? 'extra_in_browser'
                             : key
-                ] ?? key} ({count})
+                )} ({count})
               </option>
             {/if}
           {/each}
@@ -364,12 +373,12 @@
         <table class="diff-table">
           <thead>
             <tr>
-              <th>Status</th>
-              <th>Name</th>
-              <th>Domain</th>
-              <th>Snapshot Value</th>
-              <th>Live Value</th>
-              <th>Details</th>
+              <th>{$_('options.debug.status')}</th>
+              <th>{$_('options.debug.name')}</th>
+              <th>{$_('options.debug.domain')}</th>
+              <th>{$_('options.debug.snapshotValue')}</th>
+              <th>{$_('options.debug.liveValue')}</th>
+              <th>{$_('options.debug.details')}</th>
             </tr>
           </thead>
           <tbody>
@@ -377,7 +386,7 @@
               <tr class={statusColors[entry.status] ?? ''}>
                 <td>
                   <span class="status-badge {statusColors[entry.status] ?? ''}">
-                    {statusLabels[entry.status] ?? entry.status}
+                    {statusLabel(entry.status)}
                   </span>
                 </td>
                 <td class="cell-name" title={entry.name}>{entry.name}</td>
@@ -395,7 +404,7 @@
                     {/each}
                   {/if}
                   {#if entry.status === 'expired'}
-                    <span class="flag-diff">Cookie has expired in snapshot</span>
+                    <span class="flag-diff">{$_('options.debug.cookieExpired')}</span>
                   {/if}
                 </td>
               </tr>
@@ -404,8 +413,8 @@
               <tr>
                 <td colspan="6" class="empty-row">
                   {diffResult.entries.length === 0
-                    ? 'No cookies found in snapshot or browser for this origin.'
-                    : 'No cookies match the selected filter.'}
+                    ? $_('options.debug.noCookies')
+                    : $_('options.debug.noMatch')}
                 </td>
               </tr>
             {/if}
@@ -422,19 +431,19 @@
         <Icon name="file-text" size={16} />
       </div>
       <div>
-        <h2>Extension Logs</h2>
+        <h2>{$_('options.debug.extensionLogs')}</h2>
         <p class="description">
-          Internal extension events recorded by the logger. Logs are kept in memory and cleared on extension restart.
+          {$_('options.debug.extensionLogsDesc')}
         </p>
       </div>
       <div class="header-actions">
         <button class="btn btn-ghost btn-sm" onclick={loadLogs} disabled={logsLoading}>
           <Icon name="refresh-cw" size={14} />
-          Refresh
+          {$_('common.refresh')}
         </button>
         <button class="btn btn-ghost btn-sm" onclick={exportLogs} disabled={logs.length === 0}>
           <Icon name="download" size={14} />
-          Export
+          {$_('common.export')}
         </button>
         <button
           class="btn btn-ghost btn-sm btn-danger-ghost"
@@ -442,13 +451,13 @@
           disabled={logs.length === 0}
         >
           <Icon name="trash-2" size={14} />
-          Clear
+          {$_('common.clear')}
         </button>
       </div>
     </div>
 
     <div class="log-level-row">
-      <span class="log-level-label">Log level</span>
+      <span class="log-level-label">{$_('options.debug.logLevel')}</span>
       <div class="log-level-options">
         {#each logLevelOptions as opt (opt.value)}
           <button
@@ -466,19 +475,19 @@
     {#if logsLoading}
       <div class="loading-inline">
         <span class="spinner"></span>
-        Loading...
+        {$_('common.loading')}
       </div>
     {:else if logs.length === 0}
       <div class="empty-state">
         <Icon name="file-text" size={20} />
-        <p>No logs recorded. Select a log level above to start capturing events.</p>
+        <p>{$_('options.debug.noLogs')}</p>
       </div>
     {:else}
       <!-- Filter -->
       <div class="filter-row">
-        <label class="control-label" for="log-filter-select">Filter</label>
+        <label class="control-label" for="log-filter-select">{$_('options.debug.filter')}</label>
         <select id="log-filter-select" class="select-input select-sm" bind:value={logFilterLevel}>
-          <option value="all">All ({logs.length})</option>
+          <option value="all">{$_('options.debug.all', { values: { count: logs.length } })}</option>
           {#each ['error', 'warn', 'info', 'debug'] as level}
             {@const count = logs.filter((e) => e.level === level).length}
             {#if count > 0}
@@ -488,18 +497,18 @@
             {/if}
           {/each}
         </select>
-        <span class="log-count">{filteredLogs.length} entries</span>
+        <span class="log-count">{$_('options.debug.entries', { values: { count: filteredLogs.length } })}</span>
       </div>
 
       <div class="table-wrapper log-table-wrapper">
         <table class="diff-table log-table">
           <thead>
             <tr>
-              <th>Time</th>
-              <th>Level</th>
-              <th>Source</th>
-              <th>Message</th>
-              <th>Data</th>
+              <th>{$_('options.debug.time')}</th>
+              <th>{$_('options.debug.level')}</th>
+              <th>{$_('options.debug.source')}</th>
+              <th>{$_('options.debug.message')}</th>
+              <th>{$_('options.debug.data')}</th>
             </tr>
           </thead>
           <tbody>
@@ -531,39 +540,38 @@
         <Icon name="alert-triangle" size={16} />
       </div>
       <div>
-        <h2>Restore Failures</h2>
+        <h2>{$_('options.debug.restoreFailures')}</h2>
         <p class="description">
-          Recent cookie restoration failures logged by the service worker. Cleared on extension
-          restart.
+          {$_('options.debug.restoreFailuresDesc')}
         </p>
       </div>
       <button class="btn btn-ghost btn-sm" onclick={loadFailures} disabled={failuresLoading}>
         <Icon name="refresh-cw" size={14} />
-        Refresh
+        {$_('common.refresh')}
       </button>
     </div>
 
     {#if failuresLoading}
       <div class="loading-inline">
         <span class="spinner"></span>
-        Loading...
+        {$_('common.loading')}
       </div>
     {:else if failures.length === 0}
       <div class="empty-state">
         <Icon name="check" size={20} />
-        <p>No restore failures recorded. Switch sessions to trigger logging.</p>
+        <p>{$_('options.debug.noFailures')}</p>
       </div>
     {:else}
       <div class="table-wrapper">
         <table class="diff-table">
           <thead>
             <tr>
-              <th>Time</th>
-              <th>Session</th>
-              <th>Origin</th>
-              <th>Cookie</th>
-              <th>Domain</th>
-              <th>Reason</th>
+              <th>{$_('options.debug.time')}</th>
+              <th>{$_('options.debug.sessionCol')}</th>
+              <th>{$_('options.debug.origin')}</th>
+              <th>{$_('options.debug.cookie')}</th>
+              <th>{$_('options.debug.domain')}</th>
+              <th>{$_('options.debug.reason')}</th>
             </tr>
           </thead>
           <tbody>

@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { _ } from 'svelte-i18n';
+  import '@shared/i18n';
+  import { locale } from '@shared/i18n';
   import type { SessionProfile, FullExportData } from '@shared/types';
   import { createSession, deleteSession as deleteSessionApi, exportFull, importFull } from '@shared/api';
   import ConfirmDialog from '@shared/components/ConfirmDialog.svelte';
@@ -7,6 +10,9 @@
   import Icon from '@shared/components/Icon.svelte';
   import DragDropZone from './DragDropZone.svelte';
   import ImportDiff from './ImportDiff.svelte';
+
+  // Force re-render when locale changes
+  $effect(() => { void $locale; });
 
   interface Props {
     sessions: SessionProfile[];
@@ -116,18 +122,18 @@
 
       // Legacy format: plain array of session profiles
       if (!Array.isArray(parsed)) {
-        importError = 'Invalid file: expected a session export file';
+        importError = $_('options.data.invalidFile');
         return;
       }
 
       const profiles = (parsed as SessionProfile[]).filter((p) => p.name && p.color);
       if (profiles.length === 0) {
-        importError = 'No valid sessions found in file';
+        importError = $_('options.data.noValidSessions');
         return;
       }
       importedProfiles = profiles;
     } catch (err) {
-      importError = `Import failed: ${err instanceof Error ? err.message : 'Unknown error'}`;
+      importError = $_('options.data.importFailed', { values: { error: err instanceof Error ? err.message : 'Unknown error' } });
     }
   }
 
@@ -155,11 +161,11 @@
         await createSession(profile.name, profile.color, profile.emoji);
         created++;
       }
-      importSuccess = `Imported ${created} session(s)`;
+      importSuccess = $_('options.data.importedSessions', { values: { count: created } });
       importedProfiles = null;
       onupdate();
     } catch (err) {
-      importError = `Import failed: ${err instanceof Error ? err.message : 'Unknown error'}`;
+      importError = $_('options.data.importFailed', { values: { error: err instanceof Error ? err.message : 'Unknown error' } });
     }
   }
 
@@ -171,11 +177,11 @@
       importError = '';
       try {
         const result = await importFull(fullImportData);
-        importSuccess = `Imported ${result.imported} session(s) with cookie and storage data`;
+        importSuccess = $_('options.data.importedFull', { values: { count: result.imported } });
         fullImportData = null;
         onupdate();
       } catch (err) {
-        importError = `Import failed: ${err instanceof Error ? err.message : 'Unknown error'}`;
+        importError = $_('options.data.importFailed', { values: { error: err instanceof Error ? err.message : 'Unknown error' } });
       } finally {
         fullImporting = false;
       }
@@ -219,9 +225,9 @@
         <Icon name="download" size={16} />
       </div>
       <div>
-        <h2>Export Sessions</h2>
+        <h2>{$_('options.data.exportSessions')}</h2>
         <p class="description">
-          Download session data as a JSON file.
+          {$_('options.data.exportDesc')}
         </p>
       </div>
     </div>
@@ -229,7 +235,7 @@
     <div class="export-options">
       <button class="btn" onclick={handleExport} disabled={sessions.length === 0}>
         <Icon name="download" size={14} />
-        Profiles Only
+        {$_('options.data.profilesOnly')}
       </button>
       <button
         class="btn primary"
@@ -238,17 +244,17 @@
       >
         {#if fullExporting}
           <span class="spinner"></span>
-          Exporting...
+          {$_('options.data.exporting')}
         {:else}
           <Icon name="database" size={14} />
-          Full Export
+          {$_('options.data.fullExport')}
         {/if}
       </button>
     </div>
 
     <div class="export-hint">
-      <p><strong>Profiles Only</strong> — Session names, colors, and emojis. Lightweight.</p>
-      <p><strong>Full Export</strong> — Includes all saved cookies and storage data. Use this to transfer sessions between browsers or back up login states.</p>
+      <p><strong>{$_('options.data.profilesOnly')}</strong> {$_('options.data.profilesHint')}</p>
+      <p><strong>{$_('options.data.fullExport')}</strong> {$_('options.data.fullHint')}</p>
     </div>
   </section>
 
@@ -259,9 +265,9 @@
         <Icon name="upload" size={16} />
       </div>
       <div>
-        <h2>Import Sessions</h2>
+        <h2>{$_('options.data.importSessions')}</h2>
         <p class="description">
-          Import from a previously exported JSON file. Supports both profile-only and full exports.
+          {$_('options.data.importDesc')}
         </p>
       </div>
     </div>
@@ -270,7 +276,7 @@
 
     <button class="btn" onclick={handleImportClick}>
       <Icon name="upload" size={14} />
-      Choose File
+      {$_('options.data.chooseFile')}
     </button>
 
     {#if importError}
@@ -298,28 +304,28 @@
     {#if fullImportData}
       {@const stats = fullExportStats()}
       <div class="full-import-preview">
-        <h3>Full Import Preview</h3>
+        <h3>{$_('options.data.fullImportPreview')}</h3>
         {#if stats}
           <div class="stats-grid">
             <div class="stat">
               <span class="stat-value">{stats.sessions}</span>
-              <span class="stat-label">Sessions</span>
+              <span class="stat-label">{$_('options.data.sessions')}</span>
             </div>
             <div class="stat">
               <span class="stat-value">{stats.cookies}</span>
-              <span class="stat-label">Cookies</span>
+              <span class="stat-label">{$_('options.data.cookies')}</span>
             </div>
             <div class="stat">
               <span class="stat-value">{stats.storageEntries}</span>
-              <span class="stat-label">Storage entries</span>
+              <span class="stat-label">{$_('options.data.storageEntries')}</span>
             </div>
             <div class="stat">
               <span class="stat-value">{stats.origins}</span>
-              <span class="stat-label">Origins</span>
+              <span class="stat-label">{$_('options.data.origins')}</span>
             </div>
           </div>
           <p class="export-date">
-            Exported: {formatDate(stats.exportedAt)}
+            {$_('options.data.exported', { values: { date: formatDate(stats.exportedAt) } })}
           </p>
         {/if}
 
@@ -332,9 +338,9 @@
                 {profile.emoji ?? ''} {profile.name}
               </span>
               {#if exists}
-                <span class="preview-badge skip">exists</span>
+                <span class="preview-badge skip">{$_('options.data.exists')}</span>
               {:else}
-                <span class="preview-badge new">new</span>
+                <span class="preview-badge new">{$_('options.data.new')}</span>
               {/if}
             </div>
           {/each}
@@ -342,7 +348,7 @@
 
         <div class="preview-actions">
           <button class="btn cancel-btn" onclick={() => (fullImportData = null)}>
-            Cancel
+            {$_('common.cancel')}
           </button>
           <button
             class="btn primary"
@@ -351,10 +357,10 @@
           >
             {#if fullImporting}
               <span class="spinner"></span>
-              Importing...
+              {$_('options.data.importing')}
             {:else}
               <Icon name="database" size={14} />
-              Import All
+              {$_('options.data.importAll')}
             {/if}
           </button>
         </div>
@@ -369,9 +375,9 @@
         <Icon name="alert-triangle" size={16} />
       </div>
       <div>
-        <h2>Data Management</h2>
+        <h2>{$_('options.data.dataManagement')}</h2>
         <p class="description">
-          Remove all session profiles, saved cookies, and storage snapshots.
+          {$_('options.data.dataManagementDesc')}
         </p>
       </div>
     </div>
@@ -382,9 +388,9 @@
       disabled={sessions.length === 0}
     >
       <Icon name="trash-2" size={14} />
-      Clear All Data
+      {$_('options.data.clearAllData')}
       {#if sessions.length > 0}
-        <span class="count">({sessions.length} session{sessions.length === 1 ? '' : 's'})</span>
+        <span class="count">({sessions.length} {$_('options.data.sessionCount', { values: { count: sessions.length } })})</span>
       {/if}
     </button>
   </section>
@@ -392,9 +398,9 @@
 
 {#if showClearConfirm}
   <ConfirmDialog
-    title="Clear All Data"
-    message="Delete ALL sessions and their data? This cannot be undone. All session profiles, cookies, and storage snapshots will be permanently removed."
-    confirmLabel="Clear All"
+    title={$_('options.data.clearAllTitle')}
+    message={$_('options.data.clearAllMessage')}
+    confirmLabel={$_('options.data.clearAllLabel')}
     danger={true}
     onconfirm={handleClearAll}
     oncancel={() => (showClearConfirm = false)}

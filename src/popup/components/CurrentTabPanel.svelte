@@ -1,6 +1,12 @@
 <script lang="ts">
   import type { IsolationMode } from '@shared/types';
   import Icon from '@shared/components/Icon.svelte';
+  import { _ } from 'svelte-i18n';
+  import '@shared/i18n';
+  import { locale } from '@shared/i18n';
+
+  // Force re-render when locale changes
+  $effect(() => { void $locale; });
 
   interface Props {
     currentOrigin: string;
@@ -91,7 +97,7 @@
       </div>
 
       <div class="site-text">
-        <span class="origin-text">{displayOrigin || 'No active tab'}</span>
+        <span class="origin-text">{displayOrigin || $_('popup.noActiveTab')}</span>
         {#if currentSessionName}
           <span class="session-label">
             {#if currentSessionEmoji}
@@ -102,7 +108,7 @@
             {currentSessionName}
           </span>
         {:else if currentOrigin}
-          <span class="session-label muted">No active session</span>
+          <span class="session-label muted">{$_('popup.noActiveSession')}</span>
         {/if}
       </div>
     </div>
@@ -114,8 +120,8 @@
             class="action-btn"
             class:active={isStrict}
             onclick={onisolationToggle}
-            aria-label={isStrict ? 'Switch to soft isolation' : 'Switch to strict isolation'}
-            title={isStrict ? 'Strict isolation (clears all cookies)' : 'Soft isolation (preserves unmanaged cookies)'}
+            aria-label={isStrict ? $_('popup.switchToSoft') : $_('popup.switchToStrict')}
+            title={isStrict ? $_('popup.strictIsolationTooltip') : $_('popup.softIsolationTooltip')}
           >
             <Icon name={isStrict ? 'lock' : 'shield'} size={12} />
           </button>
@@ -128,15 +134,15 @@
             onclick={onautorefreshToggle}
             disabled={!globalAutoRefreshOn}
             aria-label={!globalAutoRefreshOn
-              ? 'Auto-refresh disabled globally (enable in Settings)'
+              ? $_('popup.autoRefreshDisabledGlobal')
               : domainAutoRefreshOn
-                ? 'Disable auto-refresh for this domain'
-                : 'Enable auto-refresh for this domain'}
+                ? $_('popup.autoRefreshDisableDomain')
+                : $_('popup.autoRefreshEnableDomain')}
             title={!globalAutoRefreshOn
-              ? 'Auto-refresh off globally'
+              ? $_('popup.autoRefreshOffGlobal')
               : domainAutoRefreshOn
-                ? 'Auto-refresh active for this domain'
-                : 'Auto-refresh off for this domain'}
+                ? $_('popup.autoRefreshActiveDomain')
+                : $_('popup.autoRefreshOffDomain')}
           >
             <Icon name="refresh-cw" size={12} />
           </button>
@@ -147,7 +153,7 @@
           disabled={refreshing}
           class:spinning={refreshing}
           aria-label="Session Load"
-          title="Save & detect session data"
+          title={$_('popup.saveDetectSession')}
         >
           <Icon name="download" size={12} />
         </button>

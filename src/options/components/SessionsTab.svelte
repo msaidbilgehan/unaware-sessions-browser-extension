@@ -1,5 +1,11 @@
 <script lang="ts">
+  import { _ } from 'svelte-i18n';
+  import '@shared/i18n';
+  import { locale } from '@shared/i18n';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+
+  // Force re-render when locale changes
+  $effect(() => { void $locale; });
   import type { SessionProfile, SessionDetails } from '@shared/types';
   import { formatRelativeTime } from '@shared/utils';
   import {
@@ -297,19 +303,19 @@
   <!-- Header row -->
   <div class="sessions-header">
     <div class="header-left">
-      <h2>Sessions</h2>
+      <h2>{$_('options.sessions.title')}</h2>
       <span class="session-count">{sessions.length}</span>
     </div>
     <div class="search-box">
       <Icon name="search" size={13} />
       <input
         type="text"
-        placeholder="Search sessions or domains..."
+        placeholder={$_('options.sessions.searchPlaceholder')}
         bind:value={searchQuery}
-        aria-label="Search sessions"
+        aria-label={$_('options.sessions.searchAria')}
       />
       {#if searchQuery}
-        <button class="clear-search" onclick={() => (searchQuery = '')} aria-label="Clear search">
+        <button class="clear-search" onclick={() => (searchQuery = '')} aria-label={$_('options.sessions.clearSearch')}>
           <Icon name="x" size={11} />
         </button>
       {/if}
@@ -328,7 +334,7 @@
         <Icon name="layers" size={20} />
       </div>
       <p>
-        {searchQuery ? `No results for "${searchQuery}"` : 'No sessions created yet.'}
+        {searchQuery ? $_('options.sessions.noResults', { values: { query: searchQuery } }) : $_('options.sessions.noSessions')}
       </p>
     </div>
   {:else}
@@ -391,7 +397,7 @@
                       <span
                         class="session-name"
                         ondblclick={() => (editingId = session.id)}
-                        title="Double-click to rename"
+                        title={$_('options.sessions.doubleClickRename')}
                       >{session.emoji ?? ''} {session.name}</span>
                     {/if}
                   </span>
@@ -411,8 +417,8 @@
                       class="icon-btn"
                       onclick={() =>
                         (expandedSessionId = expandedSessionId === session.id ? null : session.id)}
-                      title="View details"
-                      aria-label="Toggle session details"
+                      title={$_('options.sessions.viewDetails')}
+                      aria-label={$_('options.sessions.toggleDetails')}
                     >
                       <Icon
                         name={expandedSessionId === session.id ? 'chevron-down' : 'chevron-right'}
@@ -422,7 +428,7 @@
                     <button
                       class="icon-btn danger"
                       onclick={() => (confirmData = { session })}
-                      aria-label="Delete session"
+                      aria-label={$_('options.sessions.deleteSession')}
                     >
                       <Icon name="trash-2" size={13} />
                     </button>
@@ -433,16 +439,16 @@
                 {#if expandedSessionId === session.id && details}
                   <div class="details-panel">
                     {#if details.origins.length === 0}
-                      <p class="empty-small">No saved data.</p>
+                      <p class="empty-small">{$_('options.sessions.noSavedData')}</p>
                     {:else}
                       <div class="details-summary">
                         <span class="summary-item">
                           <Icon name="globe" size={11} />
-                          {details.origins.length} origin{details.origins.length === 1 ? '' : 's'}
+                          {$_('options.sessions.origins', { values: { count: details.origins.length } })}
                         </span>
                         <span class="summary-item">
                           <Icon name="database" size={11} />
-                          {details.totalCookies} cookies
+                          {$_('options.sessions.cookiesCount', { values: { count: details.totalCookies } })}
                         </span>
                         <span class="summary-item">
                           {formatBytes(details.totalStorageBytes)}
@@ -457,7 +463,7 @@
                               {detail.origin.replace(/^https?:\/\//, '')}
                             </span>
                             <span class="origin-stats">
-                              {detail.cookieCount} cookies &middot; {formatBytes(detail.cookieBytes + detail.storageBytes)}
+                              {$_('options.sessions.cookiesCount', { values: { count: detail.cookieCount } })} &middot; {formatBytes(detail.cookieBytes + detail.storageBytes)}
                             </span>
                             <button
                               class="auto-refresh-btn"
@@ -466,10 +472,10 @@
                               disabled={!globalAutoRefreshOn}
                               onclick={() => handleToggleDomainRefresh(session.id, detail.origin)}
                               title={!globalAutoRefreshOn
-                                ? 'Auto-refresh off globally (enable in Settings)'
+                                ? $_('options.sessions.autoRefreshOffGlobal')
                                 : isDomainRefreshOn(session.id, detail.origin)
-                                  ? 'Disable auto-refresh'
-                                  : 'Enable auto-refresh'}
+                                  ? $_('options.sessions.disableAutoRefresh')
+                                  : $_('options.sessions.enableAutoRefresh')}
                             >
                               <Icon name="refresh-cw" size={11} />
                             </button>
@@ -477,8 +483,8 @@
                               class="icon-btn danger sm"
                               onclick={() =>
                                 (originConfirm = { sessionId: session.id, origin: detail.origin })}
-                              title="Delete origin data"
-                              aria-label="Delete origin data"
+                              title={$_('options.sessions.deleteOriginData')}
+                              aria-label={$_('options.sessions.deleteOriginData')}
                             >
                               <Icon name="trash-2" size={11} />
                             </button>
@@ -492,9 +498,9 @@
                           <!-- Cookies -->
                           {#if detail.cookies.length > 0}
                             <details class="data-section">
-                              <summary>Cookies ({detail.cookies.length})</summary>
+                              <summary>{$_('options.sessions.cookiesLabel', { values: { count: detail.cookies.length } })}</summary>
                               <table class="data-table">
-                                <thead><tr><th>Name</th><th>Value</th><th>Domain</th><th></th></tr></thead>
+                                <thead><tr><th>{$_('options.sessions.name')}</th><th>{$_('options.sessions.value')}</th><th>{$_('options.sessions.domain')}</th><th></th></tr></thead>
                                 <tbody>
                                   {#each detail.cookies as cookie}
                                     <tr>
@@ -523,7 +529,7 @@
                                                 domain: cookie.domain,
                                                 value: cookie.value,
                                               })}
-                                            title="Double-click to edit"
+                                            title={$_('options.sessions.doubleClickEdit')}
                                           >
                                             {cookie.value.length > 40
                                               ? cookie.value.slice(0, 40) + '...'
@@ -537,8 +543,8 @@
                                           class="icon-btn danger xs"
                                           onclick={() =>
                                             handleDeleteCookie(session.id, detail.origin, cookie.name, cookie.domain)}
-                                          title="Delete cookie"
-                                          aria-label="Delete cookie"
+                                          title={$_('options.sessions.deleteCookie')}
+                                          aria-label={$_('options.sessions.deleteCookie')}
                                         >
                                           <Icon name="x" size={10} />
                                         </button>
@@ -553,9 +559,9 @@
                           <!-- localStorage -->
                           {#if Object.keys(detail.localStorage).length > 0}
                             <details class="data-section">
-                              <summary>localStorage ({Object.keys(detail.localStorage).length})</summary>
+                              <summary>{$_('options.sessions.localStorageLabel', { values: { count: Object.keys(detail.localStorage).length } })}</summary>
                               <table class="data-table">
-                                <thead><tr><th>Key</th><th>Value</th><th></th></tr></thead>
+                                <thead><tr><th>{$_('options.sessions.key')}</th><th>{$_('options.sessions.value')}</th><th></th></tr></thead>
                                 <tbody>
                                   {#each Object.entries(detail.localStorage) as [key, value]}
                                     <tr>
@@ -578,7 +584,7 @@
                                             class="editable"
                                             ondblclick={() =>
                                               (editingStorage = { sessionId: session.id, origin: detail.origin, type: 'localStorage', key, value })}
-                                            title="Double-click to edit"
+                                            title={$_('options.sessions.doubleClickEdit')}
                                           >
                                             {value.length > 40 ? value.slice(0, 40) + '...' : value}
                                           </span>
@@ -588,8 +594,8 @@
                                         <button
                                           class="icon-btn danger xs"
                                           onclick={() => handleDeleteStorage(session.id, detail.origin, 'localStorage', key)}
-                                          title="Delete entry"
-                                          aria-label="Delete entry"
+                                          title={$_('options.sessions.deleteEntry')}
+                                          aria-label={$_('options.sessions.deleteEntry')}
                                         >
                                           <Icon name="x" size={10} />
                                         </button>
@@ -604,9 +610,9 @@
                           <!-- sessionStorage -->
                           {#if Object.keys(detail.sessionStorage).length > 0}
                             <details class="data-section">
-                              <summary>sessionStorage ({Object.keys(detail.sessionStorage).length})</summary>
+                              <summary>{$_('options.sessions.sessionStorageLabel', { values: { count: Object.keys(detail.sessionStorage).length } })}</summary>
                               <table class="data-table">
-                                <thead><tr><th>Key</th><th>Value</th><th></th></tr></thead>
+                                <thead><tr><th>{$_('options.sessions.key')}</th><th>{$_('options.sessions.value')}</th><th></th></tr></thead>
                                 <tbody>
                                   {#each Object.entries(detail.sessionStorage) as [key, value]}
                                     <tr>
@@ -629,7 +635,7 @@
                                             class="editable"
                                             ondblclick={() =>
                                               (editingStorage = { sessionId: session.id, origin: detail.origin, type: 'sessionStorage', key, value })}
-                                            title="Double-click to edit"
+                                            title={$_('options.sessions.doubleClickEdit')}
                                           >
                                             {value.length > 40 ? value.slice(0, 40) + '...' : value}
                                           </span>
@@ -639,8 +645,8 @@
                                         <button
                                           class="icon-btn danger xs"
                                           onclick={() => handleDeleteStorage(session.id, detail.origin, 'sessionStorage', key)}
-                                          title="Delete entry"
-                                          aria-label="Delete entry"
+                                          title={$_('options.sessions.deleteEntry')}
+                                          aria-label={$_('options.sessions.deleteEntry')}
                                         >
                                           <Icon name="x" size={10} />
                                         </button>
@@ -667,9 +673,9 @@
 
 {#if confirmData}
   <ConfirmDialog
-    title="Delete Session"
-    message={'Delete "' + confirmData.session.name + '"? All data will be permanently removed.'}
-    confirmLabel="Delete"
+    title={$_('options.sessions.deleteTitle')}
+    message={$_('options.sessions.deleteMessage', { values: { name: confirmData.session.name } })}
+    confirmLabel={$_('common.delete')}
     danger={true}
     onconfirm={() => confirmData && executeDelete(confirmData.session.id)}
     oncancel={() => (confirmData = null)}
@@ -677,9 +683,9 @@
 {/if}
 {#if originConfirm}
   <ConfirmDialog
-    title="Delete Origin Data"
-    message={'Delete all saved data for ' + originConfirm.origin + '?'}
-    confirmLabel="Delete"
+    title={$_('options.sessions.deleteOriginTitle')}
+    message={$_('options.sessions.deleteOriginMessage', { values: { origin: originConfirm.origin } })}
+    confirmLabel={$_('common.delete')}
     danger={true}
     onconfirm={() =>
       originConfirm && handleDeleteOrigin(originConfirm.sessionId, originConfirm.origin)}

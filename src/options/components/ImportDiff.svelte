@@ -1,5 +1,11 @@
 <script lang="ts">
+  import { _ } from 'svelte-i18n';
+  import '@shared/i18n';
+  import { locale } from '@shared/i18n';
   import type { SessionProfile } from '@shared/types';
+
+  // Force re-render when locale changes
+  $effect(() => { void $locale; });
 
   interface DiffEntry {
     imported: SessionProfile;
@@ -51,16 +57,16 @@
 </script>
 
 <div class="import-diff">
-  <h3>Import Preview</h3>
-  <p class="summary">{imported.length} session(s) found, {selectedCount} selected for import</p>
+  <h3>{$_('options.data.importPreview')}</h3>
+  <p class="summary">{$_('options.data.sessionsFoundSelected', { values: { total: imported.length, selected: selectedCount } })}</p>
 
   <div class="diff-table">
     <div class="diff-header">
       <label class="checkbox-cell">
         <input type="checkbox" checked={entries.every((e) => e.selected)} onchange={toggleAll} />
       </label>
-      <span>Name</span>
-      <span>Status</span>
+      <span>{$_('options.data.name')}</span>
+      <span>{$_('options.data.status')}</span>
     </div>
     {#each entries as entry, _i}
       <div class="diff-row" class:dimmed={!entry.selected}>
@@ -71,15 +77,15 @@
           <span class="dot" style="background-color: {entry.imported.color}"></span>
           {entry.imported.name}
         </span>
-        <span class="status-badge {entry.status}">{entry.status}</span>
+        <span class="status-badge {entry.status}">{$_(`options.data.${entry.status}`)}</span>
       </div>
     {/each}
   </div>
 
   <div class="actions">
-    <button class="btn cancel" onclick={oncancel}>Cancel</button>
+    <button class="btn cancel" onclick={oncancel}>{$_('common.cancel')}</button>
     <button class="btn confirm" onclick={handleConfirm} disabled={selectedCount === 0}>
-      Import {selectedCount} session(s)
+      {$_('options.data.importSelected', { values: { count: selectedCount } })}
     </button>
   </div>
 </div>

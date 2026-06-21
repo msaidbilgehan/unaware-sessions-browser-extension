@@ -1,7 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Unaware Sessions",
-  "description": "Privacy-first multi-session browser manager - entirely local",
+  "name": "__MSG_extensionName__",
+  "description": "__MSG_extensionDescription__",
+  "default_locale": "en",
   "version": "1.1.0",
   "icons": {
     "16": "src/assets/icons/icon-16.png",
@@ -39,8 +40,12 @@
     "contextMenus",
     "declarativeNetRequest",
     "favicon",
-    "identity"
+    "identity",
+    "sidePanel"
   ],
+  "side_panel": {
+    "default_path": "src/popup/index.html"
+  },
   "oauth2": {
     "client_id": "678771882421-54gnhbimq736lvlqkgmsfnfj34eojcpf.apps.googleusercontent.com",
     "scopes": [
