@@ -35,6 +35,8 @@
     "newSession": "New Session",
     "settingsTooltip": "Settings",
     "webdavBackupTooltip": "Backup to WebDAV now",
+    "webdavRestoreTooltip": "Restore latest backup from WebDAV",
+    "webdavNoBackups": "No backups available on WebDAV",
     "noActiveTab": "No active tab",
     "noActiveSession": "No active session",
     "sessionDataUpdated": "Session data updated",

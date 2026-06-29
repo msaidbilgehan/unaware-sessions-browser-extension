@@ -35,6 +35,8 @@
     "newSession": "新建会话",
     "settingsTooltip": "设置",
     "webdavBackupTooltip": "WebDAV 立即备份",
+    "webdavRestoreTooltip": "从 WebDAV 恢复最新备份",
+    "webdavNoBackups": "WebDAV 上没有可用的备份",
     "noActiveTab": "无活跃标签页",
     "noActiveSession": "无活跃会话",
     "sessionDataUpdated": "会话数据已更新",
