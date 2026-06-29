@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **WebDAV 备份/恢复组件化：** 从 App.svelte 提取 `WebDavBackupButton` 和 `WebDavRestoreButton` 独立组件，遵循 ThemeToggle 自包含模式（内部状态管理 + props 回调）
+- **"从 WebDAV 恢复最新备份"按钮：** 点击后自动列出备份、按时间排序取最新、一键恢复
+- **WebDAV 多设备配置同步：** WebDAV 配置自动同步到 `storage.sync`，新增"从云端拉取"按钮读取跨设备配置
+- **WebDAV 数据导出优化：** 新增"数据导出"按钮，支持跳过 IndexedDB、屏蔽二进制、截断超长条目等数据处理策略
+- **Cookie 隔离模式与数据处理策略纳入 WebDAV 同步：** `extensionSettings` 和 `domainIsolationModes` 字段加入导出数据
+
+### Changed
+
+- **隐藏其他站点：** 简化 popup 站点列表展示
+
+### Fixed
+
+- **WebDAV 备份轮换：** 设置最大备份数后立即清理多余旧备份，修复分页删除后页码越界导致无数据的 bug
+
+---
+
 ## [1.1.0] - 2026-04-11
 
 ### Added
