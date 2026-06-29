@@ -44,6 +44,8 @@ export interface SyncManifest {
   checksums: Record<string, string>;
   sessionChecksums: Record<string, string>;
   siteConfigsHash?: string;
+  extensionSettingsHash?: string;
+  domainIsolationModesHash?: string;
 }
 
 // ── Encrypted Payload (stored on Drive) ────────────────────

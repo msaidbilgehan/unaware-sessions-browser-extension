@@ -9,7 +9,16 @@ import type {
 import { sha256Hex, encrypt, decrypt } from './crypto-engine';
 import { findFile, createFile, updateFile, downloadFile, getToken } from './drive-client';
 import { getSyncConfig, setSyncConfig } from './sync-store';
-import { getSettings } from '@shared/settings-store';
+import {
+  getSettings,
+  getDomainIsolationMap,
+  setIsolationModeDefault,
+  setDomainIsolationMode,
+  updateDataSettings,
+  setAutoRefreshInterval,
+  setAutoRefreshDefaultEnabled,
+  setLogLevel,
+} from '@shared/settings-store';
 import { STORAGE_KEYS } from '@shared/constants';
 import { listSessions, deleteAllSessions, batchSetSessions } from '@background/session-manager';
 import { cookieStore } from '@background/cookie-store';
@@ -67,6 +76,14 @@ export async function buildLocalManifest(
     ? await sha256Hex(JSON.stringify(data.siteConfigs))
     : undefined;
 
+  const extensionSettingsHash = data.extensionSettings
+    ? await sha256Hex(JSON.stringify(data.extensionSettings))
+    : undefined;
+
+  const domainIsolationModesHash = data.domainIsolationModes
+    ? await sha256Hex(JSON.stringify(data.domainIsolationModes))
+    : undefined;
+
   return {
     version: 1,
     updatedAt: Date.now(),
@@ -74,6 +91,8 @@ export async function buildLocalManifest(
     checksums,
     sessionChecksums,
     siteConfigsHash,
+    extensionSettingsHash,
+    domainIsolationModesHash,
   };
 }
 
@@ -219,6 +238,15 @@ export function mergeData(
     ...(localData.siteConfigs ?? {}),
   };
 
+  // Merge extension settings: local wins on conflicts
+  const mergedExtensionSettings = localData.extensionSettings ?? remoteData.extensionSettings;
+
+  // Merge domain isolation modes: key-by-key (domain) union. Local config wins on conflicts.
+  const mergedDomainIsolationModes = {
+    ...(remoteData.domainIsolationModes ?? {}),
+    ...(localData.domainIsolationModes ?? {}),
+  };
+
   return {
     version: 1,
     exportedAt: Date.now(),
@@ -226,6 +254,8 @@ export function mergeData(
     cookieSnapshots: mergedCookies,
     storageSnapshots: mergedStorage,
     siteConfigs: mergedSiteConfigs,
+    extensionSettings: mergedExtensionSettings,
+    domainIsolationModes: mergedDomainIsolationModes,
   };
 }
 
@@ -274,6 +304,27 @@ export async function applyFullData(data: FullExportData): Promise<void> {
   // Restore site customizations if present (optional field — older backups won't have it)
   if (data.siteConfigs && Object.keys(data.siteConfigs).length > 0) {
     await chrome.storage.local.set({ [STORAGE_KEYS.SITE_CONFIGS]: data.siteConfigs });
+  }
+
+  // Restore extension settings if present (optional field — older backups won't have it)
+  if (data.extensionSettings) {
+    const s = data.extensionSettings;
+    await setAutoRefreshInterval(s.autoRefreshInterval);
+    await setAutoRefreshDefaultEnabled(s.autoRefreshDefaultEnabled);
+    await setIsolationModeDefault(s.isolationModeDefault);
+    await setLogLevel(s.logLevel);
+    await updateDataSettings({
+      includeIndexedDB: s.includeIndexedDB,
+      maskBinaryValues: s.maskBinaryValues,
+      maxValueSize: s.maxValueSize,
+    });
+  }
+
+  // Restore per-domain isolation modes if present (optional field — older backups won't have it)
+  if (data.domainIsolationModes && Object.keys(data.domainIsolationModes).length > 0) {
+    for (const [domain, mode] of Object.entries(data.domainIsolationModes)) {
+      await setDomainIsolationMode(domain, mode);
+    }
   }
 }
 
@@ -377,6 +428,8 @@ export async function exportLocalData(options?: { skipFileData?: boolean }): Pro
     cookieSnapshots: processedCookies,
     storageSnapshots: processedStorage,
     siteConfigs,
+    extensionSettings: settings,
+    domainIsolationModes: getDomainIsolationMap(),
   };
 }
 
@@ -468,8 +521,10 @@ export async function executeSyncCycle(
     );
 
   const siteConfigsSame = localManifest.siteConfigsHash === remoteManifest.siteConfigsHash;
+  const extensionSettingsSame = localManifest.extensionSettingsHash === remoteManifest.extensionSettingsHash;
+  const domainIsolationModesSame = localManifest.domainIsolationModesHash === remoteManifest.domainIsolationModesHash;
 
-  if (allSame && sessionsSame && siteConfigsSame) {
+  if (allSame && sessionsSame && siteConfigsSame && extensionSettingsSame && domainIsolationModesSame) {
     log.info('Sync: no changes detected');
     await setSyncConfig({ lastSyncAt: Date.now(), lastSyncError: '' });
     return { status: 'idle', progress: '', conflicts: [] };

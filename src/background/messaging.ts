@@ -69,6 +69,7 @@ import {
   restoreFromWebDav,
   testSavedWebDavConnection,
 } from './webdav-sync';
+import { exportLocalData } from '@shared/sync/sync-engine';
 
 type MessageHandler = (
   message: Message,
@@ -419,6 +420,11 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
       siteConfigs,
     };
 
+    return { success: true, data };
+  },
+
+  [MessageType.EXPORT_DATA]: async () => {
+    const data = await exportLocalData();
     return { success: true, data };
   },
 

@@ -221,6 +221,10 @@ export function exportFull(): Promise<FullExportData> {
   return sendMessage({ type: MessageType.EXPORT_FULL });
 }
 
+export function exportData(): Promise<FullExportData> {
+  return sendMessage({ type: MessageType.EXPORT_DATA });
+}
+
 export function importFull(data: FullExportData): Promise<{ imported: number }> {
   return sendMessage({ type: MessageType.IMPORT_FULL, data });
 }

@@ -3,7 +3,7 @@
   import '@shared/i18n';
   import { locale } from '@shared/i18n';
   import type { SessionProfile, FullExportData } from '@shared/types';
-  import { createSession, deleteSession as deleteSessionApi, exportFull, importFull } from '@shared/api';
+  import { createSession, deleteSession as deleteSessionApi, exportFull, exportData, importFull } from '@shared/api';
   import ConfirmDialog from '@shared/components/ConfirmDialog.svelte';
   import AuthGate from '@shared/components/AuthGate.svelte';
   import { checkAuth } from '@shared/auth-check';
@@ -83,6 +83,28 @@
         const a = document.createElement('a');
         a.href = url;
         a.download = `unaware-sessions-full-${new Date().toISOString().slice(0, 10)}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        importError = `Export failed: ${err instanceof Error ? err.message : 'Unknown error'}`;
+      } finally {
+        fullExporting = false;
+      }
+    });
+  }
+
+  async function handleDataExport() {
+    await withAuth(async () => {
+      fullExporting = true;
+      importError = '';
+      try {
+        const data = await exportData();
+        const json = JSON.stringify(data, null, 2);
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `unaware-sessions-data-${new Date().toISOString().slice(0, 10)}.json`;
         a.click();
         URL.revokeObjectURL(url);
       } catch (err) {
@@ -251,11 +273,25 @@
           {$_('options.data.fullExport')}
         {/if}
       </button>
+      <button
+        class="btn primary"
+        onclick={handleDataExport}
+        disabled={sessions.length === 0 || fullExporting}
+      >
+        {#if fullExporting}
+          <span class="spinner"></span>
+          {$_('options.data.exporting')}
+        {:else}
+          <Icon name="database" size={14} />
+          {$_('options.data.dataExport')}
+        {/if}
+      </button>
     </div>
 
     <div class="export-hint">
       <p><strong>{$_('options.data.profilesOnly')}</strong> {$_('options.data.profilesHint')}</p>
       <p><strong>{$_('options.data.fullExport')}</strong> {$_('options.data.fullHint')}</p>
+      <p><strong>{$_('options.data.dataExport')}</strong> {$_('options.data.dataHint')}</p>
     </div>
   </section>
 

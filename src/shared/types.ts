@@ -219,6 +219,7 @@ export enum MessageType {
   // Import / Export (full)
   EXPORT_FULL = 'EXPORT_FULL',
   IMPORT_FULL = 'IMPORT_FULL',
+  EXPORT_DATA = 'EXPORT_DATA',
 
   // Debug
   GET_LIVE_COOKIES = 'GET_LIVE_COOKIES',
@@ -432,6 +433,16 @@ export interface FullExportData {
    * Optional for backward compatibility with older backups.
    */
   siteConfigs?: Record<string, { name?: string; iconUrl?: string }>;
+  /**
+   * Extension settings (isolation mode, auto-refresh, data processing, etc.)
+   * Optional for backward compatibility with older backups.
+   */
+  extensionSettings?: ExtensionSettings;
+  /**
+   * Per-domain isolation mode overrides.
+   * Optional for backward compatibility with older backups.
+   */
+  domainIsolationModes?: Record<string, IsolationMode>;
 }
 
 
@@ -442,6 +453,10 @@ export interface ExportFullMessage {
 export interface ImportFullMessage {
   type: MessageType.IMPORT_FULL;
   data: FullExportData;
+}
+
+export interface ExportDataMessage {
+  type: MessageType.EXPORT_DATA;
 }
 
 // ── Debug Messages ──────────────────────────────────────────────
@@ -645,6 +660,7 @@ export type Message =
   | RefreshActiveSessionsMessage
   | ExportFullMessage
   | ImportFullMessage
+  | ExportDataMessage
   | GetLiveCookiesMessage
   | GetCookieDiffMessage
   | GetRestoreFailuresMessage
