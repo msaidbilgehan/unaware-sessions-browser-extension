@@ -247,6 +247,7 @@ export enum MessageType {
   WEBDAV_LIST_BACKUPS = 'WEBDAV_LIST_BACKUPS',
   WEBDAV_RESTORE = 'WEBDAV_RESTORE',
   WEBDAV_DELETE_FILE = 'WEBDAV_DELETE_FILE',
+  WEBDAV_PRUNE_OLD_BACKUPS = 'WEBDAV_PRUNE_OLD_BACKUPS',
 }
 
 export interface CreateSessionMessage {
@@ -543,6 +544,10 @@ export interface WebDavDeleteFileMessage {
   fileName: string;
 }
 
+export interface WebDavPruneOldBackupsMessage {
+  type: MessageType.WEBDAV_PRUNE_OLD_BACKUPS;
+}
+
 export type CookieDiffStatus =
   | 'match'
   | 'value_changed'
@@ -659,7 +664,8 @@ export type Message =
   | WebDavConfigureMessage
   | WebDavListBackupsMessage
   | WebDavRestoreMessage
-  | WebDavDeleteFileMessage;
+  | WebDavDeleteFileMessage
+  | WebDavPruneOldBackupsMessage;
 
 // ── Response Wrapper ─────────────────────────────────────────────
 

@@ -9,6 +9,7 @@
     webDavListBackups,
     webDavRestore,
     webDavDeleteFile,
+    webDavPruneOldBackups,
   } from '@shared/api';
   import {
     getWebDavConfig,
@@ -180,6 +181,11 @@
       await webDavDeleteFile(file.fileName);
       syncToast = { message: $_('options.settings.webdavDeleteSucceeded'), type: 'success' };
       await loadWebDavBackups();
+      // Adjust page if current page exceeds total pages
+      const totalPages = Math.ceil(webDavBackups.length / 5);
+      if (webDavBackupPage > totalPages && totalPages > 0) {
+        webDavBackupPage = totalPages;
+      }
     } catch (err) {
       console.error('[WebDAV] Delete failed', err);
       syncToast = { message: $_('options.settings.webdavDeleteFailed', { values: { error: err instanceof Error ? err.message : String(err) } }), type: 'error' };
@@ -312,6 +318,15 @@
     webDavMaxBackups = maxBackups;
     await setWebDavConfig({ maxBackups });
     await refreshWebDavConfigFromStore();
+    // Immediately prune old backups when max backups changes
+    if (maxBackups > 0 && webDavCfg.enabled) {
+      try {
+        await webDavPruneOldBackups();
+        await loadWebDavBackups();
+      } catch (err) {
+        console.error('[WebDAV] Failed to prune old backups', err);
+      }
+    }
   }
 
   $effect(() => {

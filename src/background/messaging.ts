@@ -65,6 +65,7 @@ import {
   disconnectWebDav,
   getWebDavState,
   listWebDavBackups,
+  pruneOldBackups,
   restoreFromWebDav,
   testSavedWebDavConnection,
 } from './webdav-sync';
@@ -727,6 +728,11 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
   [MessageType.WEBDAV_DELETE_FILE]: async (msg) => {
     if (msg.type !== MessageType.WEBDAV_DELETE_FILE) return { success: false };
     await deleteWebDavBackup(msg.fileName);
+    return { success: true };
+  },
+
+  [MessageType.WEBDAV_PRUNE_OLD_BACKUPS]: async () => {
+    await pruneOldBackups();
     return { success: true };
   },
 

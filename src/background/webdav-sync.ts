@@ -132,7 +132,7 @@ export async function backupToWebDav(): Promise<WebDavState> {
     await putWebDavFile(toConnectionConfig(config), fileName, JSON.stringify(encrypted));
 
     if (config.maxBackups > 0) {
-      await pruneOldBackups(config);
+      await pruneOldBackupsInternal(config);
     }
 
     await setWebDavConfig({ lastSyncAt: Date.now(), lastSyncError: '' });
@@ -148,7 +148,13 @@ export async function backupToWebDav(): Promise<WebDavState> {
   return currentWebDavState;
 }
 
-async function pruneOldBackups(config: WebDavConfig): Promise<void> {
+export async function pruneOldBackups(config?: WebDavConfig): Promise<void> {
+  const cfg = config ?? getWebDavConfig();
+  if (!cfg.enabled || !cfg.host || cfg.maxBackups <= 0) return;
+  await pruneOldBackupsInternal(cfg);
+}
+
+async function pruneOldBackupsInternal(config: WebDavConfig): Promise<void> {
   const files = await listWebDavFiles(toConnectionConfig(config));
   const deviceToken = `.${config.deviceId || 'device'}.`;
   const backupFiles = files

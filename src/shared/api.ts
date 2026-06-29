@@ -316,3 +316,7 @@ export function webDavRestore(fileName: string): Promise<void> {
 export function webDavDeleteFile(fileName: string): Promise<void> {
   return sendMessage({ type: MessageType.WEBDAV_DELETE_FILE, fileName });
 }
+
+export function webDavPruneOldBackups(): Promise<void> {
+  return sendMessage({ type: MessageType.WEBDAV_PRUNE_OLD_BACKUPS });
+}
