@@ -7,6 +7,7 @@ import {
   isWebDavEnabled,
   onWebDavConfigChange,
   setWebDavConfig,
+  saveWebDavConfigToSync,
 } from '@shared/webdav/webdav-store';
 import {
   deleteWebDavFile,
@@ -78,6 +79,8 @@ export async function connectWebDav(
   try {
     await testWebDavConnection(toConnectionConfig(nextConfig));
     await setWebDavConfig({ enabled: true, lastSyncError: '' });
+    // Sync config to other devices via storage.sync
+    await saveWebDavConfigToSync();
     currentWebDavState = { status: 'idle', progress: '' };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

@@ -16,6 +16,7 @@
     initWebDavStore,
     onWebDavConfigChange,
     setWebDavConfig,
+    loadWebDavConfigFromSync,
   } from '@shared/webdav/webdav-store';
   import { testWebDavConnection } from '@shared/webdav/webdav-client';
   import type {
@@ -329,6 +330,26 @@
     }
   }
 
+  let webDavPulling = $state(false);
+
+  async function handleWebDavPullFromSync() {
+    webDavPulling = true;
+    try {
+      const success = await loadWebDavConfigFromSync();
+      if (success) {
+        await refreshWebDavConfigFromStore();
+        syncToast = { message: $_('options.settings.webdavPullSucceeded'), type: 'success' };
+      } else {
+        syncToast = { message: $_('options.settings.webdavPullEmpty'), type: 'info' };
+      }
+    } catch (err) {
+      console.error('[WebDAV] Failed to pull config from sync', err);
+      syncToast = { message: $_('options.settings.webdavPullFailed'), type: 'error' };
+    } finally {
+      webDavPulling = false;
+    }
+  }
+
   $effect(() => {
     if (webDavCfg.enabled) {
       refreshWebDavState();
@@ -532,6 +553,19 @@
       {:else}
         <Icon name="check" size={14} />
         {webDavCfg.enabled ? $_('options.settings.saveWebdav') : $_('options.settings.connectWebdav')}
+      {/if}
+    </button>
+    <button
+      class="security-text-btn"
+      onclick={handleWebDavPullFromSync}
+      disabled={webDavPulling}
+    >
+      {#if webDavPulling}
+        <span class="spinner-sm"></span>
+        {$_('common.loading')}
+      {:else}
+        <Icon name="cloud-download" size={14} />
+        {$_('options.settings.pullFromCloud')}
       {/if}
     </button>
     {#if webDavCfg.enabled}
