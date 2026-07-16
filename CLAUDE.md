@@ -26,12 +26,20 @@ Privacy-first, open-source browser extension for isolated browsing sessions with
 
 - **Fresh navigation on session switch** — uses `chrome.tabs.update({url})` for clean cookie state
 - **Origin-scoped cookie swap** — saves/clears/restores cookies strictly per-origin (including parent-domain cookies via domain hierarchy walk); no cross-domain cookies are saved or restored
-- **Cookie isolation modes** — `soft` (default) skips cookie clear/restore on domains where the target session has no saved data, preserving unrelated services; `strict` always clears cookies for full isolation even without target data
+- **Cookie isolation modes** — `soft` (default) skips cookie clear/restore on domains where the target session has no saved data, preserving unrelated services; the pass-through also *adopts* the live cookies + storage as the target session's snapshot so a fresh session has durable data immediately; `strict` always clears cookies for full isolation even without target data
+- **Capture-on-create** — `CREATE_SESSION` accepts an optional `captureTabId`; the background assigns the tab and snapshots its live cookies + DOM storage into the new session atomically (popup passes the active tab), so new sessions never sit empty until the next switch-away
+- **Event-driven auto-save** — session data is saved not only on switch-away but also when a tracked tab closes (cookies only — the jar outlives the tab), before cross-origin navigation unassigns, and ~1.5 s after a same-origin load completes (debounced per tab, captures post-login state); periodic alarm refresh defaults to ON (5 min) for fresh installs
+- **Idempotent session mutations** — `shared/api.ts` retries connection errors that can fire *after* a handler ran ("message port closed"), so CREATE/DUPLICATE carry a client-generated ID (retry returns the existing session) and DELETE of a missing session succeeds; never add a non-idempotent mutating message without an idempotency key
 - **Per-tab session switch mutex** — concurrent session switches on the same tab are serialized to prevent interleaved cookie operations
-- **Tab unassignment on cross-origin navigation** — when a tab navigates to a different origin, its session is automatically unassigned (session data belongs to the old origin; keeping it assigned on a new origin causes cross-domain confusion)
+- **Tab unassignment on cross-origin navigation** — when a tab navigates to a different origin, its session is automatically unassigned after its outgoing cookies are snapshotted (session data belongs to the old origin; keeping it assigned on a new origin causes cross-domain confusion)
+- **Sync deletion tombstones** — deleting a session records a tombstone (`sessionId → deletedAt`, 30-day retention); sync merge unions tombstones from both sides and drops sessions (and their snapshots) whose tombstone is newer than their `updatedAt`, so deletions propagate across devices instead of resurrecting; a profile edited after the deletion wins and clears the tombstone; `applyFullData` replaces (never re-records) tombstones
 - **IDB binary encoding** — content script encodes `ArrayBuffer`, `TypedArray`, and `Date` values into JSON-safe marker objects before `sendMessage` (Chrome extension messaging uses JSON serialization, not structured clone) and decodes them on restore
 - **Optional security layer** — 4-digit passcode (PBKDF2-SHA256, 600K iterations) and/or WebAuthn biometric (fingerprint/Face ID); client-side auth gate in popup/options before protected actions; configurable grace period (1–30 min) via `chrome.storage.session` auto-clears on browser close; biometric requires passcode as prerequisite for recoverability
-- **Opt-in encrypted Google Drive sync** — AES-256-GCM encryption with key derived from Google User ID (PBKDF2, 600K iterations); `drive.appdata` scope (hidden app folder, no access to user files); two Drive files: unencrypted manifest (checksums only) + encrypted payload; three merge strategies: trust-cloud, trust-local, ask (per-origin conflict picker); auto-sync via `chrome.alarms` at configurable intervals (Off/5m/15m/30m); same Google account on any device = same encryption key = cross-device sync; decryption failures auto-recover by overwriting remote with local data
+- **Opt-in encrypted Google Drive sync** — AES-256-GCM encryption with key derived from Google User ID (PBKDF2, 600K iterations); `drive.appdata` scope (hidden app folder, no access to user files); two Drive files: unencrypted manifest (checksums only) + encrypted payload; three merge strategies: trust-cloud, trust-local, ask (per-origin conflict picker); auto-sync via `chrome.alarms` at configurable intervals (Off/5m/15m/30m); same Google account on any device = same encryption key = cross-device sync; unreadable remote (undecryptable *or* unparseable, manifest or payload) auto-recovers by overwriting remote with local data
+- **Payload-first commit ordering** — every upload path writes the encrypted payload first and the manifest last (the manifest is the commit marker and embeds the payload's SHA-256); a crash mid-write can only leave an old manifest describing old data (healed next sync), never a new manifest pointing at a stale payload (which trust-cloud would apply as data loss); on download, a manifest/payload checksum mismatch means the payload is newer, so the manifest is rebuilt from the authenticated payload
+- **Serialized sync cycles** — the entire cycle runs behind one in-flight promise shared by manual sync and conflict resolution (`drive-sync.ts`): concurrent `triggerSync` calls coalesce, `resolveConflicts` queues behind a running cycle, and the auto-sync alarm skips while a conflict dialog is open, so `applyFullData` (delete-all → batch-set → snapshot writes) never races itself; the remote snapshot from conflict detection is cached and reused for the resolution cycle, version-guarded so a newer remote re-downloads and re-prompts instead of applying resolutions to stale data
+- **Optimistic concurrency across devices** — Drive API v3 has no ETag/`If-Match`, so uploads re-read each file's monotonic `version` immediately before writing and abort with `SyncConcurrencyError` (one-shot retry against fresh remote) on a mismatch; `findFile` also collapses duplicate same-named `appDataFolder` files (keeps oldest, deletes extras) to prevent split-brain sync when two devices first-sync concurrently
+- **Sync-store lazy hydration** — `sync-store.ts` uses the same ensure-hydrated shared-load-promise pattern as `session-manager.ts`; every getter/setter reachable from an alarm or message (`getSyncConfigHydrated`, `setSyncConfig`, `ensureSyncStoreHydrated`) awaits hydration first, so a cold service worker woken by the sync alarm or a `SYNC_*` message reads the persisted config rather than the disabled default (which would no-op auto-sync or wipe the connection on `SYNC_CONFIGURE`)
 - **One active session per origin at a time** — DOM storage is shared per-origin across all tabs
 - **MV3 only** — no MV2 support, no persistent background page
 - **Service Worker state must survive restarts** — persist to `chrome.storage.session` / `chrome.storage.local` / extension IndexedDB
@@ -67,7 +75,7 @@ npm run release:major # Major version bump + push tags
 - **No external network calls** — zero analytics or telemetry; the only network calls are opt-in Google Drive sync (user-initiated, encrypted)
 - **Content scripts run at `document_start`** — critical for storage isolation before page scripts execute
 - **CSS custom properties** — all colors, spacing, radii, shadows use design tokens from `theme.css`
-- **Shared API layer** — `src/shared/api.ts` is the single source for popup/options to communicate with the service worker; retries once (200 ms delay) on MV3 service worker wake-up connection errors before surfacing to callers
+- **Shared API layer** — `src/shared/api.ts` is the single source for popup/options to communicate with the service worker; retries once (200 ms delay) on MV3 service worker wake-up connection errors before surfacing to callers; mutating operations are made retry-safe with client-generated IDs (see Idempotent session mutations)
 - **Soft isolation by default** — cookie isolation defaults to `soft` mode (skip clear/restore on unmanaged domains); configurable per-domain or globally via settings
 - **Per-tab concurrency mutex** — `switchSession` serializes concurrent switches on the same tab to prevent interleaved cookie operations
 - **Restore failure ring buffer** — `cookie-engine.ts` records the last 200 cookie restoration failures for debug inspection via the Debug tab
@@ -84,17 +92,17 @@ npm run release:major # Major version bump + push tags
 
 ### Background (`src/background/`)
 
-- `session-manager.ts` — session CRUD, ordering, duplicate, batch upsert for sync
-- `cookie-engine.ts` — cookie swap orchestration (save, clear, restore, switch) with origin-scoped domain-hierarchy cookie resolution, DOM storage save/restore, pending restores, per-tab switch mutex, soft/strict isolation mode, and restore failure tracking (ring buffer)
+- `session-manager.ts` — session CRUD (idempotent create/delete via client IDs), ordering, duplicate, batch upsert for sync, deletion tombstones (record/prune/get/set)
+- `cookie-engine.ts` — cookie swap orchestration (save, clear, restore, switch) with origin-scoped domain-hierarchy cookie resolution, DOM storage save/restore, pending restores, per-tab switch mutex, soft/strict isolation mode with pass-through adoption, `captureTabIntoSession` for capture-on-create, and restore failure tracking (ring buffer)
 - `cookie-store.ts` — IndexedDB wrapper for cookie snapshots + stats
 - `storage-store.ts` — IndexedDB wrapper for storage snapshots + stats
-- `tab-tracker.ts` — tab-to-session mapping with persistence; unassigns sessions on cross-origin tab navigation
+- `tab-tracker.ts` — tab-to-session mapping with persistence (incl. cookie `storeId`); event-driven auto-save: snapshots cookies on tab close and before cross-origin unassign, debounced cookie+storage save after same-origin load completes
 - `dnr-manager.ts` — declarativeNetRequest session rules with origin-scoped cookie header filtering
 - `messaging.ts` — message router (all MessageType handlers)
 - `badge-manager.ts` — tab badge with session color + abbreviation
 - `context-menu.ts` — "Open in Session" right-click menu
 - `auto-refresh.ts` — alarm-driven periodic session data refresh for all tracked tabs
-- `drive-sync.ts` — Google Drive sync orchestration: alarm-based auto-sync, sync triggers, conflict resolution
+- `drive-sync.ts` — Google Drive sync orchestration: alarm-based auto-sync, sync triggers, conflict resolution; single in-flight-promise mutex serializes all cycles (coalesces triggers, queues resolutions, alarm skips during open conflict), version-guarded remote-data cache for the resolution cycle, one-shot retry on `SyncConcurrencyError`
 
 ### Shared (`src/shared/`)
 
@@ -102,9 +110,9 @@ npm run release:major # Major version bump + push tags
 - `api.ts` — typed message wrappers for popup/options (createSession, switchSession, getSessionStats, exportFull, importFull, sync APIs, debug APIs, etc.)
 - `sync/sync-types.ts` — sync type definitions (SyncConfig, SyncState, ConflictEntry, SyncManifest, EncryptedPayload)
 - `sync/crypto-engine.ts` — AES-256-GCM encrypt/decrypt, PBKDF2 key derivation, SHA-256 checksums
-- `sync/drive-client.ts` — Google Drive REST API v3 wrapper (appDataFolder); token management, 401 retry, file CRUD, Google User ID fetch
-- `sync/sync-store.ts` — SyncConfig persistence + listeners (follows settings-store pattern)
-- `sync/sync-engine.ts` — core sync orchestrator: manifest building, conflict detection, data merging, encrypted upload/download
+- `sync/drive-client.ts` — Google Drive REST API v3 wrapper (appDataFolder); token management, 401 retry, file CRUD, Google User ID fetch; `findFile` returns a `DriveFileRef` (id + `version`) and deduplicates same-named files (keep oldest, delete extras); `getFileVersion`/`deleteFile` support optimistic concurrency
+- `sync/sync-store.ts` — SyncConfig persistence + listeners (follows settings-store pattern); lazy ensure-hydrated pattern (`ensureSyncStoreHydrated`, `getSyncConfigHydrated`) so alarm/message entry points on a cold SW read the persisted config
+- `sync/sync-engine.ts` — core sync orchestrator: manifest building (with `payloadChecksum` commit marker), conflict detection, data merging (tombstone-aware, newer-`updatedAt` profile wins), payload-first encrypted upload/download, `SyncConcurrencyError` + `RemoteDataCache` for cross-device safety
 - `theme.css` — CSS custom properties design system (light/dark tokens, spacing, radii, shadows)
 - `theme-store.ts` — theme preference manager (light/dark/system with chrome.storage persistence)
 - `settings-store.ts` — extension settings manager (auto-refresh interval, domain preferences, per-domain isolation mode overrides, log level, listener pattern)
@@ -144,7 +152,7 @@ Before marking any task complete, run in this order:
 ```bash
 npm run type-check   # TypeScript — zero errors required
 npm run lint         # ESLint — zero violations required
-npm run test         # Vitest — all 467+ tests must pass
+npm run test         # Vitest — all 509+ tests must pass
 ```
 
 Test files live in `tests/` mirroring `src/` structure (`*.test.ts`). Add tests for new background/shared logic; Svelte component tests are not required but encouraged for non-trivial state.

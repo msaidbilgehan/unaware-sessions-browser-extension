@@ -81,6 +81,7 @@ Unaware Sessions fills the gap: lightweight session isolation that works inside 
 - Per-session storage usage dashboard
 - Search/filter by session name or associated domain
 - Auto-refresh for tracked tabs at a configurable interval (globally or per-domain)
+- Automatic session capture — new sessions snapshot the current tab immediately; data auto-saves on tab close, cross-origin navigation, and after page loads
 - Right-click context menu on sessions (rename, duplicate, pin, delete)
 
 ### UI & Accessibility
@@ -119,7 +120,8 @@ Unaware Sessions fills the gap: lightweight session isolation that works inside 
 - Uses `drive.appdata` scope — hidden app folder only, cannot access user files
 - Three merge strategies: Trust Cloud, Trust Local, Ask (per-origin conflict picker)
 - Configurable auto-sync interval (Off / 5m / 15m / 30m) via `chrome.alarms`
-- Decryption failures auto-recover by overwriting remote with local data
+- Unreadable remote data (undecryptable or corrupt) auto-recovers by overwriting remote with local data
+- Cross-device safe — atomic commit ordering and optimistic concurrency guard against data loss when two devices sync at once
 - Connect/disconnect from Settings → Cloud Sync card
 
 ### Privacy
@@ -243,7 +245,7 @@ Switch between isolated sessions on any site. Each session maintains its own coo
 | Styling | CSS custom properties | Design system tokens with light/dark themes |
 | Security | Web Crypto (PBKDF2-SHA256) + WebAuthn | Passcode hashing, biometric auth |
 | Optional Sync | Google Drive REST v3 (`drive.appdata`) + Web Crypto (AES-256-GCM) | Opt-in encrypted session sync |
-| Testing | Vitest + fake-indexeddb | Unit tests with Chrome API mocks (467+ tests) |
+| Testing | Vitest + fake-indexeddb | Unit tests with Chrome API mocks (509+ tests) |
 | Linting | ESLint + Prettier | Code quality |
 
 ---
@@ -445,7 +447,7 @@ npm run test:watch
 npm run test:coverage
 ```
 
-Tests use **Vitest** with Chrome API mocks (defined in `tests/setup.ts`) and `fake-indexeddb` for IndexedDB testing. Coverage is tracked via v8. The test suite covers background services, shared utilities, content scripts, settings, security, sync engine, Drive client, and API layer (467+ tests across 29 test files, 85%+ statement coverage).
+Tests use **Vitest** with Chrome API mocks (defined in `tests/setup.ts`) and `fake-indexeddb` for IndexedDB testing. Coverage is tracked via v8. The test suite covers background services, shared utilities, content scripts, settings, security, sync engine, Drive client, and API layer (509+ tests across 30 test files, 85%+ statement coverage).
 
 ---
 

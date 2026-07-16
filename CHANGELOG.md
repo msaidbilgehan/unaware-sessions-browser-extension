@@ -6,6 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **Duplicate sessions from message retries:** `CREATE_SESSION` and `DUPLICATE_SESSION` now carry a client-generated ID (idempotency key). The API layer's connection-error retry ("message port closed" can fire after the handler already ran) previously created a second identical session
+- **Duplicate sessions from double-submit:** NewSessionForm ignores Enter key-repeat and disables itself while a create is in flight; popup `handleCreate` adds an in-flight guard
+- **Deleted sessions resurrecting via Drive sync:** sync merge now propagates deletions with tombstones (`deletedSessions` in the sync payload, backward compatible) instead of blindly union-merging profiles; a session edited *after* its deletion elsewhere survives (edit wins); snapshots of deleted sessions are purged from the merged payload; profile conflicts resolve by newer `updatedAt` instead of always-local
+- **Stale-state resurrection after service-worker wake:** `hydrateSessions`/`hydrateTabMap` now share one load promise with message handlers, so a concurrent hydration can no longer overwrite an interleaved create/delete with stale data
+- **`DELETE_SESSION` retry errors:** deleting an already-deleted session now succeeds (idempotent) instead of surfacing "Session not found"
+- **Auto-sync silently dead on a cold service worker:** `sync-store` now hydrates lazily (shared load promise, matching `session-manager`), so the sync alarm and `SYNC_*` messages that wake a dormant SW read the real config instead of the disabled default; previously scheduled auto-sync only ran when the SW happened to already be awake
+- **Silent Drive disconnect from `SYNC_CONFIGURE`:** changing merge strategy or interval no longer wipes `enabled`/`googleId`/`deviceId` when the message itself woke the SW — `setSyncConfig` merges onto the persisted config, never the un-hydrated default
+- **Corrupt remote file bricking sync forever:** an unparseable manifest is treated as absent (re-uploaded and healed) and the payload `JSON.parse` moved inside the decrypt auto-recovery path, so a truncated file self-heals instead of failing every future sync with the same parse error
+- **Non-atomic two-file upload causing data loss:** all upload paths now write the encrypted payload first and the manifest last (the manifest is the commit marker) and embed the payload's SHA-256 so a downloader can detect and rebuild from a stale manifest; a crash between writes no longer leaves another device applying a stale payload as truth under trust-cloud
+- **Interleaved sync cycles corrupting local state:** the whole cycle is serialized behind one in-flight promise shared by manual sync and conflict resolution; the alarm skips while a conflict dialog is open, preventing concurrent `applyFullData` runs (delete-all → batch-set → snapshot writes) from racing
+- **Conflict resolutions applied against the wrong snapshot:** the remote data detected during a conflict is cached and reused for the resolution cycle (version-guarded — a mismatch re-downloads and re-prompts), so resolutions no longer silently default to "local" against a newer remote
+- **Split-brain sync from duplicate Drive files:** `findFile` now lists all same-named matches, keeps the oldest deterministically, and deletes the extras, so two devices' concurrent first-sync no longer diverge into two universes
+- **Lost writes from concurrent devices:** uploads re-check each file's Drive `version` immediately before writing and abort with a one-shot retry against fresh remote state on a mismatch (optimistic concurrency; Drive API v3 has no `If-Match`)
+
+### Added
+
+- **Capture-on-create:** creating a session from the popup snapshots the current tab's cookies + DOM storage into the new session immediately (new optional `captureTabId` on `CREATE_SESSION`); previously the session stayed empty until the next switch-away and lost the data if the tab or browser closed first
+- **Adopt-on-pass-through:** switching to a session with no data for the origin (soft mode) snapshots the live state into the target session instead of leaving it empty
+- **Event-driven auto-save:** session data is now saved when a tracked tab closes (cookies from the jar), before cross-origin navigation unassigns the session, and ~1.5s after a same-origin page load completes (debounced, captures post-login state)
+- **`TabSessionEntry.storeId`:** cookie store captured at assign time so cookies can still be saved after the tab is gone (incognito-correct)
+- **Deletion tombstones:** recorded on session delete (30-day retention, pruned automatically), included in full export and sync payloads
+- **New tests:** Sync-cycle integration suite (`sync-engine-cycle.test.ts`) covering payload-first upload ordering, `SyncConcurrencyError` retry, and tombstone merge; expanded sync, session-manager, tab-tracker, messaging, and API suites for the fixes above (509 total)
+
+### Changed
+
+- **Auto-refresh defaults to ON** (5-minute interval, per-domain enabled) for fresh installs; existing stored settings are unchanged
+
 ## [1.1.0] - 2026-04-11
 
 ### Added
