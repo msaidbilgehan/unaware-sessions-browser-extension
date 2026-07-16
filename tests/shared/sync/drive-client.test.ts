@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { resetChromeMocks, mockChrome } from '../../setup';
-import { getToken, findFile, createFile, updateFile, downloadFile, revokeAccess, getGoogleUserId } from '@shared/sync/drive-client';
+import { getToken, findFile, createFile, updateFile, downloadFile, deleteFile, getFileVersion, revokeAccess, getGoogleUserId } from '@shared/sync/drive-client';
 
 // Mock fetch globally
 const mockFetch = vi.fn();
@@ -29,19 +29,24 @@ describe('drive-client', () => {
   });
 
   describe('findFile', () => {
-    it('returns file ID when found', async () => {
+    it('returns file ref (id + version) when found', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve({ files: [{ id: 'file-abc' }] }),
+        json: () => Promise.resolve({ files: [{ id: 'file-abc', version: '7' }] }),
       });
 
-      const id = await findFile('token', 'manifest.json');
-      expect(id).toBe('file-abc');
+      const ref = await findFile('token', 'manifest.json');
+      expect(ref).toEqual({ id: 'file-abc', version: '7' });
       expect(mockFetch).toHaveBeenCalledWith(
         expect.stringContaining('spaces=appDataFolder'),
         expect.objectContaining({
           headers: expect.objectContaining({ Authorization: 'Bearer token' }),
         }),
+      );
+      // Deterministic pick requires a stable listing order
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('orderBy=createdTime'),
+        expect.any(Object),
       );
     });
 
@@ -51,8 +56,95 @@ describe('drive-client', () => {
         json: () => Promise.resolve({ files: [] }),
       });
 
-      const id = await findFile('token', 'nonexistent.json');
-      expect(id).toBeNull();
+      const ref = await findFile('token', 'nonexistent.json');
+      expect(ref).toBeNull();
+    });
+
+    it('keeps the oldest file and deletes duplicates', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              files: [
+                { id: 'oldest', version: '3' },
+                { id: 'dup-1', version: '1' },
+                { id: 'dup-2', version: '1' },
+              ],
+            }),
+        })
+        // Two DELETE calls for the duplicates
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) })
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) });
+
+      const ref = await findFile('token', 'manifest.json');
+      expect(ref).toEqual({ id: 'oldest', version: '3' });
+
+      const deleteCalls = mockFetch.mock.calls.filter(
+        ([, init]) => (init as RequestInit | undefined)?.method === 'DELETE',
+      );
+      expect(deleteCalls).toHaveLength(2);
+      expect(deleteCalls[0][0]).toContain('files/dup-1');
+      expect(deleteCalls[1][0]).toContain('files/dup-2');
+    });
+
+    it('still returns the kept file when duplicate deletion fails', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              files: [
+                { id: 'oldest', version: '2' },
+                { id: 'dup-1', version: '1' },
+              ],
+            }),
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 403,
+          text: () => Promise.resolve('Forbidden'),
+        });
+
+      const ref = await findFile('token', 'manifest.json');
+      expect(ref).toEqual({ id: 'oldest', version: '2' });
+    });
+  });
+
+  describe('deleteFile', () => {
+    it('issues DELETE for the file', async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) });
+
+      await deleteFile('token', 'file-9');
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('files/file-9'),
+        expect.objectContaining({ method: 'DELETE' }),
+      );
+    });
+  });
+
+  describe('getFileVersion', () => {
+    it('returns the current version string', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ version: '42' }),
+      });
+
+      const version = await getFileVersion('token', 'file-1');
+      expect(version).toBe('42');
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('fields=version'),
+        expect.any(Object),
+      );
+    });
+
+    it('throws when version metadata is missing', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({}),
+      });
+
+      await expect(getFileVersion('token', 'file-1')).rejects.toThrow('no version');
     });
   });
 
@@ -155,14 +247,14 @@ describe('drive-client', () => {
         }
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({ files: [{ id: 'retry-file' }] }),
+          json: () => Promise.resolve({ files: [{ id: 'retry-file', version: '1' }] }),
         });
       });
 
       mockChrome.identity.getAuthToken.mockResolvedValue({ token: 'refreshed-token' });
 
-      const id = await findFile('expired-token', 'test.json');
-      expect(id).toBe('retry-file');
+      const ref = await findFile('expired-token', 'test.json');
+      expect(ref).toEqual({ id: 'retry-file', version: '1' });
       expect(callCount).toBe(2);
       expect(mockChrome.identity.removeCachedAuthToken).toHaveBeenCalled();
     });

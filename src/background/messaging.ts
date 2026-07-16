@@ -16,6 +16,8 @@ import {
   updateSession,
   duplicateSession,
   touchSessionRefresh,
+  getSessionTombstones,
+  pruneTombstones,
 } from './session-manager';
 import {
   getTabEntry,
@@ -34,6 +36,7 @@ import {
   getCookiesForOrigin,
   getRestoreFailures,
   getCookieStoreIdForTab,
+  captureTabIntoSession,
 } from './cookie-engine';
 import { rebuildContextMenu } from './context-menu';
 import { updateBadge } from './badge-manager';
@@ -51,12 +54,8 @@ import type {
 import { refreshAllActiveSessions } from './auto-refresh';
 import { getLogs, clearLogs } from '@shared/logger';
 import { getToken, revokeAccess, getGoogleUserId } from '@shared/sync/drive-client';
-import { getSyncConfig, setSyncConfig } from '@shared/sync/sync-store';
-import {
-  triggerSync,
-  getSyncState,
-  resolveConflicts,
-} from './drive-sync';
+import { getSyncConfigHydrated, setSyncConfig } from '@shared/sync/sync-store';
+import { triggerSync, getSyncState, resolveConflicts } from './drive-sync';
 
 type MessageHandler = (
   message: Message,
@@ -66,7 +65,15 @@ type MessageHandler = (
 const handlers: Partial<Record<MessageType, MessageHandler>> = {
   [MessageType.CREATE_SESSION]: async (msg) => {
     if (msg.type !== MessageType.CREATE_SESSION) return { success: false };
-    const session = await createSession(msg.name, msg.color, msg.emoji);
+    const session = await createSession(msg.name, msg.color, msg.emoji, msg.id);
+    // Capture is best-effort: the session exists either way, and a failed
+    // capture (tab closed meanwhile, non-http page) must not fail creation.
+    if (msg.captureTabId != null) {
+      const captured = await captureTabIntoSession(msg.captureTabId, session.id);
+      if (captured) {
+        await updateBadge(msg.captureTabId);
+      }
+    }
     await rebuildContextMenu();
     return { success: true, data: session };
   },
@@ -108,7 +115,8 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
 
   [MessageType.ASSIGN_TAB]: async (msg) => {
     if (msg.type !== MessageType.ASSIGN_TAB) return { success: false };
-    await assignTab(msg.tabId, msg.sessionId, msg.origin);
+    const storeId = await getCookieStoreIdForTab(msg.tabId);
+    await assignTab(msg.tabId, msg.sessionId, msg.origin, storeId);
     await updateBadge(msg.tabId);
     return { success: true };
   },
@@ -190,7 +198,7 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
 
   [MessageType.DUPLICATE_SESSION]: async (msg) => {
     if (msg.type !== MessageType.DUPLICATE_SESSION) return { success: false };
-    const session = await duplicateSession(msg.sessionId);
+    const session = await duplicateSession(msg.sessionId, msg.newId);
     await rebuildContextMenu();
     return { success: true, data: session };
   },
@@ -386,9 +394,10 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
     const sessions = await listSessions();
 
     // Collect all cookie + storage snapshots for every session in parallel
-    const [cookieResults, storageResults] = await Promise.all([
+    const [cookieResults, storageResults, tombstones] = await Promise.all([
       Promise.all(sessions.map((s) => cookieStore.getAllSnapshotsForSession(s.id))),
       Promise.all(sessions.map((s) => storageStore.getAllSnapshotsForSession(s.id))),
+      getSessionTombstones(),
     ]);
 
     const cookieSnapshots: CookieSnapshot[] = cookieResults.flat();
@@ -400,6 +409,7 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
       sessions,
       cookieSnapshots,
       storageSnapshots,
+      deletedSessions: pruneTombstones(tombstones),
     };
 
     return { success: true, data };
@@ -619,7 +629,9 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
   [MessageType.SYNC_CONNECT]: async () => {
     const token = await getToken(true);
     const googleId = await getGoogleUserId(token);
-    const config = getSyncConfig();
+    // Hydrated read: if this message woke a dormant SW, the in-memory config
+    // is still the default and a plain read would regenerate the device ID.
+    const config = await getSyncConfigHydrated();
     const deviceId = config.deviceId || generateId();
     await setSyncConfig({ enabled: true, deviceId, googleId, lastSyncError: '' });
     return { success: true };
@@ -627,7 +639,13 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
 
   [MessageType.SYNC_DISCONNECT]: async () => {
     await revokeAccess();
-    await setSyncConfig({ enabled: false, lastSyncAt: 0, lastSyncError: '', deviceId: '', googleId: '' });
+    await setSyncConfig({
+      enabled: false,
+      lastSyncAt: 0,
+      lastSyncError: '',
+      deviceId: '',
+      googleId: '',
+    });
     return { success: true };
   },
 

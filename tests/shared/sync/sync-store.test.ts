@@ -2,9 +2,11 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { resetChromeMocks, mockChrome } from '../../setup';
 import {
   getSyncConfig,
+  getSyncConfigHydrated,
   isSyncEnabled,
   setSyncConfig,
   onSyncConfigChange,
+  ensureSyncStoreHydrated,
   initSyncStore,
   resetSyncStoreInit,
 } from '@shared/sync/sync-store';
@@ -29,6 +31,61 @@ describe('sync-store', () => {
       await initSyncStore();
       expect(getSyncConfig().enabled).toBe(true);
       expect(getSyncConfig().deviceId).toBe('test-device');
+    });
+  });
+
+  describe('lazy hydration (cold service worker)', () => {
+    it('getSyncConfigHydrated loads persisted config without an explicit initSyncStore', async () => {
+      // Simulate a cold SW: config exists in storage but the in-memory store
+      // was never initialized (initSyncStore hasn't run yet).
+      const stored = { ...DEFAULT_SYNC_CONFIG, enabled: true, googleId: 'g-1', deviceId: 'd-1' };
+      mockChrome.storage.local._store.set(STORAGE_KEYS.SYNC_CONFIG, stored);
+
+      const config = await getSyncConfigHydrated();
+      expect(config.enabled).toBe(true);
+      expect(config.googleId).toBe('g-1');
+    });
+
+    it('setSyncConfig merges onto persisted config, not the un-hydrated default', async () => {
+      // A SYNC_CONFIGURE that WAKES the SW must not wipe enabled/googleId.
+      const stored = {
+        ...DEFAULT_SYNC_CONFIG,
+        enabled: true,
+        googleId: 'g-1',
+        deviceId: 'd-1',
+        mergeStrategy: 'ask' as const,
+      };
+      mockChrome.storage.local._store.set(STORAGE_KEYS.SYNC_CONFIG, stored);
+
+      // No initSyncStore() first — this is the only call on a fresh worker.
+      await setSyncConfig({ mergeStrategy: 'trust-cloud' });
+
+      const persisted = mockChrome.storage.local._store.get(
+        STORAGE_KEYS.SYNC_CONFIG,
+      ) as typeof stored;
+      expect(persisted.mergeStrategy).toBe('trust-cloud');
+      // Critical: the connection survives — not clobbered to defaults.
+      expect(persisted.enabled).toBe(true);
+      expect(persisted.googleId).toBe('g-1');
+      expect(persisted.deviceId).toBe('d-1');
+    });
+
+    it('ensureSyncStoreHydrated shares one load promise across concurrent callers', async () => {
+      mockChrome.storage.local._store.set(STORAGE_KEYS.SYNC_CONFIG, {
+        ...DEFAULT_SYNC_CONFIG,
+        enabled: true,
+      });
+      mockChrome.storage.local.get.mockClear();
+
+      await Promise.all([
+        ensureSyncStoreHydrated(),
+        ensureSyncStoreHydrated(),
+        ensureSyncStoreHydrated(),
+      ]);
+
+      // A single shared promise means storage is read once, not per caller.
+      expect(mockChrome.storage.local.get).toHaveBeenCalledTimes(1);
+      expect(isSyncEnabled()).toBe(true);
     });
   });
 

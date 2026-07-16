@@ -93,12 +93,85 @@ describe('messaging', () => {
 
   it('handles errors in handlers gracefully', async () => {
     const response = await sendTestMessage({
-      type: MessageType.DELETE_SESSION,
+      type: MessageType.UPDATE_SESSION,
       sessionId: 'non-existent',
+      updates: { name: 'renamed' },
     });
 
     expect(response.success).toBe(false);
     expect(response.error).toContain('Session not found');
+  });
+
+  it('DELETE_SESSION succeeds for a non-existent session (retry-safe)', async () => {
+    const response = await sendTestMessage({
+      type: MessageType.DELETE_SESSION,
+      sessionId: 'non-existent',
+    });
+
+    expect(response.success).toBe(true);
+  });
+
+  it('CREATE_SESSION with the same client ID creates only one session', async () => {
+    const first = await sendTestMessage({
+      type: MessageType.CREATE_SESSION,
+      id: 'client-generated-id',
+      name: 'test',
+      color: '#3B82F6',
+    });
+    const retry = await sendTestMessage({
+      type: MessageType.CREATE_SESSION,
+      id: 'client-generated-id',
+      name: 'test',
+      color: '#3B82F6',
+    });
+
+    expect(first.success).toBe(true);
+    expect(retry.success).toBe(true);
+    expect((retry.data as { id: string }).id).toBe('client-generated-id');
+
+    const listResp = await sendTestMessage({ type: MessageType.LIST_SESSIONS });
+    expect(listResp.data).toHaveLength(1);
+  });
+
+  it('CREATE_SESSION with captureTabId attaches the tab and snapshots its state', async () => {
+    (chrome.tabs.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 7,
+      url: 'https://capture.example/page',
+    });
+    (chrome.cookies.getAll as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    const createResp = await sendTestMessage({
+      type: MessageType.CREATE_SESSION,
+      name: 'captured',
+      color: '#3B82F6',
+      captureTabId: 7,
+    });
+    expect(createResp.success).toBe(true);
+    const sessionId = (createResp.data as { id: string }).id;
+
+    // Tab is assigned to the new session
+    const entryResp = await sendTestMessage({ type: MessageType.GET_SESSION_FOR_TAB, tabId: 7 });
+    expect(entryResp.data).toMatchObject({
+      sessionId,
+      origin: 'https://capture.example',
+    });
+
+    // A cookie snapshot exists for the tab's origin
+    const snapshot = await cookieStore.load(sessionId, 'https://capture.example');
+    expect(snapshot).toBeTruthy();
+  });
+
+  it('CREATE_SESSION still succeeds when the capture tab is gone', async () => {
+    (chrome.tabs.get as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('No tab with id'));
+
+    const createResp = await sendTestMessage({
+      type: MessageType.CREATE_SESSION,
+      name: 'tab-gone',
+      color: '#3B82F6',
+      captureTabId: 999,
+    });
+
+    expect(createResp.success).toBe(true);
   });
 
   it('handles UPDATE_SESSION', async () => {

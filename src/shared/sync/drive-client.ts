@@ -1,3 +1,7 @@
+import { createLogger } from '@shared/logger';
+
+const log = createLogger('drive-client');
+
 const DRIVE_API_BASE = 'https://www.googleapis.com';
 
 // ── Token Management ───────────────────────────────────────
@@ -61,14 +65,55 @@ async function driveRequest(
 
 // ── File Operations (appDataFolder only) ───────────────────
 
-export async function findFile(token: string, filename: string): Promise<string | null> {
+export interface DriveFileRef {
+  id: string;
+  // Drive's monotonically increasing change counter for the file. Used for
+  // optimistic concurrency: re-read immediately before a write and abort if
+  // another device changed the file since this cycle read it. (Drive API v3
+  // dropped resource ETags and If-Match preconditions — `version` is the v3
+  // concurrency primitive.)
+  version: string;
+}
+
+export async function findFile(token: string, filename: string): Promise<DriveFileRef | null> {
   const q = encodeURIComponent(`name='${filename}'`);
   const res = await driveRequest(
     token,
-    `/drive/v3/files?spaces=appDataFolder&q=${q}&fields=files(id)`,
+    `/drive/v3/files?spaces=appDataFolder&q=${q}&orderBy=createdTime&fields=files(id,version)`,
   );
-  const data = (await res.json()) as { files?: Array<{ id: string }> };
-  return data.files?.[0]?.id ?? null;
+  const data = (await res.json()) as { files?: Array<{ id: string; version: string }> };
+  const files = data.files ?? [];
+  if (files.length === 0) return null;
+
+  // Drive allows same-named files in appDataFolder, so two devices doing
+  // their first sync concurrently can each create one — after which each
+  // device may keep reading a different instance forever (split-brain sync).
+  // Keep the oldest (deterministic on every device) and delete the extras.
+  const [keep, ...duplicates] = files;
+  for (const dup of duplicates) {
+    try {
+      await deleteFile(token, dup.id);
+      log.warn(`Deleted duplicate Drive file '${filename}' (${dup.id})`);
+    } catch (err) {
+      // Best-effort: a surviving duplicate is retried on the next sync.
+      log.warn(`Failed to delete duplicate Drive file '${filename}' (${dup.id})`, err);
+    }
+  }
+
+  return { id: keep.id, version: keep.version };
+}
+
+export async function deleteFile(token: string, fileId: string): Promise<void> {
+  await driveRequest(token, `/drive/v3/files/${fileId}`, { method: 'DELETE' });
+}
+
+export async function getFileVersion(token: string, fileId: string): Promise<string> {
+  const res = await driveRequest(token, `/drive/v3/files/${fileId}?fields=version`);
+  const data = (await res.json()) as { version?: string };
+  if (!data.version) {
+    throw new Error(`Drive API returned no version for file ${fileId}`);
+  }
+  return data.version;
 }
 
 export async function createFile(

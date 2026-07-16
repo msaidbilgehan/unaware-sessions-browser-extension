@@ -374,5 +374,120 @@ describe('sync-engine', () => {
       expect(merged.sessions.find((s) => s.id === 'sess-1')?.name).toBe('Work');
       expect(merged.sessions.find((s) => s.id === 'sess-3')?.name).toBe('New');
     });
+
+    it('ask prefers the profile with the newer updatedAt', () => {
+      const local = makeExportData();
+      const remote = makeExportData({
+        sessions: [
+          {
+            id: 'sess-1',
+            name: 'Renamed on other device',
+            color: '#000',
+            createdAt: 1700000000000,
+            updatedAt: 1700000005000, // newer than local's 1700000000000
+            settings: {},
+          },
+        ],
+        cookieSnapshots: [],
+        storageSnapshots: [],
+      });
+
+      const merged = mergeData(local, remote, 'ask', []);
+      expect(merged.sessions.find((s) => s.id === 'sess-1')?.name).toBe(
+        'Renamed on other device',
+      );
+    });
+  });
+
+  describe('mergeData deletion tombstones', () => {
+    it('does not resurrect a session deleted locally', () => {
+      const deletedAt = Date.now();
+      const local = makeExportData({
+        sessions: [],
+        cookieSnapshots: [],
+        storageSnapshots: [],
+        deletedSessions: { 'sess-1': deletedAt },
+      });
+      const remote = makeExportData(); // remote still has sess-1 + its snapshots
+
+      const merged = mergeData(local, remote, 'ask', []);
+
+      expect(merged.sessions.find((s) => s.id === 'sess-1')).toBeUndefined();
+      expect(merged.cookieSnapshots.filter((s) => s.sessionId === 'sess-1')).toHaveLength(0);
+      expect(merged.storageSnapshots.filter((s) => s.sessionId === 'sess-1')).toHaveLength(0);
+      expect(merged.deletedSessions?.['sess-1']).toBe(deletedAt);
+    });
+
+    it('does not resurrect a session deleted remotely', () => {
+      const deletedAt = Date.now();
+      const local = makeExportData();
+      const remote = makeExportData({
+        sessions: [],
+        cookieSnapshots: [],
+        storageSnapshots: [],
+        deletedSessions: { 'sess-1': deletedAt },
+      });
+
+      const merged = mergeData(local, remote, 'ask', []);
+      expect(merged.sessions.find((s) => s.id === 'sess-1')).toBeUndefined();
+    });
+
+    it('keeps a session that was updated after its deletion (edit wins) and drops the tombstone', () => {
+      const deletedAt = Date.now() - 60_000;
+      const local = makeExportData({
+        sessions: [
+          {
+            id: 'sess-1',
+            name: 'Recreated',
+            color: '#3B82F6',
+            createdAt: 1700000000000,
+            updatedAt: deletedAt + 30_000, // edited after the deletion happened
+            settings: {},
+          },
+        ],
+      });
+      const remote = makeExportData({
+        sessions: [],
+        cookieSnapshots: [],
+        storageSnapshots: [],
+        deletedSessions: { 'sess-1': deletedAt },
+      });
+
+      const merged = mergeData(local, remote, 'ask', []);
+      expect(merged.sessions.find((s) => s.id === 'sess-1')?.name).toBe('Recreated');
+      expect(merged.deletedSessions?.['sess-1']).toBeUndefined();
+    });
+
+    it('unions tombstones from both sides with the latest deletion winning', () => {
+      const older = Date.now() - 10_000;
+      const newer = Date.now();
+      const local = makeExportData({
+        sessions: [],
+        cookieSnapshots: [],
+        storageSnapshots: [],
+        deletedSessions: { 'sess-1': older, 'sess-9': newer },
+      });
+      const remote = makeExportData({
+        sessions: [],
+        cookieSnapshots: [],
+        storageSnapshots: [],
+        deletedSessions: { 'sess-1': newer },
+      });
+
+      const merged = mergeData(local, remote, 'ask', []);
+      expect(merged.deletedSessions?.['sess-1']).toBe(newer);
+      expect(merged.deletedSessions?.['sess-9']).toBe(newer);
+    });
+
+    it('handles payloads without deletedSessions (backward compatibility)', () => {
+      const local = makeExportData();
+      const remote = makeExportData();
+      delete local.deletedSessions;
+      delete remote.deletedSessions;
+
+      const merged = mergeData(local, remote, 'ask', []);
+      expect(merged.sessions.find((s) => s.id === 'sess-1')).toBeTruthy();
+      expect(merged.deletedSessions).toEqual({});
+    });
   });
 });

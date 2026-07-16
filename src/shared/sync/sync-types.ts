@@ -43,6 +43,11 @@ export interface SyncManifest {
   deviceId: string;
   checksums: Record<string, string>;
   sessionChecksums: Record<string, string>;
+  // SHA-256 of the payload file this manifest describes. Absent on manifests
+  // written before this field existed; when present, a mismatch on download
+  // means the manifest is stale for the payload (writer crashed between the
+  // payload and manifest writes).
+  payloadChecksum?: string;
 }
 
 // ── Encrypted Payload (stored on Drive) ────────────────────
