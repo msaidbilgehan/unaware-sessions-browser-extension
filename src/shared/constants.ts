@@ -17,14 +17,18 @@ export const STORAGE_KEYS = {
   SECURITY_CONFIG: 'securityConfig',
   SECURITY_GRACE_UNTIL: 'securityGraceUntil',
   SYNC_CONFIG: 'syncConfig',
+  SESSION_TOMBSTONES: 'sessionTombstones',
 } as const;
 
 export const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
-  autoRefreshInterval: 0,
-  autoRefreshDefaultEnabled: false,
+  autoRefreshInterval: 300,
+  autoRefreshDefaultEnabled: true,
   isolationModeDefault: 'soft',
   logLevel: 'off',
 };
+
+/** Deletion tombstones older than this are pruned from storage and sync payloads. */
+export const SESSION_TOMBSTONE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 export const DEFAULT_SECURITY_CONFIG: SecurityConfig = {
   passcodeEnabled: false,
@@ -90,8 +94,7 @@ export const STORAGE_STORE_DB_VERSION = 1;
 export const IDB_SNAPSHOT_TIMEOUT_MS = 5000;
 export const IDB_SNAPSHOT_MAX_SIZE_MB = 50;
 
-export const GITHUB_URL =
-  'https://github.com/msaidbilgehan/unaware-sessions-browser-extension/';
+export const GITHUB_URL = 'https://github.com/msaidbilgehan/unaware-sessions-browser-extension/';
 export const OPENCOLLECTIVE_URL = 'https://opencollective.com/unaware-sessions-browser-ext';
 
 export const DEFAULT_SESSION_EMOJIS = [

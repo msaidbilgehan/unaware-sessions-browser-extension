@@ -1,6 +1,11 @@
-import { ALARM_AUTO_REFRESH, STORAGE_KEYS } from '@shared/constants';
+import { ALARM_AUTO_REFRESH, STORAGE_KEYS, DEFAULT_EXTENSION_SETTINGS } from '@shared/constants';
 import type { ExtensionSettings, AutoRefreshInterval } from '@shared/types';
-import { saveCookies, saveTabStorage, isTabSwitching, getCookieStoreIdForTab } from './cookie-engine';
+import {
+  saveCookies,
+  saveTabStorage,
+  isTabSwitching,
+  getCookieStoreIdForTab,
+} from './cookie-engine';
 import { getAllTabEntries } from './tab-tracker';
 import { touchSessionRefresh } from './session-manager';
 import { isDomainAutoRefreshEnabled } from '@shared/settings-store';
@@ -80,19 +85,23 @@ export function resetAutoRefreshInit(): void {
 export async function initAutoRefresh(): Promise<void> {
   if (autoRefreshInitialized) return;
   autoRefreshInitialized = true;
-  // Read current interval
+  // Read current interval — fresh installs have nothing stored yet and must
+  // fall back to the default (auto-save on), not to "off".
   const result = await chrome.storage.local.get(STORAGE_KEYS.EXTENSION_SETTINGS);
   const settings = result[STORAGE_KEYS.EXTENSION_SETTINGS] as ExtensionSettings | undefined;
-  const interval: AutoRefreshInterval = settings?.autoRefreshInterval ?? 0;
+  const interval: AutoRefreshInterval =
+    settings?.autoRefreshInterval ?? DEFAULT_EXTENSION_SETTINGS.autoRefreshInterval;
   await syncAlarm(interval);
 
   // Watch for interval changes
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
     if (STORAGE_KEYS.EXTENSION_SETTINGS in changes) {
-      const newSettings = changes[STORAGE_KEYS.EXTENSION_SETTINGS]
-        .newValue as ExtensionSettings | undefined;
-      const newInterval: AutoRefreshInterval = newSettings?.autoRefreshInterval ?? 0;
+      const newSettings = changes[STORAGE_KEYS.EXTENSION_SETTINGS].newValue as
+        | ExtensionSettings
+        | undefined;
+      const newInterval: AutoRefreshInterval =
+        newSettings?.autoRefreshInterval ?? DEFAULT_EXTENSION_SETTINGS.autoRefreshInterval;
       syncAlarm(newInterval).catch((err) => {
         log.warn('Failed to sync alarm', err);
       });

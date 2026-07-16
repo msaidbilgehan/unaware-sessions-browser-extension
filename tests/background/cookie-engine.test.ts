@@ -322,6 +322,45 @@ describe('switchSession', () => {
     expect(savedSnapshot?.cookies).toHaveLength(2);
     expect(savedSnapshot?.cookies.some((c) => c.domain === '.auth-provider.com')).toBe(false);
   });
+
+  it('adopts live state into an empty target session on soft-mode pass-through', async () => {
+    (chrome.tabs.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: 6,
+      url: 'https://adopt.example/page',
+    });
+    (chrome.cookies.getAll as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        name: 'live',
+        value: 'state',
+        domain: 'adopt.example',
+        path: '/',
+        secure: false,
+        httpOnly: false,
+        sameSite: 'lax',
+        hostOnly: true,
+        session: false,
+        storeId: '0',
+      } as chrome.cookies.Cookie,
+    ]);
+    (chrome.tabs.sendMessage as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('No content script'),
+    );
+
+    const target = await createSession('empty-target', '#EF4444');
+    await switchSession(6, target.id);
+
+    // Pass-through must snapshot the live cookies into the target session so
+    // a brand-new session has durable data immediately
+    const snapshot = await cookieStore.load(target.id, 'https://adopt.example');
+    expect(snapshot).toBeTruthy();
+    expect(snapshot?.cookies.some((c) => c.name === 'live')).toBe(true);
+
+    // Pass-through must not clear the live cookies
+    expect(chrome.cookies.remove).not.toHaveBeenCalled();
+
+    // Tab still reloads for a clean state
+    expect(chrome.tabs.update).toHaveBeenCalledWith(6, { url: 'https://adopt.example/page' });
+  });
 });
 
 describe('saveTabStorage', () => {

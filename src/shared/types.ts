@@ -101,6 +101,12 @@ export interface SecurityConfig {
 export interface TabSessionEntry {
   sessionId: string;
   origin: string;
+  /**
+   * Cookie store the tab belonged to when assigned ("0" normal, "1" incognito).
+   * Persisted so cookies can still be saved after the tab is gone (tab close,
+   * cross-origin navigation), when the store can no longer be resolved live.
+   */
+  storeId?: string;
 }
 
 export interface TabSessionMap {
@@ -229,6 +235,17 @@ export interface CreateSessionMessage {
   name: string;
   color: string;
   emoji?: string;
+  /**
+   * Client-generated session ID (idempotency key). The API layer retries on
+   * service-worker connection errors; without a stable ID a retry after
+   * "message port closed" would create a duplicate session.
+   */
+  id?: string;
+  /**
+   * When set, the background attaches the new session to this tab and adopts
+   * the tab's live cookies + DOM storage as the session's first snapshot.
+   */
+  captureTabId?: number;
 }
 
 export interface DeleteSessionMessage {
@@ -311,6 +328,8 @@ export interface GetSessionStatsMessage {
 export interface DuplicateSessionMessage {
   type: MessageType.DUPLICATE_SESSION;
   sessionId: string;
+  /** Client-generated ID for the copy — makes retried duplications idempotent. */
+  newId?: string;
 }
 
 export interface ReorderSessionsMessage {
@@ -400,6 +419,13 @@ export interface FullExportData {
   sessions: SessionProfile[];
   cookieSnapshots: CookieSnapshot[];
   storageSnapshots: StorageSnapshot[];
+  /**
+   * Deletion tombstones: sessionId → deletedAt (epoch ms). Optional for
+   * backward compatibility with payloads exported before tombstones existed.
+   * Sync merge uses these to propagate deletions instead of resurrecting
+   * deleted sessions from the other side's copy.
+   */
+  deletedSessions?: Record<string, number>;
 }
 
 export interface ExportFullMessage {

@@ -160,7 +160,12 @@ describe('setAutoRefreshDefaultEnabled', () => {
 });
 
 describe('isDomainAutoRefreshEnabled', () => {
-  it('returns false by default when autoRefreshDefaultEnabled is false', () => {
+  it('returns true by default (auto-save on for fresh installs)', () => {
+    expect(isDomainAutoRefreshEnabled('s1', 'https://example.com')).toBe(true);
+  });
+
+  it('returns false when autoRefreshDefaultEnabled is disabled', async () => {
+    await setAutoRefreshDefaultEnabled(false);
     expect(isDomainAutoRefreshEnabled('s1', 'https://example.com')).toBe(false);
   });
 

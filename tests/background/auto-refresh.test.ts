@@ -121,11 +121,13 @@ describe('initAutoRefresh', () => {
     expect(chrome.alarms.clear).toHaveBeenCalledWith(ALARM_AUTO_REFRESH);
   });
 
-  it('clears alarm when no settings stored (defaults to 0)', async () => {
+  it('creates default alarm when no settings stored (auto-save on by default)', async () => {
     await chrome.storage.local.remove(STORAGE_KEYS.EXTENSION_SETTINGS);
     await initAutoRefresh();
 
-    expect(chrome.alarms.clear).toHaveBeenCalledWith(ALARM_AUTO_REFRESH);
+    expect(chrome.alarms.create).toHaveBeenCalledWith(ALARM_AUTO_REFRESH, {
+      periodInMinutes: 5,
+    });
   });
 
   it('does not recreate alarm when period is unchanged', async () => {

@@ -5,7 +5,7 @@ import type {
   RestoreFailureEntry,
 } from '@shared/types';
 import { MessageType } from '@shared/types';
-import { extractDomain, buildCookieUrl, now } from '@shared/utils';
+import { extractDomain, buildCookieUrl, isValidUrl, now } from '@shared/utils';
 import { getDomainIsolationMode } from '@shared/settings-store';
 import { createLogger } from '@shared/logger';
 import { cookieStore } from './cookie-store';
@@ -371,6 +371,36 @@ export async function detectSessionForOrigin(
   return bestScore >= 0.3 ? bestSessionId : null;
 }
 
+/**
+ * Attach a session to a tab and adopt the tab's live cookies + DOM storage as
+ * the session's snapshot for its current origin. Used when a session is
+ * created from an already-loaded tab: the state on screen must belong to the
+ * new session immediately, not only after the next switch-away.
+ *
+ * Best-effort: returns false (never throws) when the tab is gone or not on an
+ * http(s) page, so callers can treat capture as an optional side effect of a
+ * creation that already succeeded.
+ */
+export async function captureTabIntoSession(tabId: number, sessionId: string): Promise<boolean> {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (!tab.url || !isValidUrl(tab.url)) return false;
+
+    const origin = new URL(tab.url).origin;
+    const storeId = await getCookieStoreIdForTab(tabId);
+
+    await assignTab(tabId, sessionId, origin, storeId);
+    await Promise.all([
+      saveCookies(sessionId, origin, storeId),
+      saveTabStorage(tabId, sessionId, origin),
+    ]);
+    return true;
+  } catch (err) {
+    log.warn(`Failed to capture tab ${tabId} into session ${sessionId}`, err);
+    return false;
+  }
+}
+
 export function handleContentScriptReady(tabId: number): void {
   const pending = pendingRestores.get(tabId);
   if (!pending) return;
@@ -443,7 +473,16 @@ async function doSwitchSession(tabId: number, targetSessionId: string): Promise<
     // Soft mode: no data for this domain → skip cookie operations, preserve current state.
     // Update tab mapping for badge/tracking, but REMOVE any DNR rule so the browser's
     // native Cookie header passes through (no header injection = no cookie override).
-    await Promise.all([assignTab(tabId, targetSessionId, origin), removeRulesForTab(tabId)]);
+    // Adopt the live state as the target session's snapshot: without it a
+    // brand-new session stays empty until the next switch-away, and is lost
+    // entirely if the tab or browser closes first. Storage must be captured
+    // before the reload below tears down the content script.
+    await Promise.all([
+      assignTab(tabId, targetSessionId, origin, storeId),
+      removeRulesForTab(tabId),
+      saveCookies(targetSessionId, origin, storeId),
+      saveTabStorage(tabId, targetSessionId, origin),
+    ]);
 
     // No storage restore needed — we're passing through
     await chrome.tabs.update(tabId, { url: tab.url });
@@ -460,7 +499,7 @@ async function doSwitchSession(tabId: number, targetSessionId: string): Promise<
 
   // 4. Update tab-session mapping + DNR rules (parallel — independent)
   await Promise.all([
-    assignTab(tabId, targetSessionId, origin),
+    assignTab(tabId, targetSessionId, origin, storeId),
     updateRulesForTab(tabId, targetSessionId, origin),
   ]);
 

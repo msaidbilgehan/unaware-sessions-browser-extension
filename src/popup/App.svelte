@@ -5,7 +5,7 @@
     AutoRefreshInterval,
     IsolationMode,
   } from '@shared/types';
-  import { extractOrigin, extractDomain } from '@shared/utils';
+  import { extractOrigin, extractDomain, isValidUrl } from '@shared/utils';
   import {
     getAutoRefreshInterval,
     isDomainAutoRefreshEnabled,
@@ -190,22 +190,35 @@
     toastData = { message, type, action };
   }
 
+  let creatingSession = false;
+
   async function handleCreate(name: string, color: string, emoji?: string) {
+    if (creatingSession) return;
+    creatingSession = true;
     try {
-      const session = await createSession(name, color, emoji);
+      // Attach + capture happen in the background as part of creation: the new
+      // session immediately adopts the current tab's cookies and storage, so
+      // its data is durable even if the popup or tab closes right after.
+      const captureTabId =
+        currentTab?.id && currentOrigin && isValidUrl(currentTab.url ?? '')
+          ? currentTab.id
+          : undefined;
+      const session = await createSession(name, color, emoji, captureTabId);
       // Fetch the authoritative list from the background instead of appending
       // locally — the storage-change listener may have already added the session
       // via updateSessionsQuietly(), and duplicates crash the keyed {#each}.
       sessions = await listSessions();
 
-      if (currentTab?.id && currentOrigin) {
-        await assignTab(currentTab.id, session.id, currentOrigin);
+      if (captureTabId != null && currentOrigin) {
         currentTabEntry = { sessionId: session.id, origin: currentOrigin };
+        sessionsWithOriginData = new Set([...sessionsWithOriginData, session.id]);
       }
 
       view = 'list';
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Failed to create session', 'error');
+    } finally {
+      creatingSession = false;
     }
   }
 

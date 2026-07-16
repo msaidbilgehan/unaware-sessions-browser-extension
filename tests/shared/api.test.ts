@@ -80,10 +80,34 @@ describe('createSession', () => {
 
     expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
       type: MessageType.CREATE_SESSION,
+      id: expect.any(String),
       name: 'Work',
       color: '#3B82F6',
     });
     expect(result).toEqual(session);
+  });
+
+  it('reuses the same client ID across the connection-error retry', async () => {
+    (chrome.runtime.sendMessage as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce(new Error('The message port closed before a response was received.'))
+      .mockResolvedValueOnce({ success: true, data: { id: 's1' } });
+
+    await createSession('Work', '#3B82F6');
+
+    const calls = (chrome.runtime.sendMessage as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[0][0]).toEqual(calls[1][0]);
+    expect((calls[0][0] as { id: string }).id).toBeTruthy();
+  });
+
+  it('passes captureTabId through when provided', async () => {
+    mockSendResponse({ id: 's1' });
+
+    await createSession('Work', '#3B82F6', undefined, 42);
+
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: MessageType.CREATE_SESSION, captureTabId: 42 }),
+    );
   });
 
   it('includes emoji when provided', async () => {
@@ -93,6 +117,7 @@ describe('createSession', () => {
 
     expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
       type: MessageType.CREATE_SESSION,
+      id: expect.any(String),
       name: 'Play',
       color: '#EF4444',
       emoji: '\u{1F3AE}',
@@ -297,6 +322,7 @@ describe('duplicateSession', () => {
     expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
       type: MessageType.DUPLICATE_SESSION,
       sessionId: 's1',
+      newId: expect.any(String),
     });
     expect(result).toEqual(dup);
   });

@@ -5,7 +5,7 @@
   import Icon from '@shared/components/Icon.svelte';
 
   interface Props {
-    oncreate: (name: string, color: string, emoji?: string) => void;
+    oncreate: (name: string, color: string, emoji?: string) => void | Promise<void>;
     oncancel: () => void;
   }
 
@@ -14,20 +14,28 @@
   let color = $state<string>(DEFAULT_SESSION_COLORS[0]);
   let emoji = $state('');
   let error = $state('');
+  let submitting = $state(false);
 
-  function handleSubmit() {
+  async function handleSubmit() {
+    // Enter + click (or a held Enter key) must not fire multiple creates
+    if (submitting) return;
     const trimmed = name.trim();
     if (!trimmed) {
       error = 'Session name is required';
       return;
     }
     error = '';
-    oncreate(trimmed, color, emoji || undefined);
+    submitting = true;
+    try {
+      await oncreate(trimmed, color, emoji || undefined);
+    } finally {
+      submitting = false;
+    }
   }
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter') {
-      handleSubmit();
+      if (!e.repeat) void handleSubmit();
     } else if (e.key === 'Escape') {
       oncancel();
     }
@@ -82,9 +90,9 @@
     <EmojiPicker selected={emoji} onchange={(e) => (emoji = e)} />
   </div>
 
-  <button class="create-btn" onclick={handleSubmit}>
+  <button class="create-btn" onclick={handleSubmit} disabled={submitting}>
     <Icon name="plus" size={14} />
-    Create Session
+    {submitting ? 'Creating…' : 'Create Session'}
   </button>
 </div>
 
@@ -253,5 +261,12 @@
   .create-btn:focus-visible {
     outline: none;
     box-shadow: var(--shadow-focus);
+  }
+
+  .create-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
+    transform: none;
+    box-shadow: var(--shadow-sm);
   }
 </style>

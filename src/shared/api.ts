@@ -12,7 +12,11 @@ import type {
   LogEntry,
 } from '@shared/types';
 import type { SyncConfig, SyncState, ConflictEntry } from '@shared/sync/sync-types';
+import { generateId } from '@shared/utils';
 
+// Note for mutating messages: "message port closed" can occur AFTER the
+// handler ran, so a retry re-executes the operation. Handlers must therefore
+// be idempotent — session create/duplicate carry a client-generated ID.
 function isConnectionError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
   return (
@@ -47,12 +51,17 @@ export function createSession(
   name: string,
   color: string,
   emoji?: string,
+  captureTabId?: number,
 ): Promise<SessionProfile> {
   return sendMessage({
     type: MessageType.CREATE_SESSION,
+    // One ID per logical call: the connection-error retry inside sendMessage
+    // resends the same ID, so the background creates at most one session.
+    id: generateId(),
     name,
     color,
     ...(emoji ? { emoji } : {}),
+    ...(captureTabId != null ? { captureTabId } : {}),
   });
 }
 
@@ -105,7 +114,7 @@ export function getSessionStats(sessionId: string): Promise<SessionStats> {
 }
 
 export function duplicateSession(sessionId: string): Promise<SessionProfile> {
-  return sendMessage({ type: MessageType.DUPLICATE_SESSION, sessionId });
+  return sendMessage({ type: MessageType.DUPLICATE_SESSION, sessionId, newId: generateId() });
 }
 
 export function reorderSessions(orderedIds: string[]): Promise<void> {

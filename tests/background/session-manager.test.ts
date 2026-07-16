@@ -10,7 +10,11 @@ import {
   duplicateSession,
   batchSetSessions,
   deleteAllSessions,
+  getSessionTombstones,
+  setSessionTombstones,
+  pruneTombstones,
 } from '@background/session-manager';
+import { SESSION_TOMBSTONE_RETENTION_MS } from '@shared/constants';
 import type { SessionProfile } from '@shared/types';
 
 beforeEach(async () => {
@@ -55,8 +59,8 @@ describe('session-manager', () => {
     expect(sessions).toHaveLength(0);
   });
 
-  it('throws when deleting non-existent session', async () => {
-    await expect(deleteSession('non-existent')).rejects.toThrow('Session not found');
+  it('resolves silently when deleting non-existent session (idempotent for retries)', async () => {
+    await expect(deleteSession('non-existent')).resolves.toBeUndefined();
   });
 
   it('updates a session name', async () => {
@@ -159,6 +163,84 @@ describe('session-manager', () => {
   it('throws on empty session name', async () => {
     await expect(createSession('', '#3B82F6')).rejects.toThrow('Session name cannot be empty');
     await expect(createSession('   ', '#3B82F6')).rejects.toThrow('Session name cannot be empty');
+  });
+
+  describe('idempotent creation (retry safety)', () => {
+    it('returns the existing session when creating with an already-used ID', async () => {
+      const first = await createSession('Work', '#3B82F6', undefined, 'client-id-1');
+      const retry = await createSession('Work', '#3B82F6', undefined, 'client-id-1');
+
+      expect(retry).toEqual(first);
+      expect(await listSessions()).toHaveLength(1);
+    });
+
+    it('uses the provided client ID for the new session', async () => {
+      const session = await createSession('Work', '#3B82F6', undefined, 'client-id-2');
+      expect(session.id).toBe('client-id-2');
+    });
+
+    it('duplicates idempotently with a client-provided new ID', async () => {
+      const original = await createSession('Original', '#EF4444');
+      const copy1 = await duplicateSession(original.id, 'copy-id');
+      const copy2 = await duplicateSession(original.id, 'copy-id');
+
+      expect(copy1.id).toBe('copy-id');
+      expect(copy2).toEqual(copy1);
+      expect(await listSessions()).toHaveLength(2);
+    });
+  });
+
+  describe('deletion tombstones', () => {
+    it('records a tombstone when a session is deleted', async () => {
+      const session = await createSession('doomed', '#3B82F6');
+      await deleteSession(session.id);
+
+      const tombstones = await getSessionTombstones();
+      expect(tombstones[session.id]).toBeGreaterThan(0);
+    });
+
+    it('does not record a tombstone for a non-existent session', async () => {
+      await deleteSession('never-existed');
+      const tombstones = await getSessionTombstones();
+      expect(tombstones['never-existed']).toBeUndefined();
+    });
+
+    it('deleteAllSessions records tombstones by default', async () => {
+      const a = await createSession('a', '#3B82F6');
+      const b = await createSession('b', '#EF4444');
+      await deleteAllSessions();
+
+      const tombstones = await getSessionTombstones();
+      expect(tombstones[a.id]).toBeGreaterThan(0);
+      expect(tombstones[b.id]).toBeGreaterThan(0);
+    });
+
+    it('deleteAllSessions skips tombstones for internal replaces', async () => {
+      const a = await createSession('a', '#3B82F6');
+      await deleteAllSessions({ recordTombstones: false });
+
+      const tombstones = await getSessionTombstones();
+      expect(tombstones[a.id]).toBeUndefined();
+    });
+
+    it('prunes tombstones past retention', () => {
+      const nowMs = Date.now();
+      const pruned = pruneTombstones(
+        {
+          fresh: nowMs - 1000,
+          stale: nowMs - SESSION_TOMBSTONE_RETENTION_MS - 1000,
+        },
+        nowMs,
+      );
+      expect(pruned).toEqual({ fresh: nowMs - 1000 });
+    });
+
+    it('setSessionTombstones replaces the stored map', async () => {
+      const session = await createSession('x', '#3B82F6');
+      await deleteSession(session.id);
+      await setSessionTombstones({});
+      expect(await getSessionTombstones()).toEqual({});
+    });
   });
 
   describe('deleteAllSessions', () => {
