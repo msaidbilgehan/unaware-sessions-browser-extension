@@ -72,8 +72,8 @@ Unaware Sessions fills the gap: lightweight session isolation that works inside 
 
 ### Management
 
-- Full backup/restore: export all sessions + cookies + storage as timestamped JSON
-- Import / export session profiles as JSON with visual diff preview
+- Full backup/restore: export a chosen subset (or all) of your sessions, with cookies + storage, as timestamped JSON
+- Import session profiles from JSON (including legacy profile-only exports) with visual diff preview
 - Drag-and-drop file import
 - Session list with active tab counts, color indicators, and pinning
 - Rename (double-click), delete (with undo), and duplicate session profiles
@@ -348,11 +348,12 @@ src/
       SessionsTab.svelte     # Session management with inline edit
       SettingsTab.svelte     # Theme + cookie isolation + auto-refresh + security + cloud sync
       SyncConflictDialog.svelte # Per-origin local/cloud conflict picker
-      ImportExportTab.svelte # Import with drag-drop + visual diff + data management
+      ImportExportTab.svelte # Full export (with session picker) + import with drag-drop + visual diff + data management
       AboutTab.svelte        # Version info, GitHub, OpenCollective
       StorageDashboard.svelte # Per-session storage usage bars
       DragDropZone.svelte    # Drag-and-drop file import zone
       ImportDiff.svelte      # Visual diff preview before import
+      ExportSelector.svelte  # Per-session checkbox picker for full export
       DebugTab.svelte        # Cookie diff viewer + restore failure log + extension logs with log level selector
   shared/
     types.ts                 # All TypeScript interfaces + message types

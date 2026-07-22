@@ -131,7 +131,7 @@ npm run release:major # Major version bump + push tags
 ### Options (`src/options/`)
 
 - `App.svelte` — tabbed layout (Sessions, Settings, Data, About, Debug)
-- `components/` — TabBar (with keyboard nav + ARIA tabs), SessionsTab (domain folders, inline cookie/storage editing, per-domain auto-refresh, search by session name or domain), SettingsTab (theme + cookie isolation mode + auto-refresh + security settings + Cloud Sync card with connect/disconnect, merge strategy, auto-sync interval), ImportExportTab (profile-only + full export/import with stats preview + data management/clear all + `withAuth` gate on export/import/clear), DebugTab (cookie diff viewer + restore failure log + extension logs with log level selector), AboutTab (GitHub, OpenCollective), StorageDashboard, DragDropZone, ImportDiff, SyncConflictDialog
+- `components/` — TabBar (with keyboard nav + ARIA tabs), SessionsTab (domain folders, inline cookie/storage editing, per-domain auto-refresh, search by session name or domain), SettingsTab (theme + cookie isolation mode + auto-refresh + security settings + Cloud Sync card with connect/disconnect, merge strategy, auto-sync interval), ImportExportTab (Full Export is the only export mode — cookies + storage data, with a per-session picker via `ExportSelector` — plus full import with stats preview + data management/clear all + `withAuth` gate on export/import/clear), DebugTab (cookie diff viewer + restore failure log + extension logs with log level selector), AboutTab (GitHub, OpenCollective), StorageDashboard, DragDropZone, ImportDiff, ExportSelector, SyncConflictDialog
 
 ## Key Documentation
 

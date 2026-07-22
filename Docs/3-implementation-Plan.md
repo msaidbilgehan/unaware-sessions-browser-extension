@@ -197,8 +197,8 @@ src/
   - Serialize to transferable format (handle Blobs, ArrayBuffers)
 - [x] Save full IDB snapshot to extension's own IndexedDB (namespaced by session + origin)
 - [x] Restore: delete existing databases → recreate with saved schema + data
-- [x] Add timeout (5s max per database) — skip and warn on slow/large databases
-- [x] Skip databases over configurable size threshold (default: 50MB)
+- [x] Add timeout (50s max per database) — skip and warn on slow/large databases
+- [x] Skip databases over configurable size threshold (default: 500MB)
 
 ### 2.3 Integrate with Session Switch Flow
 

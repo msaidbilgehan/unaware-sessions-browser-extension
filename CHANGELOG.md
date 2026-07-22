@@ -32,10 +32,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **`TabSessionEntry.storeId`:** cookie store captured at assign time so cookies can still be saved after the tab is gone (incognito-correct)
 - **Deletion tombstones:** recorded on session delete (30-day retention, pruned automatically), included in full export and sync payloads
 - **New tests:** Sync-cycle integration suite (`sync-engine-cycle.test.ts`) covering payload-first upload ordering, `SyncConcurrencyError` retry, and tombstone merge; expanded sync, session-manager, tab-tracker, messaging, and API suites for the fixes above (509 total)
+- **Partial export:** the Data tab's Export Sessions card lists every session with a checkbox (`ExportSelector.svelte`) so you can export cookie/storage data for a chosen subset instead of all-or-nothing; `EXPORT_FULL` accepts an optional `sessionIds` filter, defaults to every session when omitted
 
 ### Changed
 
 - **Auto-refresh defaults to ON** (5-minute interval, per-domain enabled) for fresh installs; existing stored settings are unchanged
+- **IndexedDB capture ceiling raised:** the per-database size/time limits used during storage capture (which bound what can ever appear in a Full Export) go from 50MB/5s to 500MB/50s per database; the two move together since raising only the size would just trade a clear "exceeds NMB" skip for an equivalent timeout failure
+
+### Removed
+
+- **Profile-only export:** the lightweight names/colors/emojis-only export path is removed; Full Export (cookies + storage data) is now the only export mode
 
 ## [1.1.0] - 2026-04-11
 
