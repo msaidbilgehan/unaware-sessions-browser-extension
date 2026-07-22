@@ -554,7 +554,7 @@ describe('messaging', () => {
     expect((response.data as { refreshedCount: number }).refreshedCount).toBe(0);
   });
 
-  it('handles EXPORT_FULL', async () => {
+  it('handles EXPORT_FULL_INIT with no snapshot data', async () => {
     // Create a session first
     await sendTestMessage({
       type: MessageType.CREATE_SESSION,
@@ -563,7 +563,7 @@ describe('messaging', () => {
     });
 
     const response = await sendTestMessage({
-      type: MessageType.EXPORT_FULL,
+      type: MessageType.EXPORT_FULL_INIT,
     });
 
     expect(response.success).toBe(true);
@@ -571,17 +571,17 @@ describe('messaging', () => {
       version: number;
       exportedAt: number;
       sessions: unknown[];
-      cookieSnapshots: unknown[];
-      storageSnapshots: unknown[];
+      deletedSessions: Record<string, number>;
+      units: unknown[];
     };
     expect(data.version).toBe(1);
     expect(data.exportedAt).toBeGreaterThan(0);
     expect(data.sessions).toHaveLength(1);
-    expect(data.cookieSnapshots).toEqual([]);
-    expect(data.storageSnapshots).toEqual([]);
+    expect(data.units).toEqual([]);
+    expect(data.deletedSessions).toEqual({});
   });
 
-  it('handles EXPORT_FULL with a sessionIds filter', async () => {
+  it('handles EXPORT_FULL_INIT + EXPORT_FULL_CHUNK with a sessionIds filter', async () => {
     const createA = await sendTestMessage({
       type: MessageType.CREATE_SESSION,
       name: 'export-filter-a',
@@ -608,60 +608,130 @@ describe('messaging', () => {
       cookies: [],
     });
 
-    const response = await sendTestMessage({
-      type: MessageType.EXPORT_FULL,
+    const initResp = await sendTestMessage({
+      type: MessageType.EXPORT_FULL_INIT,
       sessionIds: [sessionA.id],
     });
 
-    expect(response.success).toBe(true);
-    const data = response.data as {
+    expect(initResp.success).toBe(true);
+    const init = initResp.data as {
       sessions: Array<{ id: string }>;
-      cookieSnapshots: Array<{ sessionId: string }>;
+      units: Array<{ sessionId: string; origin: string }>;
     };
-    expect(data.sessions).toHaveLength(1);
-    expect(data.sessions[0].id).toBe(sessionA.id);
-    expect(data.cookieSnapshots).toHaveLength(1);
-    expect(data.cookieSnapshots[0].sessionId).toBe(sessionA.id);
-  });
+    expect(init.sessions).toHaveLength(1);
+    expect(init.sessions[0].id).toBe(sessionA.id);
+    expect(init.units).toEqual([{ sessionId: sessionA.id, origin: 'https://a.example.com' }]);
 
-  it('handles IMPORT_FULL with valid data', async () => {
-    const response = await sendTestMessage({
-      type: MessageType.IMPORT_FULL,
-      data: {
-        version: 1,
-        exportedAt: Date.now(),
-        sessions: [
-          {
-            id: 'old-id',
-            name: 'imported',
-            color: '#EF4444',
-            createdAt: 1,
-            updatedAt: 1,
-            settings: {},
-          },
-        ],
-        cookieSnapshots: [
-          {
-            sessionId: 'old-id',
-            origin: 'https://example.com',
-            timestamp: Date.now(),
-            cookies: [{ name: 'c', value: 'v', domain: 'example.com', path: '/' }],
-          },
-        ],
-        storageSnapshots: [],
-      },
+    const chunkResp = await sendTestMessage({
+      type: MessageType.EXPORT_FULL_CHUNK,
+      units: init.units,
     });
 
-    expect(response.success).toBe(true);
-    expect((response.data as { imported: number }).imported).toBe(1);
+    expect(chunkResp.success).toBe(true);
+    const chunk = chunkResp.data as {
+      cookieSnapshots: Array<{ sessionId: string }>;
+      storageSnapshots: unknown[];
+      consumed: number;
+    };
+    expect(chunk.consumed).toBe(1);
+    expect(chunk.cookieSnapshots).toHaveLength(1);
+    expect(chunk.cookieSnapshots[0].sessionId).toBe(sessionA.id);
+    expect(chunk.storageSnapshots).toEqual([]);
+  });
+
+  it('EXPORT_FULL_CHUNK unions cookie and storage origins and consumes every unit', async () => {
+    const create = await sendTestMessage({
+      type: MessageType.CREATE_SESSION,
+      name: 'export-union',
+      color: '#3B82F6',
+    });
+    const { id } = create.data as { id: string };
+
+    await cookieStore.save({
+      sessionId: id,
+      origin: 'https://cookie-only.example.com',
+      timestamp: Date.now(),
+      cookies: [],
+    });
+    await storageStore.save({
+      sessionId: id,
+      origin: 'https://storage-only.example.com',
+      timestamp: Date.now(),
+      localStorage: { k: 'v' },
+      sessionStorage: {},
+    });
+
+    const initResp = await sendTestMessage({
+      type: MessageType.EXPORT_FULL_INIT,
+      sessionIds: [id],
+    });
+    const init = initResp.data as { units: Array<{ sessionId: string; origin: string }> };
+    expect(init.units).toHaveLength(2);
+
+    const chunkResp = await sendTestMessage({
+      type: MessageType.EXPORT_FULL_CHUNK,
+      units: init.units,
+    });
+    const chunk = chunkResp.data as {
+      cookieSnapshots: unknown[];
+      storageSnapshots: unknown[];
+      consumed: number;
+    };
+    expect(chunk.consumed).toBe(2);
+    expect(chunk.cookieSnapshots).toHaveLength(1);
+    expect(chunk.storageSnapshots).toHaveLength(1);
+  });
+
+  it('handles IMPORT_FULL_BEGIN + CHUNK + COMMIT with valid data', async () => {
+    const beginResp = await sendTestMessage({
+      type: MessageType.IMPORT_FULL_BEGIN,
+      sessions: [
+        {
+          id: 'old-id',
+          name: 'imported',
+          color: '#EF4444',
+          createdAt: 1,
+          updatedAt: 1,
+          settings: {},
+        },
+      ],
+      idMap: { 'old-id': 'new-id' },
+    });
+
+    expect(beginResp.success).toBe(true);
+    const begin = beginResp.data as { idMap: Record<string, string>; imported: number };
+    expect(begin.imported).toBe(1);
+    expect(begin.idMap).toEqual({ 'old-id': 'new-id' });
 
     // Verify session was created
     const listResp = await sendTestMessage({ type: MessageType.LIST_SESSIONS });
     const sessions = listResp.data as Array<{ name: string }>;
     expect(sessions.some((s) => s.name === 'imported')).toBe(true);
+
+    // Stream a snapshot already remapped to the new session ID
+    const chunkResp = await sendTestMessage({
+      type: MessageType.IMPORT_FULL_CHUNK,
+      cookieSnapshots: [
+        {
+          sessionId: 'new-id',
+          origin: 'https://example.com',
+          timestamp: Date.now(),
+          cookies: [{ name: 'c', value: 'v', domain: 'example.com', path: '/' }],
+        },
+      ],
+      storageSnapshots: [],
+    });
+    expect(chunkResp.success).toBe(true);
+
+    const commitResp = await sendTestMessage({ type: MessageType.IMPORT_FULL_COMMIT });
+    expect(commitResp.success).toBe(true);
+
+    // Snapshot persisted under the new session ID
+    const snap = await cookieStore.load('new-id', 'https://example.com');
+    expect(snap?.cookies).toHaveLength(1);
   });
 
-  it('handles IMPORT_FULL skipping duplicate names', async () => {
+  it('handles IMPORT_FULL_BEGIN skipping duplicate names', async () => {
     await sendTestMessage({
       type: MessageType.CREATE_SESSION,
       name: 'existing',
@@ -669,27 +739,63 @@ describe('messaging', () => {
     });
 
     const response = await sendTestMessage({
-      type: MessageType.IMPORT_FULL,
-      data: {
-        version: 1,
-        exportedAt: Date.now(),
-        sessions: [
-          {
-            id: 'dup-id',
-            name: 'existing',
-            color: '#EF4444',
-            createdAt: 1,
-            updatedAt: 1,
-            settings: {},
-          },
-        ],
-        cookieSnapshots: [],
-        storageSnapshots: [],
-      },
+      type: MessageType.IMPORT_FULL_BEGIN,
+      sessions: [
+        {
+          id: 'dup-id',
+          name: 'existing',
+          color: '#EF4444',
+          createdAt: 1,
+          updatedAt: 1,
+          settings: {},
+        },
+      ],
+      idMap: { 'dup-id': 'new-dup-id' },
     });
 
     expect(response.success).toBe(true);
-    expect((response.data as { imported: number }).imported).toBe(0);
+    const begin = response.data as { idMap: Record<string, string>; imported: number };
+    expect(begin.imported).toBe(0);
+    expect(begin.idMap).toEqual({});
+  });
+
+  it('IMPORT_FULL_BEGIN preserves distinct sessions that share a name', async () => {
+    const response = await sendTestMessage({
+      type: MessageType.IMPORT_FULL_BEGIN,
+      sessions: [
+        { id: 'o1', name: 'Work', color: '#111111', createdAt: 1, updatedAt: 1, settings: {} },
+        { id: 'o2', name: 'Work', color: '#222222', createdAt: 1, updatedAt: 1, settings: {} },
+      ],
+      idMap: { o1: 'n1', o2: 'n2' },
+    });
+
+    expect(response.success).toBe(true);
+    const begin = response.data as { idMap: Record<string, string>; imported: number };
+    expect(begin.imported).toBe(2);
+    expect(begin.idMap).toEqual({ o1: 'n1', o2: 'n2' });
+
+    const listResp = await sendTestMessage({ type: MessageType.LIST_SESSIONS });
+    const works = (listResp.data as Array<{ name: string }>).filter((s) => s.name === 'Work');
+    expect(works).toHaveLength(2);
+  });
+
+  it('IMPORT_FULL_BEGIN is idempotent when replayed with the same idMap', async () => {
+    const sessions = [
+      { id: 'old', name: 'idem', color: '#EF4444', createdAt: 1, updatedAt: 1, settings: {} },
+    ];
+    const idMap = { old: 'fixed-id' };
+
+    const first = await sendTestMessage({ type: MessageType.IMPORT_FULL_BEGIN, sessions, idMap });
+    const second = await sendTestMessage({ type: MessageType.IMPORT_FULL_BEGIN, sessions, idMap });
+
+    expect((first.data as { imported: number }).imported).toBe(1);
+    expect((second.data as { imported: number }).imported).toBe(1);
+    expect((second.data as { idMap: Record<string, string> }).idMap).toEqual({ old: 'fixed-id' });
+
+    // Replay must not create a duplicate session
+    const listResp = await sendTestMessage({ type: MessageType.LIST_SESSIONS });
+    const created = (listResp.data as Array<{ name: string }>).filter((s) => s.name === 'idem');
+    expect(created).toHaveLength(1);
   });
 
   it('handles GET_LIVE_COOKIES', async () => {

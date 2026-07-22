@@ -513,42 +513,148 @@ describe('deleteSessionStorageEntry', () => {
 // ── Full export / import ──────────────────────────────────────
 
 describe('exportFull', () => {
-  it('sends EXPORT_FULL and returns full data', async () => {
-    const data = { version: 1, exportedAt: 1, sessions: [], cookieSnapshots: [], storageSnapshots: [] };
-    mockSendResponse(data);
+  it('assembles chunked snapshot data from INIT + CHUNK responses', async () => {
+    const units = [
+      { sessionId: 's1', origin: 'https://a.com' },
+      { sessionId: 's1', origin: 'https://b.com' },
+    ];
+    // INIT: metadata + the unit plan
+    mockSendResponse({
+      version: 1,
+      exportedAt: 42,
+      sessions: [{ id: 's1', name: 'S1' }],
+      deletedSessions: {},
+      units,
+    });
+    // CHUNK #1: consumes the first unit only
+    mockSendResponse({
+      cookieSnapshots: [{ sessionId: 's1', origin: 'https://a.com', timestamp: 1, cookies: [] }],
+      storageSnapshots: [],
+      consumed: 1,
+    });
+    // CHUNK #2: consumes the second unit
+    mockSendResponse({
+      cookieSnapshots: [],
+      storageSnapshots: [
+        { sessionId: 's1', origin: 'https://b.com', timestamp: 1, localStorage: {}, sessionStorage: {} },
+      ],
+      consumed: 1,
+    });
 
     const result = await exportFull();
 
-    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
-      type: MessageType.EXPORT_FULL,
+    expect(chrome.runtime.sendMessage).toHaveBeenNthCalledWith(1, {
+      type: MessageType.EXPORT_FULL_INIT,
+      sessionIds: undefined,
     });
-    expect(result).toEqual(data);
+    // First chunk requests the whole remaining slice...
+    expect(chrome.runtime.sendMessage).toHaveBeenNthCalledWith(2, {
+      type: MessageType.EXPORT_FULL_CHUNK,
+      units,
+    });
+    // ...and the cursor advances by `consumed`, so the next request is the tail.
+    expect(chrome.runtime.sendMessage).toHaveBeenNthCalledWith(3, {
+      type: MessageType.EXPORT_FULL_CHUNK,
+      units: [{ sessionId: 's1', origin: 'https://b.com' }],
+    });
+
+    expect(result).toEqual({
+      version: 1,
+      exportedAt: 42,
+      sessions: [{ id: 's1', name: 'S1' }],
+      cookieSnapshots: [{ sessionId: 's1', origin: 'https://a.com', timestamp: 1, cookies: [] }],
+      storageSnapshots: [
+        { sessionId: 's1', origin: 'https://b.com', timestamp: 1, localStorage: {}, sessionStorage: {} },
+      ],
+      deletedSessions: {},
+    });
   });
 
-  it('sends EXPORT_FULL with a sessionIds filter', async () => {
-    const data = { version: 1, exportedAt: 1, sessions: [], cookieSnapshots: [], storageSnapshots: [] };
-    mockSendResponse(data);
+  it('makes no CHUNK requests when the plan is empty', async () => {
+    mockSendResponse({ version: 1, exportedAt: 7, sessions: [], deletedSessions: {}, units: [] });
+
+    const result = await exportFull();
+
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledTimes(1);
+    expect(result.cookieSnapshots).toEqual([]);
+    expect(result.storageSnapshots).toEqual([]);
+  });
+
+  it('passes a sessionIds filter to EXPORT_FULL_INIT', async () => {
+    mockSendResponse({ version: 1, exportedAt: 1, sessions: [], deletedSessions: {}, units: [] });
 
     await exportFull(['s1', 's2']);
 
     expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
-      type: MessageType.EXPORT_FULL,
+      type: MessageType.EXPORT_FULL_INIT,
       sessionIds: ['s1', 's2'],
     });
   });
 });
 
 describe('importFull', () => {
-  it('sends IMPORT_FULL with data payload', async () => {
-    const data = { version: 1 as const, exportedAt: 1, sessions: [], cookieSnapshots: [], storageSnapshots: [] };
-    mockSendResponse({ imported: 0 });
+  it('creates sessions, streams remapped snapshots, then commits', async () => {
+    const data = {
+      version: 1 as const,
+      exportedAt: 1,
+      sessions: [
+        { id: 'old1', name: 'S1', color: '#fff', createdAt: 1, updatedAt: 1, settings: {} },
+      ],
+      cookieSnapshots: [{ sessionId: 'old1', origin: 'https://a.com', timestamp: 1, cookies: [] }],
+      storageSnapshots: [
+        { sessionId: 'old1', origin: 'https://a.com', timestamp: 1, localStorage: {}, sessionStorage: {} },
+      ],
+    };
+    mockSendResponse({ idMap: { old1: 'new1' }, imported: 1 }); // BEGIN
+    mockSendResponse(undefined); // cookie CHUNK
+    mockSendResponse(undefined); // storage CHUNK
+    mockSendResponse(undefined); // COMMIT
 
     const result = await importFull(data);
 
-    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
-      type: MessageType.IMPORT_FULL,
-      data,
+    const calls = vi.mocked(chrome.runtime.sendMessage).mock.calls;
+    expect(calls[0][0]).toMatchObject({
+      type: MessageType.IMPORT_FULL_BEGIN,
+      sessions: data.sessions,
     });
+    // A client-generated idMap key exists for every incoming session
+    expect((calls[0][0] as { idMap: Record<string, string> }).idMap.old1).toBeDefined();
+    // Snapshots are remapped from old1 → new1 before streaming
+    expect(calls[1][0]).toEqual({
+      type: MessageType.IMPORT_FULL_CHUNK,
+      cookieSnapshots: [{ sessionId: 'new1', origin: 'https://a.com', timestamp: 1, cookies: [] }],
+      storageSnapshots: [],
+    });
+    expect(calls[2][0]).toEqual({
+      type: MessageType.IMPORT_FULL_CHUNK,
+      cookieSnapshots: [],
+      storageSnapshots: [
+        { sessionId: 'new1', origin: 'https://a.com', timestamp: 1, localStorage: {}, sessionStorage: {} },
+      ],
+    });
+    expect(calls[3][0]).toEqual({ type: MessageType.IMPORT_FULL_COMMIT });
+    expect(result).toEqual({ imported: 1 });
+  });
+
+  it('drops snapshots for sessions excluded from the returned idMap', async () => {
+    const data = {
+      version: 1 as const,
+      exportedAt: 1,
+      sessions: [
+        { id: 'dup', name: 'Dup', color: '#fff', createdAt: 1, updatedAt: 1, settings: {} },
+      ],
+      cookieSnapshots: [{ sessionId: 'dup', origin: 'https://a.com', timestamp: 1, cookies: [] }],
+      storageSnapshots: [],
+    };
+    mockSendResponse({ idMap: {}, imported: 0 }); // BEGIN dedupes everything
+    mockSendResponse(undefined); // COMMIT
+
+    const result = await importFull(data);
+
+    const calls = vi.mocked(chrome.runtime.sendMessage).mock.calls;
+    expect(calls).toHaveLength(2); // BEGIN + COMMIT, no CHUNK
+    expect(calls[0][0]).toMatchObject({ type: MessageType.IMPORT_FULL_BEGIN });
+    expect(calls[1][0]).toEqual({ type: MessageType.IMPORT_FULL_COMMIT });
     expect(result).toEqual({ imported: 0 });
   });
 });

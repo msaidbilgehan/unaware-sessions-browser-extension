@@ -8,7 +8,11 @@ import {
   formatRelativeTime,
   estimateCookieBytes,
   estimateRecordBytes,
+  estimateCookieSnapshotBytes,
+  estimateStorageSnapshotBytes,
+  batchByBytes,
 } from '@shared/utils';
+import type { CookieSnapshot, StorageSnapshot } from '@shared/types';
 
 describe('generateId', () => {
   it('returns a valid UUID v4 string', () => {
@@ -163,5 +167,54 @@ describe('estimateRecordBytes', () => {
 
   it('returns 0 for empty record', () => {
     expect(estimateRecordBytes({})).toBe(0);
+  });
+});
+
+describe('estimateStorageSnapshotBytes', () => {
+  it('counts the serialized IndexedDB payload', () => {
+    const base: StorageSnapshot = {
+      sessionId: 's1',
+      origin: 'https://a.com',
+      timestamp: 1,
+      localStorage: {},
+      sessionStorage: {},
+    };
+    const withIdb: StorageSnapshot = {
+      ...base,
+      indexedDB: [{ name: 'db', version: 1, objectStores: [] }],
+    };
+    // The IndexedDB portion adds JSON.stringify length beyond the base size.
+    expect(estimateStorageSnapshotBytes(withIdb)).toBeGreaterThan(
+      estimateStorageSnapshotBytes(base),
+    );
+  });
+});
+
+describe('batchByBytes', () => {
+  const sizeOf = (n: number): number => n;
+
+  it('packs items into budget-bounded batches', () => {
+    // budget 10: [3,4] = 7, adding 5 would be 12 > 10 → new batch
+    expect(batchByBytes([3, 4, 5, 2], sizeOf, 10)).toEqual([
+      [3, 4],
+      [5, 2],
+    ]);
+  });
+
+  it('keeps an oversized item in its own single-item batch', () => {
+    const cookieSnap: CookieSnapshot = {
+      sessionId: 's1',
+      origin: 'https://a.com',
+      timestamp: 1,
+      cookies: [],
+    };
+    // A single item larger than the budget still forms one batch (progress).
+    expect(batchByBytes([100], sizeOf, 10)).toEqual([[100]]);
+    // Sanity: the snapshot estimator is usable as a sizeOf function.
+    expect(estimateCookieSnapshotBytes(cookieSnap)).toBeGreaterThan(0);
+  });
+
+  it('returns no batches for an empty input', () => {
+    expect(batchByBytes([], sizeOf, 10)).toEqual([]);
   });
 });
