@@ -225,8 +225,8 @@ export function deleteSessionStorageEntry(
 
 // ── Full Export / Import ─────────────────────────────────────────
 
-export function exportFull(): Promise<FullExportData> {
-  return sendMessage({ type: MessageType.EXPORT_FULL });
+export function exportFull(sessionIds?: string[]): Promise<FullExportData> {
+  return sendMessage({ type: MessageType.EXPORT_FULL, sessionIds });
 }
 
 export function importFull(data: FullExportData): Promise<{ imported: number }> {

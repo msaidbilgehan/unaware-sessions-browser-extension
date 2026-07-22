@@ -390,8 +390,13 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
 
   // ── Full Export / Import ───────────────────────────────────────
 
-  [MessageType.EXPORT_FULL]: async () => {
-    const sessions = await listSessions();
+  [MessageType.EXPORT_FULL]: async (msg) => {
+    if (msg.type !== MessageType.EXPORT_FULL) return { success: false };
+    const { sessionIds } = msg;
+    const allSessions = await listSessions();
+    const sessions = sessionIds
+      ? allSessions.filter((s) => sessionIds.includes(s.id))
+      : allSessions;
 
     // Collect all cookie + storage snapshots for every session in parallel
     const [cookieResults, storageResults, tombstones] = await Promise.all([

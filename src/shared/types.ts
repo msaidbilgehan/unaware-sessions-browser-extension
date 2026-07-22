@@ -430,6 +430,8 @@ export interface FullExportData {
 
 export interface ExportFullMessage {
   type: MessageType.EXPORT_FULL;
+  /** Restrict the export to these session IDs. Omit to export every session. */
+  sessionIds?: string[];
 }
 
 export interface ImportFullMessage {

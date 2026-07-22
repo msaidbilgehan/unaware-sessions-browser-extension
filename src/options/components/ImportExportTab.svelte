@@ -7,6 +7,7 @@
   import Icon from '@shared/components/Icon.svelte';
   import DragDropZone from './DragDropZone.svelte';
   import ImportDiff from './ImportDiff.svelte';
+  import ExportSelector from './ExportSelector.svelte';
 
   interface Props {
     sessions: SessionProfile[];
@@ -53,29 +54,19 @@
     });
   }
 
-  function handleExport() {
-    const data = JSON.stringify(sessions, null, 2);
-    const blob = new Blob([data], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `unaware-sessions-export-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  async function handleFullExport() {
+  async function handleFullExport(sessionIds: string[]) {
     await withAuth(async () => {
       fullExporting = true;
       importError = '';
       try {
-        const data = await exportFull();
+        const data = await exportFull(sessionIds);
         const json = JSON.stringify(data, null, 2);
         const blob = new Blob([json], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `unaware-sessions-full-${new Date().toISOString().slice(0, 10)}.json`;
+        const suffix = sessionIds.length === sessions.length ? 'full' : 'partial';
+        a.download = `unaware-sessions-${suffix}-${new Date().toISOString().slice(0, 10)}.json`;
         a.click();
         URL.revokeObjectURL(url);
       } catch (err) {
@@ -226,29 +217,14 @@
       </div>
     </div>
 
-    <div class="export-options">
-      <button class="btn" onclick={handleExport} disabled={sessions.length === 0}>
-        <Icon name="download" size={14} />
-        Profiles Only
-      </button>
-      <button
-        class="btn primary"
-        onclick={handleFullExport}
-        disabled={sessions.length === 0 || fullExporting}
-      >
-        {#if fullExporting}
-          <span class="spinner"></span>
-          Exporting...
-        {:else}
-          <Icon name="database" size={14} />
-          Full Export
-        {/if}
-      </button>
-    </div>
+    {#if sessions.length === 0}
+      <p class="empty-hint">No sessions to export yet.</p>
+    {:else}
+      <ExportSelector {sessions} exporting={fullExporting} onexport={handleFullExport} />
+    {/if}
 
     <div class="export-hint">
-      <p><strong>Profiles Only</strong> — Session names, colors, and emojis. Lightweight.</p>
-      <p><strong>Full Export</strong> — Includes all saved cookies and storage data. Use this to transfer sessions between browsers or back up login states.</p>
+      <p><strong>Full Export</strong> — Includes all saved cookies and storage data for the sessions you select above. Use this to transfer sessions between browsers or back up login states.</p>
     </div>
   </section>
 
@@ -525,10 +501,10 @@
     background: var(--color-success-soft);
   }
 
-  /* Export options */
-  .export-options {
-    display: flex;
-    gap: var(--space-3);
+  .empty-hint {
+    font-size: var(--text-sm);
+    color: var(--color-text-tertiary);
+    margin: 0;
   }
 
   .export-hint {
