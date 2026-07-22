@@ -92,11 +92,32 @@ export async function buildLocalManifest(
 
 // ── Conflict Detection ─────────────────────────────────────
 
+/**
+ * A key differs between local and remote. Real conflicts require both sides
+ * to have moved since the last successful sync — if one side still matches
+ * the recorded baseline, only the other side changed and detectConflicts
+ * must not flag it (autoResolveOneSidedChanges fast-forwards it instead). No
+ * baseline recorded for the key (pre-upgrade installs, or a key that has
+ * never completed a sync) falls back to treating it as a conflict — the
+ * safe, pre-existing behavior — until a baseline gets recorded for it.
+ */
+function isGenuineConflict(
+  localChecksum: string,
+  remoteChecksum: string,
+  baseline: string | undefined,
+): boolean {
+  if (baseline === undefined) return true;
+  const onlyLocalChanged = remoteChecksum === baseline;
+  const onlyRemoteChanged = localChecksum === baseline;
+  return !onlyLocalChanged && !onlyRemoteChanged;
+}
+
 export function detectConflicts(
   localManifest: SyncManifest,
   remoteManifest: SyncManifest,
   localData: FullExportData,
   remoteData: FullExportData,
+  lastSyncedChecksums: Record<string, string>,
 ): ConflictEntry[] {
   const allKeys = new Set([
     ...Object.keys(localManifest.checksums),
@@ -136,7 +157,12 @@ export function detectConflicts(
     const localChecksum = localManifest.checksums[key];
     const remoteChecksum = remoteManifest.checksums[key];
 
-    if (localChecksum && remoteChecksum && localChecksum !== remoteChecksum) {
+    if (
+      localChecksum &&
+      remoteChecksum &&
+      localChecksum !== remoteChecksum &&
+      isGenuineConflict(localChecksum, remoteChecksum, lastSyncedChecksums[key])
+    ) {
       const [sessionId, ...originParts] = key.split(':');
       const origin = originParts.join(':');
       const ts = timestampMap.get(key) ?? { local: 0, remote: 0 };
@@ -153,6 +179,53 @@ export function detectConflicts(
   }
 
   return conflicts;
+}
+
+/**
+ * For same-key checksum mismatches that isGenuineConflict ruled out as
+ * one-sided (exactly one side moved since the last synced baseline),
+ * produces synthetic resolutions so mergeData's 'ask' branch fast-forwards
+ * to whichever side actually changed — without them it falls through to its
+ * "both sides present, no resolution" default of always keeping local,
+ * which would silently discard a remote-only update the moment it stops
+ * being (mis)flagged as a conflict.
+ */
+export function autoResolveOneSidedChanges(
+  localManifest: SyncManifest,
+  remoteManifest: SyncManifest,
+  lastSyncedChecksums: Record<string, string>,
+): ConflictEntry[] {
+  const allKeys = new Set([
+    ...Object.keys(localManifest.checksums),
+    ...Object.keys(remoteManifest.checksums),
+  ]);
+
+  const resolutions: ConflictEntry[] = [];
+
+  for (const key of allKeys) {
+    const localChecksum = localManifest.checksums[key];
+    const remoteChecksum = remoteManifest.checksums[key];
+    if (!localChecksum || !remoteChecksum || localChecksum === remoteChecksum) continue;
+
+    const baseline = lastSyncedChecksums[key];
+    if (isGenuineConflict(localChecksum, remoteChecksum, baseline)) continue;
+
+    const [sessionId, ...originParts] = key.split(':');
+    const origin = originParts.join(':');
+    // baseline is defined here — isGenuineConflict only returns false when it is.
+    const resolution: 'local' | 'cloud' = remoteChecksum === baseline ? 'local' : 'cloud';
+
+    resolutions.push({
+      sessionId,
+      sessionName: sessionId,
+      origin,
+      localTimestamp: 0,
+      cloudTimestamp: 0,
+      resolution,
+    });
+  }
+
+  return resolutions;
 }
 
 // ── Data Merging ───────────────────────────────────────────
@@ -490,7 +563,11 @@ export async function executeSyncCycle(
     log.info('Sync: first sync, uploading local data');
     const payload = await encrypt(localData, passphrase);
     await uploadPayloadThenManifest(token, localManifest, payload, manifestRef, payloadRef);
-    await setSyncConfig({ lastSyncAt: Date.now(), lastSyncError: '' });
+    await setSyncConfig({
+      lastSyncAt: Date.now(),
+      lastSyncError: '',
+      lastSyncedChecksums: localManifest.checksums,
+    });
     log.info('Sync: first sync complete');
     return { status: 'idle', progress: '', conflicts: [] };
   }
@@ -525,7 +602,14 @@ export async function executeSyncCycle(
 
   if (allSame && sessionsSame) {
     log.info('Sync: no changes detected');
-    await setSyncConfig({ lastSyncAt: Date.now(), lastSyncError: '' });
+    // Defensive backfill: if the baseline was never recorded for these keys
+    // (pre-upgrade installs), both sides already agreeing here means it's
+    // safe to record it now rather than waiting for the next divergence.
+    await setSyncConfig({
+      lastSyncAt: Date.now(),
+      lastSyncError: '',
+      lastSyncedChecksums: localManifest.checksums,
+    });
     return { status: 'idle', progress: '', conflicts: [] };
   }
 
@@ -534,7 +618,11 @@ export async function executeSyncCycle(
     log.info('Sync: trust-local, uploading');
     const payload = await encrypt(localData, passphrase);
     await uploadPayloadThenManifest(token, localManifest, payload, manifestRef, payloadRef);
-    await setSyncConfig({ lastSyncAt: Date.now(), lastSyncError: '' });
+    await setSyncConfig({
+      lastSyncAt: Date.now(),
+      lastSyncError: '',
+      lastSyncedChecksums: localManifest.checksums,
+    });
     return { status: 'idle', progress: '', conflicts: [] };
   }
 
@@ -563,7 +651,11 @@ export async function executeSyncCycle(
       log.warn('Sync: cannot read remote payload — overwriting with local data');
       const payload = await encrypt(localData, passphrase);
       await uploadPayloadThenManifest(token, localManifest, payload, manifestRef, payloadRef);
-      await setSyncConfig({ lastSyncAt: Date.now(), lastSyncError: '' });
+      await setSyncConfig({
+        lastSyncAt: Date.now(),
+        lastSyncError: '',
+        lastSyncedChecksums: localManifest.checksums,
+      });
       return { status: 'idle', progress: '', conflicts: [] };
     }
 
@@ -586,12 +678,22 @@ export async function executeSyncCycle(
   if (mergeStrategy === 'trust-cloud') {
     log.info('Sync: trust-cloud, applying remote data');
     await applyFullData(remoteData);
-    await setSyncConfig({ lastSyncAt: Date.now(), lastSyncError: '' });
+    await setSyncConfig({
+      lastSyncAt: Date.now(),
+      lastSyncError: '',
+      lastSyncedChecksums: remoteManifest.checksums,
+    });
     return { status: 'idle', progress: '', conflicts: [] };
   }
 
   // 9. Strategy: ask — detect conflicts
-  const conflicts = detectConflicts(localManifest, remoteManifest, localData, remoteData);
+  const conflicts = detectConflicts(
+    localManifest,
+    remoteManifest,
+    localData,
+    remoteData,
+    config.lastSyncedChecksums,
+  );
 
   if (conflicts.length > 0) {
     const resolvedKeys = new Set(
@@ -615,8 +717,19 @@ export async function executeSyncCycle(
     }
   }
 
-  // 10. Merge data
-  const merged = mergeData(localData, remoteData, 'ask', pendingResolutions ?? []);
+  // 10. Merge data — explicit user resolutions plus auto-resolved one-sided
+  // keys that detectConflicts skipped above (they still differ and need a
+  // direction, or mergeData's no-resolution default would silently keep
+  // local and discard a remote-only update).
+  const autoResolutions = autoResolveOneSidedChanges(
+    localManifest,
+    remoteManifest,
+    config.lastSyncedChecksums,
+  );
+  const merged = mergeData(localData, remoteData, 'ask', [
+    ...(pendingResolutions ?? []),
+    ...autoResolutions,
+  ]);
 
   log.info('Sync: applying merged data');
   await applyFullData(merged);
@@ -626,7 +739,11 @@ export async function executeSyncCycle(
   const mergedPayload = await encrypt(merged, passphrase);
   await uploadPayloadThenManifest(token, mergedManifest, mergedPayload, manifestRef, payloadRef);
 
-  await setSyncConfig({ lastSyncAt: Date.now(), lastSyncError: '' });
+  await setSyncConfig({
+    lastSyncAt: Date.now(),
+    lastSyncError: '',
+    lastSyncedChecksums: mergedManifest.checksums,
+  });
   log.info('Sync: complete');
   return { status: 'idle', progress: '', conflicts: [] };
 }
