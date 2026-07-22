@@ -1,3 +1,5 @@
+import type { CookieSnapshot, StorageSnapshot } from '@shared/types';
+
 export function generateId(): string {
   return crypto.randomUUID();
 }
@@ -48,6 +50,54 @@ export function estimateRecordBytes(record: Record<string, string>): number {
     bytes += key.length + record[key].length + 6;
   }
   return bytes;
+}
+
+/** Rough serialized size of a cookie snapshot — used to size export/import chunks. */
+export function estimateCookieSnapshotBytes(snapshot: CookieSnapshot): number {
+  return estimateCookieBytes(snapshot.cookies) + snapshot.origin.length + 64;
+}
+
+/**
+ * Rough serialized size of a storage snapshot. IndexedDB records dominate and
+ * have no cheap length estimate, so stringify only that portion.
+ */
+export function estimateStorageSnapshotBytes(snapshot: StorageSnapshot): number {
+  let bytes =
+    estimateRecordBytes(snapshot.localStorage) +
+    estimateRecordBytes(snapshot.sessionStorage) +
+    snapshot.origin.length +
+    64;
+  if (snapshot.indexedDB && snapshot.indexedDB.length > 0) {
+    bytes += JSON.stringify(snapshot.indexedDB).length;
+  }
+  return bytes;
+}
+
+/**
+ * Greedily pack items into batches whose estimated byte size stays under
+ * `budget`. Each batch holds at least one item, so a single oversized item
+ * still makes progress (its transfer may then fail loudly rather than hang).
+ */
+export function batchByBytes<T>(
+  items: readonly T[],
+  sizeOf: (item: T) => number,
+  budget: number,
+): T[][] {
+  const batches: T[][] = [];
+  let current: T[] = [];
+  let bytes = 0;
+  for (const item of items) {
+    const size = sizeOf(item);
+    if (current.length > 0 && bytes + size > budget) {
+      batches.push(current);
+      current = [];
+      bytes = 0;
+    }
+    current.push(item);
+    bytes += size;
+  }
+  if (current.length > 0) batches.push(current);
+  return batches;
 }
 
 export function buildCookieUrl(cookie: chrome.cookies.Cookie): string {

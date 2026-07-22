@@ -2,9 +2,10 @@ import { MessageType } from '@shared/types';
 import type {
   Message,
   MessageResponse,
-  FullExportData,
   CookieSnapshot,
   StorageSnapshot,
+  ExportUnit,
+  ExportFullInitResult,
 } from '@shared/types';
 import { createLogger } from '@shared/logger';
 
@@ -44,7 +45,14 @@ import { cookieStore } from './cookie-store';
 import { storageStore } from './storage-store';
 import { STORAGE_KEYS } from '@shared/constants';
 import { setLocal } from '@shared/storage';
-import { estimateCookieBytes, estimateRecordBytes, extractDomain, generateId } from '@shared/utils';
+import {
+  estimateCookieBytes,
+  estimateRecordBytes,
+  estimateCookieSnapshotBytes,
+  estimateStorageSnapshotBytes,
+  extractDomain,
+  generateId,
+} from '@shared/utils';
 import type {
   CookieDiffEntry,
   CookieDiffResult,
@@ -61,6 +69,11 @@ type MessageHandler = (
   message: Message,
   sender: chrome.runtime.MessageSender,
 ) => Promise<MessageResponse>;
+
+// Per-chunk estimated-byte budget for a full export. Chrome caps a single
+// runtime message at 64 MiB; this leaves ample headroom for serialization and
+// the base64 marker inflation of binary IndexedDB values.
+const EXPORT_CHUNK_BUDGET_BYTES = 24 * 1024 * 1024;
 
 const handlers: Partial<Record<MessageType, MessageHandler>> = {
   [MessageType.CREATE_SESSION]: async (msg) => {
@@ -390,76 +403,141 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
 
   // ── Full Export / Import ───────────────────────────────────────
 
-  [MessageType.EXPORT_FULL]: async (msg) => {
-    if (msg.type !== MessageType.EXPORT_FULL) return { success: false };
+  [MessageType.EXPORT_FULL_INIT]: async (msg) => {
+    if (msg.type !== MessageType.EXPORT_FULL_INIT) return { success: false };
     const { sessionIds } = msg;
     const allSessions = await listSessions();
     const sessions = sessionIds
       ? allSessions.filter((s) => sessionIds.includes(s.id))
       : allSessions;
+    const selectedIds = new Set(sessions.map((s) => s.id));
 
-    // Collect all cookie + storage snapshots for every session in parallel
-    const [cookieResults, storageResults, tombstones] = await Promise.all([
-      Promise.all(sessions.map((s) => cookieStore.getAllSnapshotsForSession(s.id))),
-      Promise.all(sessions.map((s) => storageStore.getAllSnapshotsForSession(s.id))),
+    // The snapshot data is streamed later in EXPORT_FULL_CHUNK; here we return
+    // only the small metadata plus the ordered plan of (sessionId, origin)
+    // units to fetch. Union the origins from both stores — a session may have
+    // cookies for an origin but no DOM storage, or vice versa.
+    const [cookieOrigins, storageOrigins, tombstones] = await Promise.all([
+      cookieStore.getAllSessionOrigins(),
+      storageStore.getAllSessionOrigins(),
       getSessionTombstones(),
     ]);
 
-    const cookieSnapshots: CookieSnapshot[] = cookieResults.flat();
-    const storageSnapshots: StorageSnapshot[] = storageResults.flat();
+    const units: ExportUnit[] = [];
+    for (const session of sessions) {
+      const origins = new Set<string>([
+        ...(cookieOrigins[session.id] ?? []),
+        ...(storageOrigins[session.id] ?? []),
+      ]);
+      for (const origin of origins) {
+        units.push({ sessionId: session.id, origin });
+      }
+    }
+    // Defensive: drop any unit whose session was filtered out.
+    const planned = units.filter((u) => selectedIds.has(u.sessionId));
 
-    const data: FullExportData = {
+    const data: ExportFullInitResult = {
       version: 1,
       exportedAt: Date.now(),
       sessions,
-      cookieSnapshots,
-      storageSnapshots,
       deletedSessions: pruneTombstones(tombstones),
+      units: planned,
     };
 
     return { success: true, data };
   },
 
-  [MessageType.IMPORT_FULL]: async (msg) => {
-    if (msg.type !== MessageType.IMPORT_FULL) return { success: false };
-    const { data } = msg;
+  [MessageType.EXPORT_FULL_CHUNK]: async (msg) => {
+    if (msg.type !== MessageType.EXPORT_FULL_CHUNK) return { success: false };
+    const { units } = msg;
 
-    // Validate structure
-    if (data.version !== 1 || !Array.isArray(data.sessions)) {
+    const cookieSnapshots: CookieSnapshot[] = [];
+    const storageSnapshots: StorageSnapshot[] = [];
+    let bytes = 0;
+    let consumed = 0;
+
+    for (const unit of units) {
+      const [cookieSnap, storageSnap] = await Promise.all([
+        cookieStore.load(unit.sessionId, unit.origin),
+        storageStore.load(unit.sessionId, unit.origin),
+      ]);
+
+      let unitBytes = 0;
+      if (cookieSnap) unitBytes += estimateCookieSnapshotBytes(cookieSnap);
+      if (storageSnap) unitBytes += estimateStorageSnapshotBytes(storageSnap);
+
+      // Always include at least one unit so the caller's cursor advances even
+      // when a single origin exceeds the budget (its transfer would then fail
+      // loudly rather than the export hanging).
+      if (consumed > 0 && bytes + unitBytes > EXPORT_CHUNK_BUDGET_BYTES) break;
+
+      if (cookieSnap) cookieSnapshots.push(cookieSnap);
+      if (storageSnap) storageSnapshots.push(storageSnap);
+      bytes += unitBytes;
+      consumed++;
+    }
+
+    return { success: true, data: { cookieSnapshots, storageSnapshots, consumed } };
+  },
+
+  [MessageType.IMPORT_FULL_BEGIN]: async (msg) => {
+    if (msg.type !== MessageType.IMPORT_FULL_BEGIN) return { success: false };
+    const { sessions, idMap } = msg;
+
+    if (!Array.isArray(sessions)) {
       return { success: false, error: 'Invalid full export format' };
     }
 
-    let imported = 0;
-
-    // Import sessions — skip duplicates by name
+    // Create sessions with the caller-provided IDs (idempotency keys). A retry
+    // resends the same IDs, so createSession is a no-op the second time and the
+    // returned map is identical. Snapshots stream in later via IMPORT_FULL_CHUNK,
+    // remapped to these new IDs by the caller.
+    //
+    // Dedup is against sessions that existed *before* this import only (name
+    // set captured once). Two profiles that share a name within the payload are
+    // both distinct sessions and are both created — matching prior behavior.
     const existingSessions = await listSessions();
     const existingNames = new Set(existingSessions.map((s) => s.name));
+    const existingIds = new Set(existingSessions.map((s) => s.id));
 
-    for (const profile of data.sessions) {
+    const created: Record<string, string> = {};
+    let imported = 0;
+
+    for (const profile of sessions) {
       if (!profile.name || !profile.color) continue;
-      if (existingNames.has(profile.name)) continue;
+      const newId = idMap[profile.id];
+      if (!newId) continue;
 
-      const session = await createSession(profile.name, profile.color, profile.emoji);
+      // A session this import already created in a prior attempt (same newId,
+      // now "existing") is not a duplicate — recreating it is a no-op. Any
+      // other name collision with a pre-existing session is skipped.
+      const isPriorAttempt = existingIds.has(newId);
+      if (existingNames.has(profile.name) && !isPriorAttempt) continue;
 
-      // Remap cookie snapshots from old sessionId to new sessionId
-      const oldId = profile.id;
-      const newId = session.id;
-
-      for (const snap of data.cookieSnapshots) {
-        if (snap.sessionId !== oldId) continue;
-        await cookieStore.save({ ...snap, sessionId: newId });
-      }
-
-      for (const snap of data.storageSnapshots) {
-        if (snap.sessionId !== oldId) continue;
-        await storageStore.save({ ...snap, sessionId: newId });
-      }
-
+      await createSession(profile.name, profile.color, profile.emoji, newId);
+      created[profile.id] = newId;
       imported++;
     }
 
+    return { success: true, data: { idMap: created, imported } };
+  },
+
+  [MessageType.IMPORT_FULL_CHUNK]: async (msg) => {
+    if (msg.type !== MessageType.IMPORT_FULL_CHUNK) return { success: false };
+    // Snapshots arrive already remapped to their new session IDs. Saves are
+    // put-by-key, so replaying a chunk after a connection-error retry is safe.
+    for (const snap of msg.cookieSnapshots) {
+      await cookieStore.save(snap);
+    }
+    for (const snap of msg.storageSnapshots) {
+      await storageStore.save(snap);
+    }
+    return { success: true };
+  },
+
+  [MessageType.IMPORT_FULL_COMMIT]: async (msg) => {
+    if (msg.type !== MessageType.IMPORT_FULL_COMMIT) return { success: false };
     await rebuildContextMenu();
-    return { success: true, data: { imported } };
+    return { success: true };
   },
 
   // ── Debug handlers ─────────────────────────────────────────────

@@ -208,9 +208,12 @@ export enum MessageType {
   CONTENT_SCRIPT_READY = 'CONTENT_SCRIPT_READY',
   PING = 'PING',
 
-  // Import / Export (full)
-  EXPORT_FULL = 'EXPORT_FULL',
-  IMPORT_FULL = 'IMPORT_FULL',
+  // Import / Export (full) — chunked to stay under Chrome's 64 MiB per-message cap
+  EXPORT_FULL_INIT = 'EXPORT_FULL_INIT',
+  EXPORT_FULL_CHUNK = 'EXPORT_FULL_CHUNK',
+  IMPORT_FULL_BEGIN = 'IMPORT_FULL_BEGIN',
+  IMPORT_FULL_CHUNK = 'IMPORT_FULL_CHUNK',
+  IMPORT_FULL_COMMIT = 'IMPORT_FULL_COMMIT',
 
   // Debug
   GET_LIVE_COOKIES = 'GET_LIVE_COOKIES',
@@ -428,15 +431,69 @@ export interface FullExportData {
   deletedSessions?: Record<string, number>;
 }
 
-export interface ExportFullMessage {
-  type: MessageType.EXPORT_FULL;
+/**
+ * One (sessionId, origin) pair to transfer. A full export is chunked along
+ * these units so no single message approaches Chrome's 64 MiB cap.
+ */
+export interface ExportUnit {
+  sessionId: string;
+  origin: string;
+}
+
+export interface ExportFullInitMessage {
+  type: MessageType.EXPORT_FULL_INIT;
   /** Restrict the export to these session IDs. Omit to export every session. */
   sessionIds?: string[];
 }
 
-export interface ImportFullMessage {
-  type: MessageType.IMPORT_FULL;
-  data: FullExportData;
+/** Small metadata + the chunk plan returned by EXPORT_FULL_INIT. */
+export interface ExportFullInitResult {
+  version: 1;
+  exportedAt: number;
+  sessions: SessionProfile[];
+  deletedSessions: Record<string, number>;
+  /** Ordered list of every (sessionId, origin) that has snapshot data. */
+  units: ExportUnit[];
+}
+
+export interface ExportFullChunkMessage {
+  type: MessageType.EXPORT_FULL_CHUNK;
+  /** A bounded slice of the init plan's units, fetched in order. */
+  units: ExportUnit[];
+}
+
+export interface ExportFullChunkResult {
+  cookieSnapshots: CookieSnapshot[];
+  storageSnapshots: StorageSnapshot[];
+  /** How many of the provided units were included (always >= 1). */
+  consumed: number;
+}
+
+export interface ImportFullBeginMessage {
+  type: MessageType.IMPORT_FULL_BEGIN;
+  sessions: SessionProfile[];
+  /**
+   * Client-generated oldId → newId map (idempotency keys). A connection-error
+   * retry resends the same map, so sessions are created at most once.
+   */
+  idMap: Record<string, string>;
+}
+
+export interface ImportFullBeginResult {
+  /** oldId → newId for sessions actually created (duplicates by name excluded). */
+  idMap: Record<string, string>;
+  imported: number;
+}
+
+export interface ImportFullChunkMessage {
+  type: MessageType.IMPORT_FULL_CHUNK;
+  /** Snapshots already remapped to their new session IDs by the caller. */
+  cookieSnapshots: CookieSnapshot[];
+  storageSnapshots: StorageSnapshot[];
+}
+
+export interface ImportFullCommitMessage {
+  type: MessageType.IMPORT_FULL_COMMIT;
 }
 
 // ── Debug Messages ──────────────────────────────────────────────
@@ -587,8 +644,11 @@ export type Message =
   | UpdateSessionStorageEntryMessage
   | DeleteSessionStorageEntryMessage
   | RefreshActiveSessionsMessage
-  | ExportFullMessage
-  | ImportFullMessage
+  | ExportFullInitMessage
+  | ExportFullChunkMessage
+  | ImportFullBeginMessage
+  | ImportFullChunkMessage
+  | ImportFullCommitMessage
   | GetLiveCookiesMessage
   | GetCookieDiffMessage
   | GetRestoreFailuresMessage

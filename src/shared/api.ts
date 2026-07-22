@@ -9,10 +9,20 @@ import type {
   LiveCookieInfo,
   RestoreFailureEntry,
   FullExportData,
+  CookieSnapshot,
+  StorageSnapshot,
+  ExportFullInitResult,
+  ExportFullChunkResult,
+  ImportFullBeginResult,
   LogEntry,
 } from '@shared/types';
 import type { SyncConfig, SyncState, ConflictEntry } from '@shared/sync/sync-types';
-import { generateId } from '@shared/utils';
+import {
+  generateId,
+  batchByBytes,
+  estimateCookieSnapshotBytes,
+  estimateStorageSnapshotBytes,
+} from '@shared/utils';
 
 // Note for mutating messages: "message port closed" can occur AFTER the
 // handler ran, so a retry re-executes the operation. Handlers must therefore
@@ -225,12 +235,98 @@ export function deleteSessionStorageEntry(
 
 // ── Full Export / Import ─────────────────────────────────────────
 
-export function exportFull(sessionIds?: string[]): Promise<FullExportData> {
-  return sendMessage({ type: MessageType.EXPORT_FULL, sessionIds });
+// Cap the units array carried in a single EXPORT_FULL_CHUNK request. The
+// request itself stays tiny (the service worker byte-trims within it and
+// reports how many it consumed); this only bounds round-trip granularity.
+const MAX_EXPORT_UNITS_PER_REQUEST = 500;
+
+// Estimated-byte budget per IMPORT_FULL_CHUNK, mirroring the export budget so
+// no single message nears Chrome's 64 MiB cap.
+const IMPORT_CHUNK_BUDGET_BYTES = 24 * 1024 * 1024;
+
+/**
+ * Export sessions with all cookie and storage data. The transfer is streamed
+ * in byte-bounded chunks so no single message hits Chrome's 64 MiB limit, then
+ * reassembled here into a single {@link FullExportData}.
+ */
+export async function exportFull(sessionIds?: string[]): Promise<FullExportData> {
+  const init = await sendMessage<ExportFullInitResult>({
+    type: MessageType.EXPORT_FULL_INIT,
+    sessionIds,
+  });
+
+  const cookieSnapshots: CookieSnapshot[] = [];
+  const storageSnapshots: StorageSnapshot[] = [];
+
+  let cursor = 0;
+  while (cursor < init.units.length) {
+    const slice = init.units.slice(cursor, cursor + MAX_EXPORT_UNITS_PER_REQUEST);
+    const chunk = await sendMessage<ExportFullChunkResult>({
+      type: MessageType.EXPORT_FULL_CHUNK,
+      units: slice,
+    });
+    // Append without spread — these arrays can be very large and spreading
+    // as call arguments risks a stack overflow.
+    for (const snap of chunk.cookieSnapshots) cookieSnapshots.push(snap);
+    for (const snap of chunk.storageSnapshots) storageSnapshots.push(snap);
+    // The service worker always consumes >= 1; guard against 0 to avoid a hang.
+    cursor += Math.max(1, chunk.consumed);
+  }
+
+  return {
+    version: init.version,
+    exportedAt: init.exportedAt,
+    sessions: init.sessions,
+    cookieSnapshots,
+    storageSnapshots,
+    deletedSessions: init.deletedSessions,
+  };
 }
 
-export function importFull(data: FullExportData): Promise<{ imported: number }> {
-  return sendMessage({ type: MessageType.IMPORT_FULL, data });
+/**
+ * Import a full export. Sessions are created first (with client-generated IDs
+ * as idempotency keys), then snapshots stream in byte-bounded chunks, then the
+ * import is committed. Keeps every message under Chrome's 64 MiB limit.
+ */
+export async function importFull(data: FullExportData): Promise<{ imported: number }> {
+  const idMap: Record<string, string> = {};
+  for (const session of data.sessions) {
+    idMap[session.id] = generateId();
+  }
+
+  const begin = await sendMessage<ImportFullBeginResult>({
+    type: MessageType.IMPORT_FULL_BEGIN,
+    sessions: data.sessions,
+    idMap,
+  });
+
+  // Stream snapshots only for sessions that were actually created (duplicates
+  // by name are excluded), remapped from old to new session IDs.
+  const created = begin.idMap;
+  const cookies = data.cookieSnapshots
+    .filter((s) => created[s.sessionId] !== undefined)
+    .map((s) => ({ ...s, sessionId: created[s.sessionId] }));
+  const storage = data.storageSnapshots
+    .filter((s) => created[s.sessionId] !== undefined)
+    .map((s) => ({ ...s, sessionId: created[s.sessionId] }));
+
+  for (const batch of batchByBytes(cookies, estimateCookieSnapshotBytes, IMPORT_CHUNK_BUDGET_BYTES)) {
+    await sendMessage({
+      type: MessageType.IMPORT_FULL_CHUNK,
+      cookieSnapshots: batch,
+      storageSnapshots: [],
+    });
+  }
+  for (const batch of batchByBytes(storage, estimateStorageSnapshotBytes, IMPORT_CHUNK_BUDGET_BYTES)) {
+    await sendMessage({
+      type: MessageType.IMPORT_FULL_CHUNK,
+      cookieSnapshots: [],
+      storageSnapshots: batch,
+    });
+  }
+
+  await sendMessage({ type: MessageType.IMPORT_FULL_COMMIT });
+  return { imported: begin.imported };
 }
 
 // ── Debug API ────────────────────────────────────────────────────
