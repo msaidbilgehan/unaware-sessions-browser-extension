@@ -581,6 +581,49 @@ describe('messaging', () => {
     expect(data.storageSnapshots).toEqual([]);
   });
 
+  it('handles EXPORT_FULL with a sessionIds filter', async () => {
+    const createA = await sendTestMessage({
+      type: MessageType.CREATE_SESSION,
+      name: 'export-filter-a',
+      color: '#3B82F6',
+    });
+    const createB = await sendTestMessage({
+      type: MessageType.CREATE_SESSION,
+      name: 'export-filter-b',
+      color: '#EF4444',
+    });
+    const sessionA = createA.data as { id: string };
+    const sessionB = createB.data as { id: string };
+
+    await cookieStore.save({
+      sessionId: sessionA.id,
+      origin: 'https://a.example.com',
+      timestamp: Date.now(),
+      cookies: [],
+    });
+    await cookieStore.save({
+      sessionId: sessionB.id,
+      origin: 'https://b.example.com',
+      timestamp: Date.now(),
+      cookies: [],
+    });
+
+    const response = await sendTestMessage({
+      type: MessageType.EXPORT_FULL,
+      sessionIds: [sessionA.id],
+    });
+
+    expect(response.success).toBe(true);
+    const data = response.data as {
+      sessions: Array<{ id: string }>;
+      cookieSnapshots: Array<{ sessionId: string }>;
+    };
+    expect(data.sessions).toHaveLength(1);
+    expect(data.sessions[0].id).toBe(sessionA.id);
+    expect(data.cookieSnapshots).toHaveLength(1);
+    expect(data.cookieSnapshots[0].sessionId).toBe(sessionA.id);
+  });
+
   it('handles IMPORT_FULL with valid data', async () => {
     const response = await sendTestMessage({
       type: MessageType.IMPORT_FULL,

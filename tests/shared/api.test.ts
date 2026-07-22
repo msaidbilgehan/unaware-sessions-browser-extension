@@ -524,6 +524,18 @@ describe('exportFull', () => {
     });
     expect(result).toEqual(data);
   });
+
+  it('sends EXPORT_FULL with a sessionIds filter', async () => {
+    const data = { version: 1, exportedAt: 1, sessions: [], cookieSnapshots: [], storageSnapshots: [] };
+    mockSendResponse(data);
+
+    await exportFull(['s1', 's2']);
+
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
+      type: MessageType.EXPORT_FULL,
+      sessionIds: ['s1', 's2'],
+    });
+  });
 });
 
 describe('importFull', () => {
