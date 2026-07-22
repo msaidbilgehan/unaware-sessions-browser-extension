@@ -650,6 +650,9 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
       lastSyncError: '',
       deviceId: '',
       googleId: '',
+      // A conflict pending against the connection being torn down would
+      // otherwise leave the badge/banner warning about it indefinitely.
+      pendingConflicts: [],
     });
     return { success: true };
   },

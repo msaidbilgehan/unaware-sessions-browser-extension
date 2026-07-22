@@ -67,6 +67,12 @@ async function runSyncCycle(resolutions?: ConflictEntry[]): Promise<SyncState> {
     const { remoteCache, ...state } = result;
     currentSyncState = state;
     cachedRemote = state.status === 'conflict' ? (remoteCache ?? null) : null;
+    // Persisted mirror of the conflict set: currentSyncState is in-memory
+    // only and lost on SW restart, so the badge/popup/options UI read this
+    // instead — it survives regardless of which SW instance detected it.
+    await setSyncConfig({
+      pendingConflicts: state.status === 'conflict' ? state.conflicts : [],
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     currentSyncState = { status: 'error', progress: msg, conflicts: [] };
