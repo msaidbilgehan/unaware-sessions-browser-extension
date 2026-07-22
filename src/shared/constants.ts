@@ -91,8 +91,12 @@ export const STORAGE_STORE_DB_NAME = 'unaware-sessions-storage';
 export const STORAGE_STORE_NAME = 'snapshots';
 export const STORAGE_STORE_DB_VERSION = 1;
 
-export const IDB_SNAPSHOT_TIMEOUT_MS = 5000;
-export const IDB_SNAPSHOT_MAX_SIZE_MB = 50;
+// These two move together: the timeout bounds how long a single database's
+// cursor iteration + JSON encoding may run in the content script, so raising
+// the size ceiling without raising the timeout just trades a clear
+// "exceeds NMB" skip for a same-effect "operation timed out" failure.
+export const IDB_SNAPSHOT_TIMEOUT_MS = 50000;
+export const IDB_SNAPSHOT_MAX_SIZE_MB = 500;
 
 export const GITHUB_URL = 'https://github.com/msaidbilgehan/unaware-sessions-browser-extension/';
 export const OPENCOLLECTIVE_URL = 'https://opencollective.com/unaware-sessions-browser-ext';
