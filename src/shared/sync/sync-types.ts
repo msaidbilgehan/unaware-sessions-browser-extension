@@ -12,6 +12,17 @@ export interface SyncConfig {
   lastSyncError: string;
   deviceId: string;
   googleId: string;
+  // Per-origin ("sessionId:origin") checksum recorded at the moment each key
+  // last matched between local and remote. detectConflicts compares against
+  // this baseline instead of only local-vs-remote, so a key that moved on
+  // only one side since the last successful sync fast-forwards instead of
+  // being misdiagnosed as a conflict.
+  lastSyncedChecksums: Record<string, string>;
+  // Persisted mirror of the last detected conflict set (SyncState.conflicts
+  // is in-memory only and lost on service worker restart). Lets the badge,
+  // popup, and options UI warn about an unresolved conflict regardless of
+  // which context — or which now-terminated SW instance — first detected it.
+  pendingConflicts: ConflictEntry[];
 }
 
 // ── Sync State (transient, in-memory) ──────────────────────

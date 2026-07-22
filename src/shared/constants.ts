@@ -59,6 +59,8 @@ export const DEFAULT_SYNC_CONFIG: SyncConfig = {
   lastSyncError: '',
   deviceId: '',
   googleId: '',
+  lastSyncedChecksums: {},
+  pendingConflicts: [],
 };
 
 export const SYNC_INTERVAL_OPTIONS: { value: SyncInterval; label: string }[] = [
