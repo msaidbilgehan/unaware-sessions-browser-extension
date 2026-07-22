@@ -18,6 +18,11 @@
   } from '@shared/settings-store';
   import { STORAGE_KEYS } from '@shared/constants';
   import {
+    initSyncStore,
+    getSyncConfig,
+    onSyncConfigChange,
+  } from '@shared/sync/sync-store';
+  import {
     listSessions,
     createSession,
     deleteSession as deleteSessionApi,
@@ -525,6 +530,27 @@
 
   // Auto-refresh is handled by the service worker alarm (background/auto-refresh.ts).
   // The storage listener above picks up changes and updates the UI quietly.
+
+  // Cloud-sync conflict warning. pendingConflicts is persisted, so a conflict
+  // raised by a background auto-sync the user never saw still surfaces here.
+  // Register the listener before initSyncStore so the post-hydration notify
+  // isn't missed; initSyncStore also wires the storage listener that relays
+  // the background's writes into this popup context.
+  let syncConflictCount = $state(0);
+
+  $effect(() => {
+    const unsub = onSyncConfigChange((cfg) => {
+      syncConflictCount = cfg.pendingConflicts?.length ?? 0;
+    });
+    initSyncStore().then(() => {
+      syncConflictCount = getSyncConfig().pendingConflicts?.length ?? 0;
+    });
+    return unsub;
+  });
+
+  function openSettings() {
+    chrome.runtime.openOptionsPage();
+  }
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -574,6 +600,17 @@
           </button>
         </div>
       </div>
+
+      {#if syncConflictCount > 0}
+        <button class="sync-conflict-banner" onclick={openSettings}>
+          <Icon name="alert-triangle" size={14} />
+          <span class="conflict-banner-label">
+            {syncConflictCount} sync {syncConflictCount === 1 ? 'conflict' : 'conflicts'} — auto-sync
+            paused
+          </span>
+          <Icon name="chevron-right" size={14} />
+        </button>
+      {/if}
 
       <CurrentTabPanel
         {currentOrigin}
@@ -744,6 +781,45 @@
     border-color: var(--color-accent-muted);
     border-style: solid;
     color: var(--color-accent);
+  }
+
+  /* Sync conflict banner */
+  .sync-conflict-banner {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    width: 100%;
+    padding: var(--space-4) var(--space-5);
+    background: var(--color-warning-soft);
+    border: 1px solid var(--color-warning);
+    border-radius: var(--radius-lg);
+    font-family: var(--font-sans);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    text-align: left;
+  }
+
+  .sync-conflict-banner:hover {
+    filter: brightness(0.98);
+  }
+
+  .sync-conflict-banner:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
+  }
+
+  .sync-conflict-banner :global(svg) {
+    color: var(--color-warning);
+    flex-shrink: 0;
+  }
+
+  .conflict-banner-label {
+    flex: 1;
+    min-width: 0;
+    font-size: var(--text-xs);
+    font-weight: var(--font-medium);
+    color: var(--color-text-primary);
+    line-height: var(--leading-snug);
   }
 
   /* Loading skeleton */

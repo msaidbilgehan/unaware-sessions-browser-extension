@@ -346,6 +346,17 @@
   let connecting = $state(false);
   let syncToast = $state<{ message: string; type: 'error' | 'success' | 'info' } | null>(null);
 
+  // Persisted conflict set survives SW restarts (syncState.conflicts is
+  // volatile), so the banner and status pill stay accurate even when the
+  // conflict was raised by a background auto-sync the user never saw.
+  const pendingConflicts = $derived(syncCfg.pendingConflicts ?? []);
+  const hasPendingConflict = $derived(pendingConflicts.length > 0);
+  // Prefer a fresh in-memory conflict set (just returned by Sync Now); fall
+  // back to the persisted one when the dialog is opened from the banner.
+  const conflictSource = $derived(
+    syncState.conflicts.length > 0 ? syncState.conflicts : pendingConflicts,
+  );
+
   $effect(() => {
     initSyncStore().then(() => {
       syncCfg = getSyncConfig();
@@ -415,6 +426,12 @@
       syncState = state;
       if (state.status === 'error') {
         syncToast = { message: state.progress, type: 'error' };
+      } else if (state.status === 'conflict') {
+        // Local or remote drifted while the dialog was open — the resolution
+        // cycle surfaced fresh conflicts the user never saw. Re-open rather
+        // than falsely reporting success (pendingConflicts is already updated).
+        showConflictDialog = true;
+        syncToast = { message: 'New changes need resolving', type: 'info' };
       } else {
         syncToast = { message: 'Sync completed with resolved conflicts', type: 'success' };
       }
@@ -875,10 +892,17 @@
     {:else}
       <!-- Status line -->
       <div class="sync-status-row">
-        <div class="sync-status-indicator" class:syncing class:error={syncState.status === 'error'}>
+        <div
+          class="sync-status-indicator"
+          class:syncing
+          class:error={!syncing && syncState.status === 'error'}
+          class:conflict={!syncing && syncState.status !== 'error' && hasPendingConflict}
+        >
           {#if syncing}
             <span class="spinner-sm"></span>
           {:else if syncState.status === 'error'}
+            <Icon name="alert-triangle" size={14} />
+          {:else if hasPendingConflict}
             <Icon name="alert-triangle" size={14} />
           {:else}
             <Icon name="check" size={14} />
@@ -888,6 +912,8 @@
               Syncing...
             {:else if syncState.status === 'error'}
               Error
+            {:else if hasPendingConflict}
+              Conflicts pending
             {:else}
               Connected
             {/if}
@@ -897,6 +923,25 @@
           <span class="sync-last-time">Last: {formatRelativeTime(syncCfg.lastSyncAt)}</span>
         {/if}
       </div>
+
+      {#if hasPendingConflict && !syncing}
+        <div class="sync-conflict-banner" role="alert">
+          <Icon name="alert-triangle" size={16} />
+          <div class="conflict-banner-text">
+            <span class="conflict-banner-title">
+              Auto-sync paused — {pendingConflicts.length}
+              {pendingConflicts.length === 1 ? 'conflict' : 'conflicts'} to resolve
+            </span>
+            <span class="conflict-banner-desc">
+              The same data changed on this device and in the cloud. Choose which to keep to
+              resume syncing.
+            </span>
+          </div>
+          <button class="conflict-review-btn" onclick={() => (showConflictDialog = true)}>
+            Review
+          </button>
+        </div>
+      {/if}
 
       <div class="divider"></div>
 
@@ -991,9 +1036,9 @@
   />
 {/if}
 
-{#if showConflictDialog && syncState.conflicts.length > 0}
+{#if showConflictDialog && conflictSource.length > 0}
   <SyncConflictDialog
-    conflicts={syncState.conflicts}
+    conflicts={conflictSource}
     onresolve={handleConflictResolve}
     oncancel={() => { showConflictDialog = false; }}
   />
@@ -1399,8 +1444,73 @@
     color: var(--color-error);
   }
 
+  .sync-status-indicator.conflict {
+    color: var(--color-warning);
+  }
+
   .sync-status-text {
     font-size: var(--text-sm);
+  }
+
+  /* Conflict banner */
+  .sync-conflict-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-4);
+    padding: var(--space-4) var(--space-5);
+    background: var(--color-warning-soft);
+    border: 1px solid var(--color-warning);
+    border-radius: var(--radius-lg);
+  }
+
+  .sync-conflict-banner :global(svg) {
+    color: var(--color-warning);
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+
+  .conflict-banner-text {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    flex: 1;
+    min-width: 0;
+  }
+
+  .conflict-banner-title {
+    font-size: var(--text-sm);
+    font-weight: var(--font-semibold);
+    color: var(--color-text-primary);
+  }
+
+  .conflict-banner-desc {
+    font-size: var(--text-xs);
+    color: var(--color-text-secondary);
+    line-height: var(--leading-relaxed);
+  }
+
+  .conflict-review-btn {
+    padding: var(--space-2) var(--space-5);
+    border: 1px solid var(--color-warning);
+    border-radius: var(--radius-md);
+    background: var(--color-warning);
+    font-size: var(--text-xs);
+    font-family: var(--font-sans);
+    font-weight: var(--font-semibold);
+    color: #ffffff;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  .conflict-review-btn:hover {
+    filter: brightness(0.95);
+  }
+
+  .conflict-review-btn:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
   }
 
   .sync-last-time {
