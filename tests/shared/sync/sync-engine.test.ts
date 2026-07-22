@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { resetChromeMocks } from '../../setup';
-import { buildLocalManifest, detectConflicts, mergeData } from '@shared/sync/sync-engine';
+import {
+  buildLocalManifest,
+  detectConflicts,
+  autoResolveOneSidedChanges,
+  mergeData,
+} from '@shared/sync/sync-engine';
 import type { FullExportData } from '@shared/types';
 import type { SyncManifest, ConflictEntry } from '@shared/sync/sync-types';
 
@@ -55,6 +60,21 @@ function makeExportData(overrides?: Partial<FullExportData>): FullExportData {
     ...overrides,
   };
 }
+
+function makeManifest(
+  checksums: Record<string, string>,
+  sessionChecksums: Record<string, string> = { 'sess-1': 'sess-hash' },
+): SyncManifest {
+  return {
+    version: 1,
+    updatedAt: 1700000000000,
+    deviceId: 'device-1',
+    checksums,
+    sessionChecksums,
+  };
+}
+
+const KEY = 'sess-1:https://example.com';
 
 describe('sync-engine', () => {
   describe('buildLocalManifest', () => {
@@ -128,7 +148,7 @@ describe('sync-engine', () => {
       };
       const data = makeExportData();
 
-      const conflicts = detectConflicts(manifest, { ...manifest }, data, data);
+      const conflicts = detectConflicts(manifest, { ...manifest }, data, data, {});
       expect(conflicts).toHaveLength(0);
     });
 
@@ -149,7 +169,7 @@ describe('sync-engine', () => {
       };
       const data = makeExportData();
 
-      const conflicts = detectConflicts(local, remote, data, data);
+      const conflicts = detectConflicts(local, remote, data, data, {});
       expect(conflicts).toHaveLength(0);
     });
 
@@ -170,7 +190,7 @@ describe('sync-engine', () => {
       };
       const data = makeExportData();
 
-      const conflicts = detectConflicts(local, remote, data, data);
+      const conflicts = detectConflicts(local, remote, data, data, {});
       expect(conflicts).toHaveLength(0);
     });
 
@@ -191,11 +211,125 @@ describe('sync-engine', () => {
       };
       const data = makeExportData();
 
-      const conflicts = detectConflicts(local, remote, data, data);
+      const conflicts = detectConflicts(local, remote, data, data, {});
       expect(conflicts).toHaveLength(1);
       expect(conflicts[0].sessionId).toBe('sess-1');
       expect(conflicts[0].origin).toBe('https://example.com');
       expect(conflicts[0].resolution).toBeNull();
+    });
+
+    // ── Three-way baseline comparison ──────────────────────────────
+    // The core fix: a checksum mismatch is only a real conflict when BOTH
+    // sides diverged from the last successfully synced baseline. One-sided
+    // drift (ordinary browsing between syncs) must not be flagged.
+
+    it('does not flag a one-sided local change (remote still matches baseline)', () => {
+      const data = makeExportData();
+      const local = makeManifest({ [KEY]: 'local-changed' });
+      const remote = makeManifest({ [KEY]: 'base' });
+      const conflicts = detectConflicts(local, remote, data, data, { [KEY]: 'base' });
+      expect(conflicts).toHaveLength(0);
+    });
+
+    it('does not flag a one-sided remote change (local still matches baseline)', () => {
+      const data = makeExportData();
+      const local = makeManifest({ [KEY]: 'base' });
+      const remote = makeManifest({ [KEY]: 'remote-changed' });
+      const conflicts = detectConflicts(local, remote, data, data, { [KEY]: 'base' });
+      expect(conflicts).toHaveLength(0);
+    });
+
+    it('flags a genuine two-sided conflict (both diverged from baseline)', () => {
+      const data = makeExportData();
+      const local = makeManifest({ [KEY]: 'local-changed' });
+      const remote = makeManifest({ [KEY]: 'remote-changed' });
+      const conflicts = detectConflicts(local, remote, data, data, { [KEY]: 'base' });
+      expect(conflicts).toHaveLength(1);
+    });
+
+    it('falls back to flagging a conflict when no baseline exists for the key', () => {
+      const data = makeExportData();
+      const local = makeManifest({ [KEY]: 'local-changed' });
+      const remote = makeManifest({ [KEY]: 'remote-changed' });
+      // Pre-upgrade install: nothing recorded — safe default is to ask.
+      const conflicts = detectConflicts(local, remote, data, data, {});
+      expect(conflicts).toHaveLength(1);
+    });
+  });
+
+  describe('autoResolveOneSidedChanges', () => {
+    it('returns no resolutions when local and remote agree', () => {
+      const m = makeManifest({ [KEY]: 'same' });
+      expect(autoResolveOneSidedChanges(m, m, {})).toHaveLength(0);
+    });
+
+    it('resolves a one-sided local change to local', () => {
+      const local = makeManifest({ [KEY]: 'local-new' });
+      const remote = makeManifest({ [KEY]: 'base' });
+      const res = autoResolveOneSidedChanges(local, remote, { [KEY]: 'base' });
+      expect(res).toHaveLength(1);
+      expect(res[0].resolution).toBe('local');
+      expect(res[0].sessionId).toBe('sess-1');
+      expect(res[0].origin).toBe('https://example.com');
+    });
+
+    it('resolves a one-sided remote change to cloud', () => {
+      const local = makeManifest({ [KEY]: 'base' });
+      const remote = makeManifest({ [KEY]: 'remote-new' });
+      const res = autoResolveOneSidedChanges(local, remote, { [KEY]: 'base' });
+      expect(res).toHaveLength(1);
+      expect(res[0].resolution).toBe('cloud');
+    });
+
+    it('does not auto-resolve a genuine two-sided conflict', () => {
+      const local = makeManifest({ [KEY]: 'local-new' });
+      const remote = makeManifest({ [KEY]: 'remote-new' });
+      expect(autoResolveOneSidedChanges(local, remote, { [KEY]: 'base' })).toHaveLength(0);
+    });
+
+    it('does not auto-resolve when no baseline exists (left to the conflict path)', () => {
+      const local = makeManifest({ [KEY]: 'local-new' });
+      const remote = makeManifest({ [KEY]: 'remote-new' });
+      expect(autoResolveOneSidedChanges(local, remote, {})).toHaveLength(0);
+    });
+
+    it('adopts a one-sided remote change through mergeData (no silent local-wins)', () => {
+      // Regression guard for the companion fix: once a remote-only change is
+      // no longer (mis)flagged as a conflict, mergeData must still adopt it
+      // instead of falling through to its "both present, no resolution" =
+      // keep-local default, which would silently discard the remote update.
+      const localManifest = makeManifest({ [KEY]: 'base' });
+      const remoteManifest = makeManifest({ [KEY]: 'remote-new' });
+
+      const localData = makeExportData(); // cookie value 'token123'
+      const remoteData = makeExportData({
+        cookieSnapshots: [
+          {
+            sessionId: 'sess-1',
+            origin: 'https://example.com',
+            timestamp: 1700000002000,
+            cookies: [
+              {
+                name: 'auth',
+                value: 'remote-value',
+                domain: 'example.com',
+                path: '/',
+                secure: true,
+                httpOnly: true,
+                sameSite: 'lax' as chrome.cookies.SameSiteStatus,
+                storeId: '0',
+                hostOnly: false,
+                session: false,
+              },
+            ],
+          },
+        ],
+      });
+
+      const autoRes = autoResolveOneSidedChanges(localManifest, remoteManifest, { [KEY]: 'base' });
+      const merged = mergeData(localData, remoteData, 'ask', autoRes);
+      const snap = merged.cookieSnapshots.find((s) => s.origin === 'https://example.com');
+      expect(snap?.cookies[0].value).toBe('remote-value');
     });
   });
 

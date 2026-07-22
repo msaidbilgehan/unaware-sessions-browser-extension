@@ -14,14 +14,19 @@ vi.mock('@shared/sync/drive-client', () => ({
 }));
 
 import * as driveClient from '@shared/sync/drive-client';
-import { executeSyncCycle, SyncConcurrencyError } from '@shared/sync/sync-engine';
-import { resetSyncStoreInit, setSyncConfig } from '@shared/sync/sync-store';
-import { hydrateSessions } from '@background/session-manager';
+import {
+  executeSyncCycle,
+  SyncConcurrencyError,
+  buildLocalManifest,
+} from '@shared/sync/sync-engine';
+import { encrypt } from '@shared/sync/crypto-engine';
+import { resetSyncStoreInit, setSyncConfig, getSyncConfig } from '@shared/sync/sync-store';
+import { hydrateSessions, createSession } from '@background/session-manager';
 import { cookieStore } from '@background/cookie-store';
 import { storageStore } from '@background/storage-store';
 import type { RemoteDataCache } from '@shared/sync/sync-engine';
 import type { SyncManifest } from '@shared/sync/sync-types';
-import type { FullExportData } from '@shared/types';
+import type { FullExportData, CookieSnapshot } from '@shared/types';
 
 const MANIFEST_FILENAME = 'unaware-sync-manifest.json';
 const PAYLOAD_FILENAME = 'unaware-sync-payload.json';
@@ -235,6 +240,178 @@ describe('executeSyncCycle', () => {
       await expect(executeSyncCycle('passphrase')).rejects.toBeInstanceOf(SyncConcurrencyError);
       // Aborted before clobbering the changed remote file.
       expect(mockDrive.updateFile).not.toHaveBeenCalled();
+    });
+  });
+
+  // The auto-sync false-conflict fix: ordinary one-sided drift between two
+  // syncs must fast-forward instead of parking in 'conflict' (which silently
+  // halts auto-sync until a human resolves a non-conflict).
+  describe('three-way baseline conflict detection', () => {
+    const KEY = 'sess-1:https://example.com';
+
+    function cookieSnap(value: string, ts: number): CookieSnapshot {
+      return {
+        sessionId: 'sess-1',
+        origin: 'https://example.com',
+        timestamp: ts,
+        cookies: [
+          {
+            name: 'auth',
+            value,
+            domain: 'example.com',
+            path: '/',
+            secure: true,
+            httpOnly: true,
+            sameSite: 'lax' as chrome.cookies.SameSiteStatus,
+            storeId: '0',
+            hostOnly: false,
+            session: false,
+          },
+        ],
+      };
+    }
+
+    function mockRemote(manifest: SyncManifest, payload: string): void {
+      mockDrive.findFile.mockImplementation(async (_t: string, name: string) =>
+        name === MANIFEST_FILENAME
+          ? { id: 'manifest-id', version: '1' }
+          : { id: 'payload-id', version: '1' },
+      );
+      mockDrive.downloadFile.mockImplementation(async (_t: string, id: string) =>
+        id === 'manifest-id' ? JSON.stringify(manifest) : payload,
+      );
+      mockDrive.getFileVersion.mockResolvedValue('1');
+    }
+
+    it('fast-forwards (idle, uploads) when only local changed since last sync', async () => {
+      const session = await createSession('Work', '#3B82F6', undefined, 'sess-1');
+
+      // Base = the state at the last successful sync; remote still holds it.
+      const baseData: FullExportData = {
+        version: 1,
+        exportedAt: 0,
+        sessions: [session],
+        cookieSnapshots: [cookieSnap('base-value', 1)],
+        storageSnapshots: [],
+        deletedSessions: {},
+      };
+      const baseManifest = await buildLocalManifest(baseData, 'other-device');
+
+      // Local moved on; remote unchanged (equals the baseline).
+      await cookieStore.save(cookieSnap('local-value-v2', 2));
+      mockRemote(baseManifest, JSON.stringify(await encrypt(baseData, 'passphrase')));
+
+      await setSyncConfig({
+        enabled: true,
+        googleId: 'g',
+        deviceId: 'dev-1',
+        mergeStrategy: 'ask',
+        lastSyncedChecksums: baseManifest.checksums,
+      });
+
+      const state = await executeSyncCycle('passphrase');
+
+      // The fix: not a conflict — it synced.
+      expect(state.status).toBe('idle');
+      expect(mockDrive.updateFile).toHaveBeenCalledTimes(2);
+    });
+
+    it('fast-forwards (idle) when only remote changed since last sync', async () => {
+      const session = await createSession('Work', '#3B82F6', undefined, 'sess-1');
+
+      const baseData: FullExportData = {
+        version: 1,
+        exportedAt: 0,
+        sessions: [session],
+        cookieSnapshots: [cookieSnap('base-value', 1)],
+        storageSnapshots: [],
+        deletedSessions: {},
+      };
+      const baseManifest = await buildLocalManifest(baseData, 'other-device');
+
+      // Local unchanged (equals baseline); remote moved on to a new value.
+      await cookieStore.save(cookieSnap('base-value', 1));
+      const remoteData: FullExportData = {
+        version: 1,
+        exportedAt: 0,
+        sessions: [session],
+        cookieSnapshots: [cookieSnap('remote-value-v2', 3)],
+        storageSnapshots: [],
+        deletedSessions: {},
+      };
+      const remoteManifest = await buildLocalManifest(remoteData, 'other-device');
+      mockRemote(remoteManifest, JSON.stringify(await encrypt(remoteData, 'passphrase')));
+
+      await setSyncConfig({
+        enabled: true,
+        googleId: 'g',
+        deviceId: 'dev-1',
+        mergeStrategy: 'ask',
+        lastSyncedChecksums: baseManifest.checksums,
+      });
+
+      const state = await executeSyncCycle('passphrase');
+
+      // Not a conflict, and the remote update is adopted locally.
+      expect(state.status).toBe('idle');
+      const snaps = await cookieStore.getAllSnapshotsForSession('sess-1');
+      const restored = snaps.find((s) => s.origin === 'https://example.com');
+      expect(restored?.cookies[0].value).toBe('remote-value-v2');
+    });
+
+    it('parks in conflict when BOTH sides changed since last sync', async () => {
+      const session = await createSession('Work', '#3B82F6', undefined, 'sess-1');
+
+      const baseData: FullExportData = {
+        version: 1,
+        exportedAt: 0,
+        sessions: [session],
+        cookieSnapshots: [cookieSnap('base-value', 1)],
+        storageSnapshots: [],
+        deletedSessions: {},
+      };
+      const baseManifest = await buildLocalManifest(baseData, 'other-device');
+
+      // Local → v2, remote → a different v3. Genuine concurrent edit.
+      await cookieStore.save(cookieSnap('local-value-v2', 2));
+      const remoteData: FullExportData = {
+        version: 1,
+        exportedAt: 0,
+        sessions: [session],
+        cookieSnapshots: [cookieSnap('remote-value-v3', 3)],
+        storageSnapshots: [],
+        deletedSessions: {},
+      };
+      const remoteManifest = await buildLocalManifest(remoteData, 'other-device');
+      mockRemote(remoteManifest, JSON.stringify(await encrypt(remoteData, 'passphrase')));
+
+      await setSyncConfig({
+        enabled: true,
+        googleId: 'g',
+        deviceId: 'dev-1',
+        mergeStrategy: 'ask',
+        lastSyncedChecksums: baseManifest.checksums,
+      });
+
+      const state = await executeSyncCycle('passphrase');
+
+      expect(state.status).toBe('conflict');
+      expect(state.conflicts).toHaveLength(1);
+      expect(state.conflicts[0].origin).toBe('https://example.com');
+      // Parked without overwriting remote.
+      expect(mockDrive.updateFile).not.toHaveBeenCalled();
+    });
+
+    it('records lastSyncedChecksums after a first sync so later syncs have a baseline', async () => {
+      await createSession('Work', '#3B82F6', undefined, 'sess-1');
+      await cookieStore.save(cookieSnap('v1', 1));
+      mockDrive.findFile.mockResolvedValue(null); // first sync — no remote yet
+
+      await setSyncConfig({ enabled: true, googleId: 'g', deviceId: 'dev-1', mergeStrategy: 'ask' });
+
+      const state = await executeSyncCycle('passphrase');
+      expect(state.status).toBe('idle');
+      expect(getSyncConfig().lastSyncedChecksums[KEY]).toBeTruthy();
     });
   });
 });

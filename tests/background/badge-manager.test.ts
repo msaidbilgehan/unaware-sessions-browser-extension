@@ -1,11 +1,14 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { resetChromeMocks } from '../setup';
 import { updateBadge, initBadgeManager } from '@background/badge-manager';
 import { assignTab, hydrateTabMap } from '@background/tab-tracker';
 import { createSession, hydrateSessions } from '@background/session-manager';
+import { initSyncStore, setSyncConfig, resetSyncStoreInit } from '@shared/sync/sync-store';
+import type { ConflictEntry } from '@shared/sync/sync-types';
 
 beforeEach(async () => {
   resetChromeMocks();
+  resetSyncStoreInit();
   await hydrateSessions();
   await hydrateTabMap();
 });
@@ -116,5 +119,71 @@ describe('initBadgeManager', () => {
     await new Promise((r) => setTimeout(r, 10));
 
     expect(chrome.action.setBadgeText).not.toHaveBeenCalled();
+  });
+});
+
+describe('sync conflict badge', () => {
+  const conflict: ConflictEntry = {
+    sessionId: 'sess-1',
+    sessionName: 'Work',
+    origin: 'https://example.com',
+    localTimestamp: 0,
+    cloudTimestamp: 0,
+    resolution: null,
+  };
+
+  // Reset the module-level conflict flag so a pending conflict from one test
+  // cannot bleed into unrelated badge tests (module state persists in-file).
+  afterEach(async () => {
+    await setSyncConfig({ pendingConflicts: [] });
+    await new Promise((r) => setTimeout(r, 5));
+  });
+
+  it('overrides all tab badges with a warning when a conflict becomes pending', async () => {
+    (chrome.tabs.query as ReturnType<typeof vi.fn>).mockResolvedValue([{ id: 1 }, { id: 2 }]);
+
+    await initSyncStore();
+    initBadgeManager();
+    await new Promise((r) => setTimeout(r, 5));
+
+    await setSyncConfig({ enabled: true, googleId: 'g', pendingConflicts: [conflict] });
+    await new Promise((r) => setTimeout(r, 5));
+
+    expect(chrome.action.setBadgeText).toHaveBeenCalledWith({ text: '!', tabId: 1 });
+    expect(chrome.action.setBadgeText).toHaveBeenCalledWith({ text: '!', tabId: 2 });
+  });
+
+  it('renders the conflict badge instead of the session abbreviation', async () => {
+    const session = await createSession('WorkTab', '#3B82F6');
+    await assignTab(1, session.id, 'https://example.com');
+
+    await initSyncStore();
+    initBadgeManager();
+    await new Promise((r) => setTimeout(r, 5));
+    await setSyncConfig({ enabled: true, googleId: 'g', pendingConflicts: [conflict] });
+    await new Promise((r) => setTimeout(r, 5));
+
+    await updateBadge(1);
+
+    // While a conflict is pending, the warning wins over the session badge.
+    expect(chrome.action.setBadgeText).toHaveBeenLastCalledWith({ text: '!', tabId: 1 });
+    expect(chrome.action.setBadgeText).not.toHaveBeenCalledWith({ text: 'WO', tabId: 1 });
+  });
+
+  it('restores normal session badges once the conflict clears', async () => {
+    const session = await createSession('WorkTab', '#3B82F6');
+    await assignTab(1, session.id, 'https://example.com');
+
+    await initSyncStore();
+    initBadgeManager();
+    await new Promise((r) => setTimeout(r, 5));
+
+    await setSyncConfig({ enabled: true, googleId: 'g', pendingConflicts: [conflict] });
+    await new Promise((r) => setTimeout(r, 5));
+    await setSyncConfig({ pendingConflicts: [] });
+    await new Promise((r) => setTimeout(r, 5));
+
+    await updateBadge(1);
+    expect(chrome.action.setBadgeText).toHaveBeenLastCalledWith({ text: 'WO', tabId: 1 });
   });
 });
