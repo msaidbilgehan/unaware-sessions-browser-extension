@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { resetChromeMocks, mockChrome } from '../setup';
 import { initMessaging } from '@background/messaging';
 import { hydrateSessions } from '@background/session-manager';
-import { hydrateTabMap } from '@background/tab-tracker';
+import { assignTab, getTabEntry, hydrateTabMap } from '@background/tab-tracker';
 import { cookieStore } from '@background/cookie-store';
 import { storageStore } from '@background/storage-store';
 import { MessageType } from '@shared/types';
@@ -60,6 +60,7 @@ describe('messaging', () => {
     });
 
     const sessionId = (createResp.data as { id: string }).id;
+    await assignTab(1, sessionId, 'https://example.com');
     const deleteResp = await sendTestMessage({
       type: MessageType.DELETE_SESSION,
       sessionId,
@@ -69,6 +70,8 @@ describe('messaging', () => {
 
     const listResp = await sendTestMessage({ type: MessageType.LIST_SESSIONS });
     expect(listResp.data).toHaveLength(0);
+    expect(await getTabEntry(1)).toBeUndefined();
+    expect(chrome.action.setBadgeText).toHaveBeenCalledWith({ tabId: 1, text: '' });
   });
 
   it('handles PING', async () => {
@@ -276,6 +279,41 @@ describe('messaging', () => {
     expect(response.data).toEqual([]);
   });
 
+  it('excludes orphan snapshots from origin session counts', async () => {
+    const origin = 'https://orphan-count.example.com';
+    const createResp = await sendTestMessage({
+      type: MessageType.CREATE_SESSION,
+      name: 'active-session',
+      color: '#3B82F6',
+    });
+    const activeSessionId = (createResp.data as { id: string }).id;
+
+    await cookieStore.save({
+      sessionId: activeSessionId,
+      origin,
+      timestamp: Date.now(),
+      cookies: [],
+    });
+    await cookieStore.save({
+      sessionId: 'deleted-orphan-session',
+      origin,
+      timestamp: Date.now(),
+      cookies: [],
+    });
+
+    const originResponse = await sendTestMessage({
+      type: MessageType.GET_SESSIONS_FOR_ORIGIN,
+      origin,
+    });
+    const allOriginsResponse = await sendTestMessage({
+      type: MessageType.GET_ALL_SESSION_ORIGINS,
+    });
+
+    expect(originResponse.data).toEqual([activeSessionId]);
+    expect(allOriginsResponse.data).toMatchObject({ [activeSessionId]: [origin] });
+    expect(allOriginsResponse.data).not.toHaveProperty('deleted-orphan-session');
+  });
+
   it('handles DETECT_SESSION', async () => {
     (chrome.cookies.getAll as ReturnType<typeof vi.fn>).mockResolvedValueOnce([]);
 
@@ -313,6 +351,99 @@ describe('messaging', () => {
 
     expect(response.success).toBe(false);
     expect(response.error).toBe('Tab is not assigned to a session');
+  });
+
+  it('strictly replaces old cookie and storage snapshots on SAVE_SESSION_DATA', async () => {
+    const sessionId = 'save-replace-success';
+    const origin = 'https://replace.example.com';
+    await assignTab(1, sessionId, origin);
+    await cookieStore.save({
+      sessionId,
+      origin,
+      timestamp: 1,
+      cookies: [{ name: 'old', value: 'cookie' } as chrome.cookies.Cookie],
+    });
+    await storageStore.save({
+      sessionId,
+      origin,
+      timestamp: 1,
+      localStorage: { old: 'value' },
+      sessionStorage: { oldSession: 'value' },
+      indexedDB: [],
+    });
+
+    (chrome.tabs.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: 1,
+      url: `${origin}/page`,
+    } as chrome.tabs.Tab);
+    (chrome.cookies.getAll as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+      {
+        name: 'new',
+        value: 'cookie',
+        domain: 'replace.example.com',
+        path: '/',
+        secure: true,
+      } as chrome.cookies.Cookie,
+    ]);
+    (chrome.tabs.sendMessage as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      success: true,
+      data: {
+        localStorage: { new: 'value' },
+        sessionStorage: {},
+        indexedDB: [],
+      },
+    });
+
+    const response = await sendTestMessage({
+      type: MessageType.SAVE_SESSION_DATA,
+      tabId: 1,
+    });
+
+    expect(response.success).toBe(true);
+    expect((await cookieStore.load(sessionId, origin))?.cookies.map((c) => c.name)).toEqual([
+      'new',
+    ]);
+    expect((await storageStore.load(sessionId, origin))?.localStorage).toEqual({ new: 'value' });
+  });
+
+  it('removes old and partial snapshots when strict SAVE_SESSION_DATA fails', async () => {
+    const sessionId = 'save-replace-failure';
+    const origin = 'https://failure.example.com';
+    await assignTab(1, sessionId, origin);
+    await cookieStore.save({
+      sessionId,
+      origin,
+      timestamp: 1,
+      cookies: [{ name: 'old', value: 'cookie' } as chrome.cookies.Cookie],
+    });
+    await storageStore.save({
+      sessionId,
+      origin,
+      timestamp: 1,
+      localStorage: { old: 'value' },
+      sessionStorage: {},
+      indexedDB: [],
+    });
+
+    (chrome.tabs.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: 1,
+      url: `${origin}/page`,
+    } as chrome.tabs.Tab);
+    (chrome.cookies.getAll as ReturnType<typeof vi.fn>).mockResolvedValueOnce([]);
+    (chrome.tabs.sendMessage as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      success: false,
+      error: 'No access',
+    });
+
+    const response = await sendTestMessage({
+      type: MessageType.SAVE_SESSION_DATA,
+      tabId: 1,
+    });
+
+    expect(response.success).toBe(false);
+    expect(response.error).toBe('Failed to capture tab storage');
+    expect(await cookieStore.load(sessionId, origin)).toBeUndefined();
+    expect(await storageStore.load(sessionId, origin)).toBeUndefined();
   });
 
   it('handles CLEAR_ORIGIN_DATA', async () => {

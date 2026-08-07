@@ -3,6 +3,7 @@ import { resetChromeMocks, mockChrome } from '../setup';
 import {
   assignTab,
   unassignTab,
+  unassignTabsForSession,
   getTabEntry,
   getTabsForSession,
   hydrateTabMap,
@@ -26,6 +27,22 @@ describe('tab-tracker', () => {
     await assignTab(1, 'session-1', 'https://example.com');
     await unassignTab(1);
     expect(await getTabEntry(1)).toBeUndefined();
+  });
+
+  it('unassigns every tab for one session without affecting other sessions', async () => {
+    await assignTab(1, 'session-1', 'https://a.com');
+    await assignTab(2, 'session-1', 'https://b.com');
+    await assignTab(3, 'session-2', 'https://c.com');
+
+    const affectedTabIds = await unassignTabsForSession('session-1');
+
+    expect(affectedTabIds).toEqual([1, 2]);
+    expect(await getTabEntry(1)).toBeUndefined();
+    expect(await getTabEntry(2)).toBeUndefined();
+    expect(await getTabEntry(3)).toEqual({
+      sessionId: 'session-2',
+      origin: 'https://c.com',
+    });
   });
 
   it('returns undefined for untracked tab', async () => {

@@ -44,6 +44,26 @@ export async function unassignTab(tabId: number): Promise<void> {
   await removeRulesForTab(tabId);
 }
 
+export async function unassignTabsForSession(sessionId: string): Promise<number[]> {
+  await ensureHydrated();
+
+  const tabIds: number[] = [];
+  for (const [tabId, entry] of tabMap) {
+    if (entry.sessionId === sessionId) {
+      tabMap.delete(tabId);
+      cleanupPendingRestore(tabId);
+      tabIds.push(tabId);
+    }
+  }
+
+  if (tabIds.length > 0) {
+    await persistTabMap();
+    await Promise.all(tabIds.map((tabId) => removeRulesForTab(tabId)));
+  }
+
+  return tabIds;
+}
+
 export async function getTabEntry(tabId: number): Promise<TabSessionEntry | undefined> {
   await ensureHydrated();
   return tabMap.get(tabId);

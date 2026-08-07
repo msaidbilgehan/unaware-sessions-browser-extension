@@ -335,8 +335,9 @@ describe('saveTabStorage', () => {
       },
     });
 
-    await saveTabStorage(1, 'session-1', 'https://example.com');
+    const saved = await saveTabStorage(1, 'session-1', 'https://example.com');
 
+    expect(saved).toBe(true);
     const snapshot = await storageStore.load('session-1', 'https://example.com');
     expect(snapshot).toBeDefined();
     expect(snapshot?.localStorage).toEqual({ key: 'val' });
@@ -349,8 +350,9 @@ describe('saveTabStorage', () => {
       error: 'No access',
     });
 
-    await saveTabStorage(1, 'session-fail', 'https://fail.example.com');
+    const saved = await saveTabStorage(1, 'session-fail', 'https://fail.example.com');
 
+    expect(saved).toBe(false);
     const snapshot = await storageStore.load('session-fail', 'https://fail.example.com');
     expect(snapshot).toBeUndefined();
   });
@@ -361,8 +363,9 @@ describe('saveTabStorage', () => {
     );
 
     // Should not throw (timeout is caught internally)
-    await saveTabStorage(1, 'session-timeout', 'https://timeout.example.com');
+    const saved = await saveTabStorage(1, 'session-timeout', 'https://timeout.example.com');
 
+    expect(saved).toBe(false);
     const snapshot = await storageStore.load('session-timeout', 'https://timeout.example.com');
     expect(snapshot).toBeUndefined();
   }, 10000);
@@ -390,18 +393,29 @@ describe('detectSessionForOrigin', () => {
   });
 
   it('detects session with matching cookies', async () => {
-    // Save a snapshot for session-1
+    const session = await createSession('detect-match', '#3B82F6');
     (chrome.cookies.getAll as ReturnType<typeof vi.fn>).mockResolvedValueOnce(MOCK_COOKIES);
-    await saveCookies('session-1', 'https://example.com');
+    await saveCookies(session.id, 'https://example.com');
 
     // Now mock live cookies as same cookies
     (chrome.cookies.getAll as ReturnType<typeof vi.fn>).mockResolvedValueOnce(MOCK_COOKIES);
 
     const result = await detectSessionForOrigin('https://example.com');
-    expect(result).toBe('session-1');
+    expect(result).toBe(session.id);
+  });
+
+  it('ignores a matching snapshot for a deleted session', async () => {
+    (chrome.cookies.getAll as ReturnType<typeof vi.fn>).mockResolvedValueOnce(MOCK_COOKIES);
+    await saveCookies('deleted-session', 'https://example.com');
+    (chrome.cookies.getAll as ReturnType<typeof vi.fn>).mockResolvedValueOnce(MOCK_COOKIES);
+
+    const result = await detectSessionForOrigin('https://example.com');
+
+    expect(result).toBeNull();
   });
 
   it('returns null when match score is below 30% threshold', async () => {
+    const session = await createSession('detect-low-score', '#3B82F6');
     // Save a snapshot with many cookies
     const manyCookies = Array.from({ length: 10 }, (_, i) => ({
       name: `cookie${i}`,
@@ -417,7 +431,7 @@ describe('detectSessionForOrigin', () => {
     })) as chrome.cookies.Cookie[];
 
     (chrome.cookies.getAll as ReturnType<typeof vi.fn>).mockResolvedValueOnce(manyCookies);
-    await saveCookies('session-1', 'https://example.com');
+    await saveCookies(session.id, 'https://example.com');
 
     // Live cookies have only 1 of 10 matching (10% < 30% threshold)
     const liveCookies = [

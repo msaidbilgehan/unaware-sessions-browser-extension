@@ -205,16 +205,21 @@
   async function handleCreate(name: string, color: string, emoji?: string) {
     try {
       const session = await createSession(name, color, emoji);
-      // Fetch the authoritative list from the background instead of appending
-      // locally — the storage-change listener may have already added the session
-      // via updateSessionsQuietly(), and duplicates crash the keyed {#each}.
-      sessions = await listSessions();
 
       if (currentTab?.id && currentOrigin) {
         await assignTab(currentTab.id, session.id, currentOrigin);
         currentTabEntry = { sessionId: session.id, origin: currentOrigin };
+        try {
+          await saveSessionData(currentTab.id);
+        } catch (err) {
+          // The session and tab assignment are still valid; report only the
+          // automatic snapshot failure and keep the newly created session open.
+          showToast(err instanceof Error ? err.message : $_('popup.failedToUpdate'), 'error');
+        }
       }
 
+      // Fetch authoritative session and origin data after the automatic save.
+      await updateSessionsQuietly();
       view = 'list';
     } catch (err) {
       showToast(err instanceof Error ? err.message : $_('popup.failedToCreate'), 'error');
@@ -229,7 +234,7 @@
       try {
         await switchSession(currentTab.id, sessionId);
         currentTabEntry = { sessionId, origin: currentOrigin };
-        sessions = await listSessions();
+        await updateSessionsQuietly();
       } catch (err) {
         showToast(err instanceof Error ? err.message : $_('popup.failedToSwitch'), 'error');
       } finally {
@@ -255,10 +260,12 @@
       confirmData = null;
       try {
         await deleteSessionApi(session.id);
-        sessions = sessions.filter((s) => s.id !== session.id);
         if (currentTabEntry?.sessionId === session.id) {
           currentTabEntry = undefined;
         }
+        // The background deletes IndexedDB snapshots after updating SESSIONS.
+        // Refresh only after the API resolves so site counts cannot retain stale origins.
+        await updateSessionsQuietly();
         deletedSession = session;
         showToast($_('popup.sessionDeleted', { values: { name: session.name } }), 'info', {
           label: $_('popup.undo'),
@@ -310,22 +317,25 @@
     try {
       if (currentTab?.id && currentTabEntry) {
         await saveSessionData(currentTab.id);
+      } else if (currentOrigin && currentTab?.id) {
+        // Detect first when the tab has no assignment, then run the same strict
+        // replacement so every successful save/detect action captures fresh data.
+        const detectedId = await detectSession(currentOrigin, currentTab.id);
+        if (detectedId) {
+          await assignTab(currentTab.id, detectedId, currentOrigin);
+          currentTabEntry = { sessionId: detectedId, origin: currentOrigin };
+          await saveSessionData(currentTab.id);
+        }
       }
 
       // Refresh UI quietly — no loading skeleton
       await updateSessionsQuietly();
 
-      // Auto-detect session if no mapping exists
-      if (!currentTabEntry && currentOrigin && currentTab?.id) {
-        const detectedId = await detectSession(currentOrigin, currentTab.id);
-        if (detectedId) {
-          await assignTab(currentTab.id, detectedId, currentOrigin);
-          currentTabEntry = { sessionId: detectedId, origin: currentOrigin };
-        }
-      }
-
       showToast(currentTabEntry ? $_('popup.sessionDataUpdated') : $_('popup.sessionDetected'), 'success');
     } catch (err) {
+      // A strict replacement may have removed old snapshots before capture failed.
+      // Refresh the site list so it reflects the resulting authoritative state.
+      await updateSessionsQuietly();
       showToast(err instanceof Error ? err.message : $_('popup.failedToUpdate'), 'error');
     } finally {
       refreshing = false;
@@ -630,6 +640,14 @@
         </div>
         <div class="header-actions">
           <ThemeToggle />
+          <button
+            class="icon-btn"
+            onclick={() => (view = 'new')}
+            aria-label={$_('popup.newSession')}
+            title={$_('popup.newSession')}
+          >
+            <Icon name="plus" size={16} />
+          </button>
           <WebDavBackupButton
             onsuccess={() => showToast($_('options.settings.webdavBackupCompleted'), 'success')}
             onerror={(msg) => showToast(msg, 'error')}
@@ -687,11 +705,6 @@
         ondragend={handleReorder}
         {faviconSource}
       />
-
-      <button class="new-btn" onclick={() => (view = 'new')}>
-        <Icon name="plus" size={14} />
-        {$_('popup.newSession')}
-      </button>
     </div>
   {/if}
 
@@ -805,30 +818,6 @@
   .icon-btn:hover {
     color: var(--color-text-secondary);
     background: var(--color-interactive-hover);
-  }
-
-  .new-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: var(--space-3);
-    padding: var(--space-4) var(--space-5);
-    background: var(--color-bg-secondary);
-    border: 1px dashed var(--color-border-primary);
-    border-radius: var(--radius-lg);
-    font-size: var(--text-sm);
-    font-family: var(--font-sans);
-    color: var(--color-text-tertiary);
-    cursor: pointer;
-    transition: all var(--transition-smooth);
-    flex-shrink: 0;
-  }
-
-  .new-btn:hover {
-    background: var(--color-accent-soft);
-    border-color: var(--color-accent-muted);
-    border-style: solid;
-    color: var(--color-accent);
   }
 
   /* Loading skeleton */

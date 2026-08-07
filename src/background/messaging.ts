@@ -21,6 +21,7 @@ import {
   getTabEntry,
   assignTab,
   unassignTab,
+  unassignTabsForSession,
   getTabsForSession,
   getAllTabEntries,
 } from './tab-tracker';
@@ -70,6 +71,7 @@ import {
   testSavedWebDavConnection,
 } from './webdav-sync';
 import { exportLocalData } from '@shared/sync/sync-engine';
+import { cleanupOrphanSnapshots } from './orphan-cleanup';
 
 type MessageHandler = (
   message: Message,
@@ -87,6 +89,8 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
   [MessageType.DELETE_SESSION]: async (msg) => {
     if (msg.type !== MessageType.DELETE_SESSION) return { success: false };
     await deleteSession(msg.sessionId);
+    const affectedTabIds = await unassignTabsForSession(msg.sessionId);
+    await Promise.all(affectedTabIds.map((tabId) => updateBadge(tabId)));
     await rebuildContextMenu();
     return { success: true };
   },
@@ -141,22 +145,31 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
 
   [MessageType.GET_SESSIONS_FOR_ORIGIN]: async (msg) => {
     if (msg.type !== MessageType.GET_SESSIONS_FOR_ORIGIN) return { success: false };
-    const [cookieSessionIds, storageSessionIds] = await Promise.all([
+    const [cookieSessionIds, storageSessionIds, sessions] = await Promise.all([
       cookieStore.getSessionIdsForOrigin(msg.origin),
       storageStore.getSessionIdsForOrigin(msg.origin),
+      listSessions(),
     ]);
-    const merged = [...new Set([...cookieSessionIds, ...storageSessionIds])];
+    const existingSessionIds = new Set(sessions.map((session) => session.id));
+    const merged = [...new Set([...cookieSessionIds, ...storageSessionIds])].filter((sessionId) =>
+      existingSessionIds.has(sessionId),
+    );
     return { success: true, data: merged };
   },
 
   [MessageType.GET_ALL_SESSION_ORIGINS]: async () => {
-    const [cookieMap, storageMap] = await Promise.all([
+    const [cookieMap, storageMap, sessions] = await Promise.all([
       cookieStore.getAllSessionOrigins(),
       storageStore.getAllSessionOrigins(),
+      listSessions(),
     ]);
+    const existingSessionIds = new Set(sessions.map((session) => session.id));
     const merged: Record<string, string[]> = {};
     for (const map of [cookieMap, storageMap]) {
       for (const [sid, origins] of Object.entries(map)) {
+        // Historical versions could leave snapshots behind after a session was
+        // deleted. They are not real sessions and must not affect popup counts.
+        if (!existingSessionIds.has(sid)) continue;
         const existing = merged[sid];
         if (existing) {
           const set = new Set(existing);
@@ -224,10 +237,34 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
 
     const origin = new URL(tab.url).origin;
     const storeId = await getCookieStoreIdForTab(msg.tabId);
-    await saveCookies(entry.sessionId, origin, storeId);
-    await saveTabStorage(msg.tabId, entry.sessionId, origin);
-    await touchSessionRefresh(entry.sessionId);
-    return { success: true };
+
+    // Manual save is a strict replacement: remove both old snapshots first.
+    // If capturing the new state fails, stale data must not remain as a fallback.
+    await Promise.all([
+      cookieStore.deleteForOrigin(entry.sessionId, origin),
+      storageStore.deleteForOrigin(entry.sessionId, origin),
+    ]);
+
+    try {
+      const [, storageSaved] = await Promise.all([
+        saveCookies(entry.sessionId, origin, storeId),
+        saveTabStorage(msg.tabId, entry.sessionId, origin),
+      ]);
+      if (!storageSaved) {
+        throw new Error('Failed to capture tab storage');
+      }
+
+      await touchSessionRefresh(entry.sessionId);
+      return { success: true };
+    } catch (err) {
+      // Never leave a partial replacement (for example, new cookies with stale
+      // storage). The user's strict policy treats any capture failure as empty.
+      await Promise.all([
+        cookieStore.deleteForOrigin(entry.sessionId, origin),
+        storageStore.deleteForOrigin(entry.sessionId, origin),
+      ]);
+      throw err;
+    }
   },
 
   [MessageType.DETECT_SESSION]: async (msg) => {
@@ -396,6 +433,7 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
   // ── Full Export / Import ───────────────────────────────────────
 
   [MessageType.EXPORT_FULL]: async () => {
+    await cleanupOrphanSnapshots();
     const sessions = await listSessions();
 
     // Collect all cookie + storage snapshots for every session in parallel
@@ -477,6 +515,7 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
       await chrome.storage.local.set({ [STORAGE_KEYS.SITE_CONFIGS]: merged });
     }
 
+    await cleanupOrphanSnapshots();
     await rebuildContextMenu();
     return { success: true, data: { imported } };
   },

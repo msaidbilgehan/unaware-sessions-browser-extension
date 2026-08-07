@@ -12,6 +12,7 @@ import { cookieStore } from './cookie-store';
 import { storageStore } from './storage-store';
 import { getTabEntry, assignTab } from './tab-tracker';
 import { updateRulesForTab, removeRulesForTab } from './dnr-manager';
+import { listSessions } from './session-manager';
 
 const log = createLogger('cookie-engine');
 
@@ -259,7 +260,7 @@ export async function saveTabStorage(
   tabId: number,
   sessionId: string,
   origin: string,
-): Promise<void> {
+): Promise<boolean> {
   try {
     const response = (await withTimeout(
       chrome.tabs.sendMessage(tabId, {
@@ -280,9 +281,13 @@ export async function saveTabStorage(
         indexedDB: response.data.indexedDB,
       };
       await storageStore.save(snapshot);
+      return true;
     }
+    log.warn('Failed to save tab storage', response.error ?? 'Content script returned no data');
+    return false;
   } catch (err) {
     log.warn('Failed to save tab storage', err);
+    return false;
   }
 }
 
@@ -328,7 +333,12 @@ export async function detectSessionForOrigin(
   const liveFingerprints = new Set(liveCookies.map((c) => `${c.name}=${c.value}`));
 
   // Get all session IDs that have snapshots for this origin
-  const sessionIds = await cookieStore.getSessionIdsForOrigin(origin);
+  const [snapshotSessionIds, sessions] = await Promise.all([
+    cookieStore.getSessionIdsForOrigin(origin),
+    listSessions(),
+  ]);
+  const activeSessionIds = new Set(sessions.map((session) => session.id));
+  const sessionIds = snapshotSessionIds.filter((sessionId) => activeSessionIds.has(sessionId));
   if (sessionIds.length === 0) return null;
 
   // Load all snapshots in parallel instead of sequential N+1 queries

@@ -24,6 +24,7 @@ import { listSessions, deleteAllSessions, batchSetSessions } from '@background/s
 import { cookieStore } from '@background/cookie-store';
 import { storageStore } from '@background/storage-store';
 import { createLogger } from '@shared/logger';
+import { cleanupOrphanSnapshots } from '@background/orphan-cleanup';
 
 const log = createLogger('sync-engine');
 
@@ -300,6 +301,7 @@ export async function applyFullData(data: FullExportData): Promise<void> {
     ...data.cookieSnapshots.map((snap) => cookieStore.save(snap)),
     ...data.storageSnapshots.map((snap) => storageStore.save(snap)),
   ]);
+  await cleanupOrphanSnapshots();
 
   // Restore site customizations if present (optional field — older backups won't have it)
   if (data.siteConfigs && Object.keys(data.siteConfigs).length > 0) {
@@ -381,6 +383,8 @@ function processCookies(
 // ── Export Local Data ──────────────────────────────────────
 
 export async function exportLocalData(options?: { skipFileData?: boolean }): Promise<FullExportData> {
+  await cleanupOrphanSnapshots();
+
   const settings = getSettings();
   const includeIDB = options?.skipFileData === false || (options?.skipFileData === undefined && settings.includeIndexedDB);
   const maskBinary = settings.maskBinaryValues;

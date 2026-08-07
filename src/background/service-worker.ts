@@ -18,6 +18,7 @@ import { initSettings } from '@shared/settings-store';
 import { initSyncStore } from '@shared/sync/sync-store';
 import { initWebDavStore } from '@shared/webdav/webdav-store';
 import { createLogger } from '@shared/logger';
+import { cleanupOrphanSnapshots } from './orphan-cleanup';
 
 const log = createLogger('service-worker');
 
@@ -27,6 +28,7 @@ async function hydrateState(): Promise<void> {
   await initSyncStore();
   await initWebDavStore();
   await Promise.all([hydrateSessions(), hydrateTabMap()]);
+  await cleanupOrphanSnapshots();
 }
 
 const hydrationPromise = hydrateState().catch((err) => {
