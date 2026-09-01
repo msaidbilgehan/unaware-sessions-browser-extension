@@ -33,6 +33,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ---
 
+## [1.1.5] - 2026-09-01
+
+### 新增
+
+- **同域 Cookie 会话支持：** 保存于一个子域名的 Domain Cookie 可以在适用的同域站点登录页中继续使用。例如在 `code.aliyun.com` 保存的 `.aliyun.com` Cookie，可用于 `account.aliyun.com`。仅共享浏览器规则允许跨主机使用的 Domain Cookie，`hostOnly` Cookie 不会跨主机恢复。
+- **弹出面板“同域站点”：** 在“当前站点”下方新增独立分组，只展示用户已经保存、且其 Domain Cookie 对当前站点确实可用的会话；未保存的站点不会作为当前站点账号展示。
+- **单站点数据导出：** 设置页的会话详情中增加“导出站点数据”按钮，可单独导出指定会话、指定站点的 Cookie、LocalStorage、SessionStorage 和 IndexedDB 快照。
+- **大数据项清理：** 设置页在“数据”后新增“清理”标签页，采用安全软件式的“扫描—勾选—确认—清理”流程。支持选择 LocalStorage、SessionStorage、IndexedDB 扫描范围，默认扫描大于等于 30KB 的数据项。
+- **清理结果明细：** 扫描结果按大小排序，展示数据类型、所属会话、站点和占用空间；结果默认不勾选，必须由用户手动选择后才能清理。
+
+### 安全与行为说明
+
+- 清理功能只处理扩展内部保存的会话快照，不会直接删除网站当前标签页正在使用的实时数据。
+- LocalStorage 和 SessionStorage 按键清理，IndexedDB 按数据库清理；清理前需二次确认，启用密码或生物识别时还需完成身份验证。
+- 清理完成后自动重新扫描，并展示实际删除项数和释放空间。
+
+---
+
 ## [1.1.0] - 2026-04-11
 
 ### Added

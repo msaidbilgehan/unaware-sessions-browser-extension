@@ -17,6 +17,18 @@
 
 ---
 
+## 1.1.5 更新说明
+
+- 支持同一主域下的登录会话复用。例如 `code.aliyun.com` 保存的 `.aliyun.com` Domain Cookie，可以在 `account.aliyun.com` 使用；`hostOnly` Cookie 仍严格限制在原主机。
+- 弹出面板在“当前站点”下新增“同域站点”，仅列出用户已保存且对当前站点可用的账号，不再把未保存站点显示成当前站点账号。
+- 设置页支持单独导出某个会话下的站点数据，导出内容包含该站点已保存的 Cookie 和存储快照。
+- 设置页在“数据”后新增“清理”标签，界面参考安全软件的数据清理流程；可扫描 LocalStorage、SessionStorage 和 IndexedDB，默认阈值为 30KB。
+- 扫描结果不会自动选择。用户确认数据项后再执行清理；清理只影响扩展保存的快照，不会直接修改网站当前的实时数据。
+
+完整记录请参阅 [CHANGELOG.md](CHANGELOG.md)。
+
+---
+
 ## Table of Contents
 
 - [Project Overview](#project-overview)
@@ -73,6 +85,8 @@ Unaware Sessions fills the gap: lightweight session isolation that works inside 
 ### Management
 
 - Full backup/restore: export all sessions + cookies + storage as timestamped JSON
+- 单独导出指定会话、指定站点的 Cookie 与存储快照
+- 扫描并手动清理扩展快照中的大体积 LocalStorage、SessionStorage 和 IndexedDB 数据项
 - Import / export session profiles as JSON with visual diff preview
 - Drag-and-drop file import
 - Session list with active tab counts, color indicators, and pinning
@@ -299,6 +313,20 @@ Press `Alt+Shift+B` (the default keyboard shortcut) to open the Unaware Sessions
 3. Right-click any link and select **Open in Session** to choose your session.
 4. The tab opens with a colored badge. Cookies and storage are fully isolated.
 5. Create more sessions as needed. Switch any tab between sessions from the popup.
+
+### 同域站点账号
+
+当登录页和业务站点位于同一主域但使用不同子域时，扩展会识别能够跨主机使用的 Domain Cookie，并把对应账号显示在弹出面板的“同域站点”分组中。该分组只显示已保存且实际可用于当前站点的会话。
+
+### 清理已保存的大数据项
+
+1. 打开扩展设置页，进入“清理”标签。
+2. 选择 LocalStorage、SessionStorage、IndexedDB 中需要扫描的范围。
+3. 设置最小数据项大小；默认值为 30KB。
+4. 点击“一键扫描”，查看按体积排序的扫描结果。
+5. 手动勾选需要删除的数据项，点击“立即清理”并确认。
+
+> 清理对象是扩展保存的会话快照，不是网站当前标签页中的实时数据。LocalStorage 和 SessionStorage 按键删除，IndexedDB 按数据库删除。
 
 ---
 

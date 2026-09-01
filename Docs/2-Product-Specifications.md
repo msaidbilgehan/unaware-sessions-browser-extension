@@ -183,9 +183,10 @@ graph TB
 
 **Tabs:**
 
-- **Sessions** — Domain folders, inline cookie/storage editing, per-domain auto-refresh, search by session name or domain
+- **Sessions** — Domain folders, inline cookie/storage editing, per-domain auto-refresh, search by session name or domain, and per-site snapshot export
 - **Settings** — Theme, cookie isolation mode (soft/strict), auto-refresh interval, security settings (passcode + biometric), Cloud Sync card (connect/disconnect, merge strategy, auto-sync interval)
 - **Data** — Profile-only + full export/import with stats preview, drag-and-drop import, data management / clear all, `withAuth` gate on export/import/clear
+- **清理** — 以安全软件式流程扫描扩展保存的大数据项；支持 LocalStorage、SessionStorage 和 IndexedDB 范围、默认 30KB 阈值、手动勾选、确认与身份验证后清理
 - **Debug** — Cookie diff viewer, restore failure log, extension logs with log level selector
 - **About** — Version, GitHub link, OpenCollective donation
 
