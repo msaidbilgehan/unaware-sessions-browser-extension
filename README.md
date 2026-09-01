@@ -6,7 +6,7 @@
 
 ## End User Installation
 
-1. Install **Unaware Sessions** directly from the [Chrome Web Store](https://chromewebstore.google.com/detail/browser-automata/pfpfakjgmkfmcimgknmnebloclkbfhbh).
+1. Install **Unaware Sessions** directly from the [Edge Store](https://microsoftedge.microsoft.com/addons/detail/nnoiedgcpacghchakdeglnopopoakana).
 2. Click **Add to Chrome**.
 
 ![Sessions Tab — Overview](assets/settings-sessions.png)
