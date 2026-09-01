@@ -8,6 +8,7 @@
   import TabBar from './components/TabBar.svelte';
   import SessionsTab from './components/SessionsTab.svelte';
   import ImportExportTab from './components/ImportExportTab.svelte';
+  import CleanupTab from './components/CleanupTab.svelte';
   import SettingsTab from './components/SettingsTab.svelte';
   import AboutTab from './components/AboutTab.svelte';
   import DebugTab from './components/DebugTab.svelte';
@@ -23,6 +24,7 @@
     { id: 'sessions', label: $_('options.tabSessions'), icon: 'layers' },
     { id: 'settings', label: $_('options.tabSettings'), icon: 'settings' },
     { id: 'import-export', label: $_('options.tabData'), icon: 'arrow-right-left' },
+    { id: 'cleanup', label: '清理', icon: 'shield' },
     { id: 'about', label: $_('options.tabAbout'), icon: 'info' },
     { id: 'debug', label: $_('options.tabDebug'), icon: 'zap' },
   ]));
@@ -111,6 +113,8 @@
       <SettingsTab />
     {:else if activeTab === 'import-export'}
       <ImportExportTab {sessions} onupdate={loadSessions} />
+    {:else if activeTab === 'cleanup'}
+      <CleanupTab />
     {:else if activeTab === 'about'}
       <AboutTab />
     {:else if activeTab === 'debug'}

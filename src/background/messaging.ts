@@ -5,6 +5,8 @@ import type {
   FullExportData,
   CookieSnapshot,
   StorageSnapshot,
+  StorageCleanupCategory,
+  StorageCleanupTarget,
 } from '@shared/types';
 import { createLogger } from '@shared/logger';
 
@@ -74,11 +76,36 @@ import {
 } from './webdav-sync';
 import { exportLocalData } from '@shared/sync/sync-engine';
 import { cleanupOrphanSnapshots } from './orphan-cleanup';
+import { cleanStorageItems, scanLargeStorage } from './storage-cleanup';
 
 type MessageHandler = (
   message: Message,
   sender: chrome.runtime.MessageSender,
 ) => Promise<MessageResponse>;
+
+const CLEANUP_CATEGORIES = new Set<StorageCleanupCategory>([
+  'localStorage',
+  'sessionStorage',
+  'indexedDB',
+]);
+
+function isCleanupCategory(value: unknown): value is StorageCleanupCategory {
+  return typeof value === 'string' && CLEANUP_CATEGORIES.has(value as StorageCleanupCategory);
+}
+
+function isCleanupTarget(value: unknown): value is StorageCleanupTarget {
+  if (!value || typeof value !== 'object') return false;
+  const target = value as Record<string, unknown>;
+  return (
+    typeof target.sessionId === 'string' &&
+    target.sessionId.length > 0 &&
+    typeof target.origin === 'string' &&
+    target.origin.length > 0 &&
+    isCleanupCategory(target.category) &&
+    typeof target.key === 'string' &&
+    target.key.length > 0
+  );
+}
 
 const handlers: Partial<Record<MessageType, MessageHandler>> = {
   [MessageType.CREATE_SESSION]: async (msg) => {
@@ -441,6 +468,36 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
     snapshot[msg.storageType] = rest;
     await storageStore.save(snapshot);
     return { success: true };
+  },
+
+  [MessageType.SCAN_LARGE_STORAGE]: async (msg) => {
+    if (msg.type !== MessageType.SCAN_LARGE_STORAGE) return { success: false };
+    if (
+      !msg.options ||
+      !Number.isFinite(msg.options.minBytes) ||
+      msg.options.minBytes < 1 ||
+      !Array.isArray(msg.options.categories) ||
+      msg.options.categories.length === 0 ||
+      !msg.options.categories.every(isCleanupCategory)
+    ) {
+      return { success: false, error: 'Invalid cleanup scan options' };
+    }
+    const result = await scanLargeStorage(msg.options);
+    return { success: true, data: result };
+  },
+
+  [MessageType.CLEAN_STORAGE_ITEMS]: async (msg) => {
+    if (msg.type !== MessageType.CLEAN_STORAGE_ITEMS) return { success: false };
+    if (
+      !Array.isArray(msg.targets) ||
+      msg.targets.length === 0 ||
+      msg.targets.length > 10000 ||
+      !msg.targets.every(isCleanupTarget)
+    ) {
+      return { success: false, error: 'Invalid cleanup targets' };
+    }
+    const result = await cleanStorageItems(msg.targets);
+    return { success: true, data: result };
   },
 
   [MessageType.REFRESH_ACTIVE_SESSIONS]: async () => {

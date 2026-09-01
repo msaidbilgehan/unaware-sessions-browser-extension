@@ -10,6 +10,9 @@ import type {
   RestoreFailureEntry,
   FullExportData,
   LogEntry,
+  StorageCleanupResult,
+  StorageCleanupScanOptions,
+  StorageCleanupTarget,
 } from '@shared/types';
 import type { SyncConfig, SyncState, ConflictEntry } from '@shared/sync/sync-types';
 import type { WebDavConfig, WebDavState } from '@shared/webdav/webdav-types';
@@ -223,6 +226,18 @@ export function deleteSessionStorageEntry(
 
 export function exportFull(): Promise<FullExportData> {
   return sendMessage({ type: MessageType.EXPORT_FULL });
+}
+
+export function scanLargeStorage(
+  options: StorageCleanupScanOptions,
+): Promise<StorageCleanupResult> {
+  return sendMessage({ type: MessageType.SCAN_LARGE_STORAGE, options });
+}
+
+export function cleanStorageItems(
+  targets: StorageCleanupTarget[],
+): Promise<{ removed: number; reclaimedBytes: number }> {
+  return sendMessage({ type: MessageType.CLEAN_STORAGE_ITEMS, targets });
 }
 
 export function exportSite(sessionId: string, origin: string): Promise<FullExportData> {

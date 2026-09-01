@@ -205,6 +205,8 @@ export enum MessageType {
   DELETE_SESSION_COOKIE = 'DELETE_SESSION_COOKIE',
   UPDATE_SESSION_STORAGE_ENTRY = 'UPDATE_SESSION_STORAGE_ENTRY',
   DELETE_SESSION_STORAGE_ENTRY = 'DELETE_SESSION_STORAGE_ENTRY',
+  SCAN_LARGE_STORAGE = 'SCAN_LARGE_STORAGE',
+  CLEAN_STORAGE_ITEMS = 'CLEAN_STORAGE_ITEMS',
 
   // Session operations
   DUPLICATE_SESSION = 'DUPLICATE_SESSION',
@@ -457,6 +459,42 @@ export interface ExportFullMessage {
   type: MessageType.EXPORT_FULL;
 }
 
+export type StorageCleanupCategory = 'localStorage' | 'sessionStorage' | 'indexedDB';
+
+export interface StorageCleanupScanOptions {
+  categories: StorageCleanupCategory[];
+  minBytes: number;
+}
+
+export interface StorageCleanupTarget {
+  sessionId: string;
+  origin: string;
+  category: StorageCleanupCategory;
+  key: string;
+}
+
+export interface StorageCleanupItem extends StorageCleanupTarget {
+  id: string;
+  sessionName: string;
+  sizeBytes: number;
+}
+
+export interface StorageCleanupResult {
+  items: StorageCleanupItem[];
+  scannedSnapshots: number;
+  totalBytes: number;
+}
+
+export interface ScanLargeStorageMessage {
+  type: MessageType.SCAN_LARGE_STORAGE;
+  options: StorageCleanupScanOptions;
+}
+
+export interface CleanStorageItemsMessage {
+  type: MessageType.CLEAN_STORAGE_ITEMS;
+  targets: StorageCleanupTarget[];
+}
+
 export interface ExportSiteMessage {
   type: MessageType.EXPORT_SITE;
   sessionId: string;
@@ -671,6 +709,8 @@ export type Message =
   | DeleteSessionCookieMessage
   | UpdateSessionStorageEntryMessage
   | DeleteSessionStorageEntryMessage
+  | ScanLargeStorageMessage
+  | CleanStorageItemsMessage
   | RefreshActiveSessionsMessage
   | ExportFullMessage
   | ExportSiteMessage
