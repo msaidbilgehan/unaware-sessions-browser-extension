@@ -13,6 +13,7 @@ import {
   createSession,
   deleteSession,
   listSessions,
+  getSession,
   updateSession,
   duplicateSession,
   touchSessionRefresh,
@@ -39,6 +40,7 @@ import {
 import { rebuildContextMenu } from './context-menu';
 import { updateBadge } from './badge-manager';
 import { cookieStore } from './cookie-store';
+import { getSessionIdsWithApplicableCookies } from './cookie-scope';
 import { storageStore } from './storage-store';
 import { STORAGE_KEYS } from '@shared/constants';
 import { setLocal } from '@shared/storage';
@@ -146,7 +148,7 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
   [MessageType.GET_SESSIONS_FOR_ORIGIN]: async (msg) => {
     if (msg.type !== MessageType.GET_SESSIONS_FOR_ORIGIN) return { success: false };
     const [cookieSessionIds, storageSessionIds, sessions] = await Promise.all([
-      cookieStore.getSessionIdsForOrigin(msg.origin),
+      getSessionIdsWithApplicableCookies(msg.origin),
       storageStore.getSessionIdsForOrigin(msg.origin),
       listSessions(),
     ]);
@@ -456,6 +458,33 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
       cookieSnapshots,
       storageSnapshots,
       siteConfigs,
+    };
+
+    return { success: true, data };
+  },
+
+  [MessageType.EXPORT_SITE]: async (msg) => {
+    if (msg.type !== MessageType.EXPORT_SITE) return { success: false };
+    const session = await getSession(msg.sessionId);
+    if (!session) return { success: false, error: 'Session not found' };
+
+    const [cookieSnapshot, storageSnapshot, siteConfigsResult] = await Promise.all([
+      cookieStore.load(msg.sessionId, msg.origin),
+      storageStore.load(msg.sessionId, msg.origin),
+      chrome.storage.local.get(STORAGE_KEYS.SITE_CONFIGS),
+    ]);
+    const allSiteConfigs = (siteConfigsResult[STORAGE_KEYS.SITE_CONFIGS] as
+      | Record<string, { name?: string; iconUrl?: string }>
+      | undefined) ?? {};
+    const siteConfig = allSiteConfigs[msg.origin];
+
+    const data: FullExportData = {
+      version: 1,
+      exportedAt: Date.now(),
+      sessions: [session],
+      cookieSnapshots: cookieSnapshot ? [cookieSnapshot] : [],
+      storageSnapshots: storageSnapshot ? [storageSnapshot] : [],
+      ...(siteConfig ? { siteConfigs: { [msg.origin]: siteConfig } } : {}),
     };
 
     return { success: true, data };

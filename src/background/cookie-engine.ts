@@ -9,6 +9,7 @@ import { extractDomain, buildCookieUrl, now } from '@shared/utils';
 import { getDomainIsolationMode } from '@shared/settings-store';
 import { createLogger } from '@shared/logger';
 import { cookieStore } from './cookie-store';
+import { getApplicableCookieSnapshot, getAllApplicableCookieSnapshots } from './cookie-scope';
 import { storageStore } from './storage-store';
 import { getTabEntry, assignTab } from './tab-tracker';
 import { updateRulesForTab, removeRulesForTab } from './dnr-manager';
@@ -184,7 +185,7 @@ export async function restoreCookies(
   origin: string,
   storeId?: string,
 ): Promise<void> {
-  const snapshot = await cookieStore.load(sessionId, origin);
+  const snapshot = await getApplicableCookieSnapshot(sessionId, origin);
   if (!snapshot) return;
 
   const domain = extractDomain(origin);
@@ -333,16 +334,17 @@ export async function detectSessionForOrigin(
   const liveFingerprints = new Set(liveCookies.map((c) => `${c.name}=${c.value}`));
 
   // Get all session IDs that have snapshots for this origin
-  const [snapshotSessionIds, sessions] = await Promise.all([
-    cookieStore.getSessionIdsForOrigin(origin),
+  const [compatibleSnapshots, sessions] = await Promise.all([
+    getAllApplicableCookieSnapshots(origin),
     listSessions(),
   ]);
   const activeSessionIds = new Set(sessions.map((session) => session.id));
-  const sessionIds = snapshotSessionIds.filter((sessionId) => activeSessionIds.has(sessionId));
+  const sessionIds = [...compatibleSnapshots.keys()].filter((sessionId) =>
+    activeSessionIds.has(sessionId),
+  );
   if (sessionIds.length === 0) return null;
 
-  // Load all snapshots in parallel instead of sequential N+1 queries
-  const snapshots = await Promise.all(sessionIds.map((sid) => cookieStore.load(sid, origin)));
+  const snapshots = sessionIds.map((sessionId) => compatibleSnapshots.get(sessionId));
 
   let bestSessionId: string | null = null;
   let bestScore = 0;
@@ -444,7 +446,7 @@ async function doSwitchSession(tabId: number, targetSessionId: string): Promise<
   // 2. Check if the target session has cookie data for this origin.
   //    In "soft" isolation mode, skip clear+restore when no snapshot exists
   //    so unmanaged domains (e.g., Google when using Instagram sessions) pass through.
-  const targetSnapshot = await cookieStore.load(targetSessionId, origin);
+  const targetSnapshot = await getApplicableCookieSnapshot(targetSessionId, origin);
   const isolationMode = domain ? getDomainIsolationMode(domain) : 'strict';
   const hasTargetData = targetSnapshot != null && targetSnapshot.cookies.length > 0;
 

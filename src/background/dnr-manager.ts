@@ -1,7 +1,7 @@
 import { DNR_RULE_ID_BASE, DNR_RULE_LIMIT, DNR_RULE_WARN_THRESHOLD } from '@shared/constants';
 import { extractDomain } from '@shared/utils';
 import { createLogger } from '@shared/logger';
-import { cookieStore } from './cookie-store';
+import { getApplicableCookieSnapshot } from './cookie-scope';
 
 const log = createLogger('dnr-manager');
 
@@ -22,7 +22,7 @@ export async function updateRulesForTab(
   const domain = extractDomain(origin);
   if (!domain) return;
 
-  const snapshot = await cookieStore.load(sessionId, origin);
+  const snapshot = await getApplicableCookieSnapshot(sessionId, origin);
 
   // If no snapshot or no cookies, remove any existing rule so the browser's
   // native Cookie header passes through. An empty "Cookie: " header would

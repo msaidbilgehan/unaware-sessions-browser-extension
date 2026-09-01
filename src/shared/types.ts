@@ -218,6 +218,7 @@ export enum MessageType {
 
   // Import / Export (full)
   EXPORT_FULL = 'EXPORT_FULL',
+  EXPORT_SITE = 'EXPORT_SITE',
   IMPORT_FULL = 'IMPORT_FULL',
   EXPORT_DATA = 'EXPORT_DATA',
 
@@ -450,6 +451,12 @@ export interface ExportFullMessage {
   type: MessageType.EXPORT_FULL;
 }
 
+export interface ExportSiteMessage {
+  type: MessageType.EXPORT_SITE;
+  sessionId: string;
+  origin: string;
+}
+
 export interface ImportFullMessage {
   type: MessageType.IMPORT_FULL;
   data: FullExportData;
@@ -659,6 +666,7 @@ export type Message =
   | DeleteSessionStorageEntryMessage
   | RefreshActiveSessionsMessage
   | ExportFullMessage
+  | ExportSiteMessage
   | ImportFullMessage
   | ExportDataMessage
   | GetLiveCookiesMessage

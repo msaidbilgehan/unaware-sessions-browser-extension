@@ -221,6 +221,10 @@ export function exportFull(): Promise<FullExportData> {
   return sendMessage({ type: MessageType.EXPORT_FULL });
 }
 
+export function exportSite(sessionId: string, origin: string): Promise<FullExportData> {
+  return sendMessage({ type: MessageType.EXPORT_SITE, sessionId, origin });
+}
+
 export function exportData(): Promise<FullExportData> {
   return sendMessage({ type: MessageType.EXPORT_DATA });
 }

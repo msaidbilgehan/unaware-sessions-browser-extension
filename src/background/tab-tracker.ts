@@ -3,8 +3,9 @@ import { STORAGE_KEYS } from '@shared/constants';
 import { getSession, setSession } from '@shared/storage';
 import { extractOrigin, isValidUrl } from '@shared/utils';
 import { createLogger } from '@shared/logger';
-import { removeRulesForTab } from './dnr-manager';
+import { removeRulesForTab, updateRulesForTab } from './dnr-manager';
 import { cleanupPendingRestore } from './cookie-engine';
+import { hasSharedDomainCookie } from './cookie-scope';
 
 const log = createLogger('tab-tracker');
 
@@ -106,6 +107,16 @@ async function handleTabUpdated(
     if (entry) {
       const newOrigin = extractOrigin(tab.url);
       if (newOrigin && isValidUrl(tab.url) && newOrigin !== entry.origin) {
+        if (await hasSharedDomainCookie(entry.sessionId, entry.origin, newOrigin)) {
+          log.info(
+            `Tab ${tabId} navigated across compatible cookie domains: ${entry.origin} -> ${newOrigin}`,
+          );
+          tabMap.set(tabId, { ...entry, origin: newOrigin });
+          await persistTabMap();
+          cleanupPendingRestore(tabId);
+          await updateRulesForTab(tabId, entry.sessionId, newOrigin);
+          return;
+        }
         // Origin changed — unassign session. The session data belongs to
         // the old origin; keeping it assigned on a different origin causes
         // cross-domain confusion (session appearing under wrong "THIS SITE").

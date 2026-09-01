@@ -25,10 +25,10 @@ Privacy-first, open-source browser extension for isolated browsing sessions with
 ### Key Design Constraints
 
 - **Fresh navigation on session switch** — uses `chrome.tabs.update({url})` for clean cookie state
-- **Origin-scoped cookie swap** — saves/clears/restores cookies strictly per-origin (including parent-domain cookies via domain hierarchy walk); no cross-domain cookies are saved or restored
+- **Origin-scoped cookie swap** — saves and clears cookies per-origin with a domain hierarchy walk; saved Domain cookies may be restored on sibling hosts they cover, while unrelated-domain cookies are never reused
 - **Cookie isolation modes** — `soft` (default) skips cookie clear/restore on domains where the target session has no saved data, preserving unrelated services; `strict` always clears cookies for full isolation even without target data
 - **Per-tab session switch mutex** — concurrent session switches on the same tab are serialized to prevent interleaved cookie operations
-- **Tab unassignment on cross-origin navigation** — when a tab navigates to a different origin, its session is automatically unassigned (session data belongs to the old origin; keeping it assigned on a new origin causes cross-domain confusion)
+- **Tab unassignment on cross-origin navigation** — when a tab navigates to a different origin, its session is automatically unassigned unless both hosts are covered by a saved shared Domain cookie (for example `.aliyun.com` across `code.aliyun.com` and `account.aliyun.com`)
 - **IDB binary encoding** — content script encodes `ArrayBuffer`, `TypedArray`, and `Date` values into JSON-safe marker objects before `sendMessage` (Chrome extension messaging uses JSON serialization, not structured clone) and decodes them on restore
 - **Optional security layer** — 4-digit passcode (PBKDF2-SHA256, 600K iterations) and/or WebAuthn biometric (fingerprint/Face ID); client-side auth gate in popup/options before protected actions; configurable grace period (1–30 min) via `chrome.storage.session` auto-clears on browser close; biometric requires passcode as prerequisite for recoverability
 - **Opt-in encrypted Google Drive sync** — AES-256-GCM encryption with key derived from Google User ID (PBKDF2, 600K iterations); `drive.appdata` scope (hidden app folder, no access to user files); two Drive files: unencrypted manifest (checksums only) + encrypted payload; three merge strategies: trust-cloud, trust-local, ask (per-origin conflict picker); auto-sync via `chrome.alarms` at configurable intervals (Off/5m/15m/30m); same Google account on any device = same encryption key = cross-device sync; decryption failures auto-recover by overwriting remote with local data
@@ -93,7 +93,7 @@ npm run release:major # Major version bump + push tags
 - `cookie-engine.ts` — cookie swap orchestration (save, clear, restore, switch) with origin-scoped domain-hierarchy cookie resolution, DOM storage save/restore, pending restores, per-tab switch mutex, soft/strict isolation mode, and restore failure tracking (ring buffer)
 - `cookie-store.ts` — IndexedDB wrapper for cookie snapshots + stats
 - `storage-store.ts` — IndexedDB wrapper for storage snapshots + stats
-- `tab-tracker.ts` — tab-to-session mapping with persistence; unassigns sessions on cross-origin tab navigation
+- `tab-tracker.ts` — tab-to-session mapping with persistence; retains shared-cookie sibling-domain redirects and unassigns unrelated cross-origin navigation
 - `dnr-manager.ts` — declarativeNetRequest session rules with origin-scoped cookie header filtering
 - `messaging.ts` — message router (all MessageType handlers)
 - `badge-manager.ts` — tab badge with session color + abbreviation

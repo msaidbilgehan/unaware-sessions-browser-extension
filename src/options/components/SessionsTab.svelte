@@ -17,6 +17,7 @@
     deleteSessionCookie,
     updateSessionStorageEntry,
     deleteSessionStorageEntry,
+    exportSite,
   } from '@shared/api';
   import {
     isDomainAutoRefreshEnabled,
@@ -30,6 +31,8 @@
   import InlineEdit from '@shared/components/InlineEdit.svelte';
   import ColorPicker from '@shared/components/ColorPicker.svelte';
   import ConfirmDialog from '@shared/components/ConfirmDialog.svelte';
+  import AuthGate from '@shared/components/AuthGate.svelte';
+  import { checkAuth } from '@shared/auth-check';
 
   interface Props {
     sessions: SessionProfile[];
@@ -45,6 +48,9 @@
   let colorEditId = $state<string | null>(null);
   let confirmData = $state<{ session: SessionProfile } | null>(null);
   let originConfirm = $state<{ sessionId: string; origin: string } | null>(null);
+  let exportingSiteKey = $state<string | null>(null);
+  let authGateData = $state<{ onauth: () => void } | null>(null);
+  let exportNotice = $state<{ message: string; type: 'error' | 'success' } | null>(null);
 
   // Global auto-refresh interval — used to dim per-domain toggles when global is off
   let globalInterval = $state<AutoRefreshInterval>(getAutoRefreshInterval());
@@ -224,6 +230,55 @@
     }
   }
 
+  function safeFilenamePart(value: string): string {
+    return value
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'site';
+  }
+
+  async function performSiteExport(session: SessionProfile, origin: string) {
+    const exportKey = `${session.id}\0${origin}`;
+    exportingSiteKey = exportKey;
+    try {
+      const data = await exportSite(session.id, origin);
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const hostname = safeFilenamePart(new URL(origin).hostname);
+      const sessionName = safeFilenamePart(session.name);
+      const date = new Date().toISOString().slice(0, 10);
+      link.href = url;
+      link.download = `unaware-sessions-${hostname}-${sessionName}-${date}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+      exportNotice = { message: $_('options.sessions.exportSiteSuccess'), type: 'success' };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      exportNotice = {
+        message: $_('options.sessions.exportSiteFailed', { values: { error: message } }),
+        type: 'error',
+      };
+    } finally {
+      exportingSiteKey = null;
+    }
+  }
+
+  async function handleSiteExport(session: SessionProfile, origin: string) {
+    const authResult = await checkAuth();
+    if (authResult !== 'auth-required') {
+      await performSiteExport(session, origin);
+      return;
+    }
+    authGateData = {
+      onauth: () => {
+        authGateData = null;
+        void performSiteExport(session, origin);
+      },
+    };
+  }
+
   async function handleSaveCookie() {
     if (!editingCookie) return;
     const { sessionId, origin, name, domain, value } = editingCookie;
@@ -321,6 +376,16 @@
       {/if}
     </div>
   </div>
+
+  {#if exportNotice}
+    <div class="export-notice {exportNotice.type}" role="status" aria-live="polite">
+      <Icon name={exportNotice.type === 'success' ? 'check' : 'alert-triangle'} size={13} />
+      <span>{exportNotice.message}</span>
+      <button onclick={() => (exportNotice = null)} aria-label={$_('common.close')}>
+        <Icon name="x" size={11} />
+      </button>
+    </div>
+  {/if}
 
   <!-- Content -->
   {#if detailsLoading && detailsMap.size === 0}
@@ -477,6 +542,19 @@
                             <span class="origin-stats">
                               {$_('options.sessions.cookiesCount', { values: { count: detail.cookieCount } })} &middot; {formatBytes(detail.cookieBytes + detail.storageBytes)}
                             </span>
+                            <button
+                              class="site-export-btn"
+                              disabled={exportingSiteKey === `${session.id}\0${detail.origin}`}
+                              onclick={() => handleSiteExport(session, detail.origin)}
+                              title={$_('options.sessions.exportSiteData')}
+                              aria-label={$_('options.sessions.exportSiteData')}
+                            >
+                              {#if exportingSiteKey === `${session.id}\0${detail.origin}`}
+                                <span class="site-export-spinner" aria-hidden="true"></span>
+                              {:else}
+                                <Icon name="download" size={11} />
+                              {/if}
+                            </button>
                             <button
                               class="auto-refresh-btn"
                               class:active={globalAutoRefreshOn && isDomainRefreshOn(session.id, detail.origin)}
@@ -704,6 +782,9 @@
     oncancel={() => (originConfirm = null)}
   />
 {/if}
+{#if authGateData}
+  <AuthGate onauth={authGateData.onauth} oncancel={() => (authGateData = null)} />
+{/if}
 
 <style>
   .sessions-layout {
@@ -718,6 +799,51 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--space-4);
+  }
+
+  .export-notice {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border: 1px solid;
+    border-radius: var(--radius-lg);
+    font-size: var(--text-sm);
+  }
+
+  .export-notice.success {
+    color: var(--color-success);
+    background: var(--color-success-soft);
+    border-color: var(--color-success);
+  }
+
+  .export-notice.error {
+    color: var(--color-error);
+    background: var(--color-error-soft);
+    border-color: var(--color-error-border);
+  }
+
+  .export-notice span {
+    flex: 1;
+  }
+
+  .export-notice button {
+    display: inline-flex;
+    padding: var(--space-1);
+    border: none;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: inherit;
+    cursor: pointer;
+  }
+
+  .export-notice button:hover {
+    background: var(--color-interactive-hover);
+  }
+
+  .export-notice button:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
   }
 
   .header-left {
@@ -1104,6 +1230,52 @@
     border-color: var(--color-border-secondary);
     background: var(--color-bg-tertiary);
     opacity: 0.55;
+  }
+
+  .site-export-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    background: var(--color-accent-soft);
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    color: var(--color-accent);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .site-export-btn:hover:not(:disabled) {
+    border-color: var(--color-accent);
+    background: var(--color-interactive-hover);
+    box-shadow: var(--shadow-xs);
+  }
+
+  .site-export-btn:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
+  }
+
+  .site-export-btn:disabled {
+    cursor: wait;
+    opacity: 0.65;
+  }
+
+  .site-export-spinner {
+    width: 11px;
+    height: 11px;
+    border: 1.5px solid currentColor;
+    border-right-color: transparent;
+    border-radius: var(--radius-full);
+    animation: site-export-spin 0.7s linear infinite;
+  }
+
+  @keyframes site-export-spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   /* Details panel */
