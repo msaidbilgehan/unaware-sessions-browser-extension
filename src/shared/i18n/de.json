@@ -75,6 +75,7 @@
     "tabCount": "{count} {count, plural, one {Tab} other {Tabs}}",
     "list": {
       "thisSite": "Diese Seite",
+      "sameDomainSites": "Websites derselben Domain",
       "otherSessions": "Andere Sitzungen",
       "defaultLabel": "Standard (keine Sitzung)",
       "noSessionsMatch": "Keine Sitzungen entsprechen \"{query}\"",

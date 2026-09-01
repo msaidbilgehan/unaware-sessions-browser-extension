@@ -148,7 +148,7 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
   [MessageType.GET_SESSIONS_FOR_ORIGIN]: async (msg) => {
     if (msg.type !== MessageType.GET_SESSIONS_FOR_ORIGIN) return { success: false };
     const [cookieSessionIds, storageSessionIds, sessions] = await Promise.all([
-      getSessionIdsWithApplicableCookies(msg.origin),
+      cookieStore.getSessionIdsForOrigin(msg.origin),
       storageStore.getSessionIdsForOrigin(msg.origin),
       listSessions(),
     ]);
@@ -157,6 +157,22 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
       existingSessionIds.has(sessionId),
     );
     return { success: true, data: merged };
+  },
+
+  [MessageType.GET_RELATED_DOMAIN_SESSIONS]: async (msg) => {
+    if (msg.type !== MessageType.GET_RELATED_DOMAIN_SESSIONS) return { success: false };
+    const [compatibleIds, exactCookieIds, exactStorageIds, sessions] = await Promise.all([
+      getSessionIdsWithApplicableCookies(msg.origin),
+      cookieStore.getSessionIdsForOrigin(msg.origin),
+      storageStore.getSessionIdsForOrigin(msg.origin),
+      listSessions(),
+    ]);
+    const exactIds = new Set([...exactCookieIds, ...exactStorageIds]);
+    const existingIds = new Set(sessions.map((session) => session.id));
+    const relatedIds = compatibleIds.filter(
+      (sessionId) => !exactIds.has(sessionId) && existingIds.has(sessionId),
+    );
+    return { success: true, data: relatedIds };
   },
 
   [MessageType.GET_ALL_SESSION_ORIGINS]: async () => {

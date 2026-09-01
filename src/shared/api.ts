@@ -117,6 +117,10 @@ export function getSessionsForOrigin(origin: string): Promise<string[]> {
   return sendMessage({ type: MessageType.GET_SESSIONS_FOR_ORIGIN, origin });
 }
 
+export function getRelatedDomainSessions(origin: string): Promise<string[]> {
+  return sendMessage({ type: MessageType.GET_RELATED_DOMAIN_SESSIONS, origin });
+}
+
 export function getAllSessionOrigins(): Promise<Record<string, string[]>> {
   return sendMessage({ type: MessageType.GET_ALL_SESSION_ORIGINS });
 }

@@ -75,6 +75,7 @@
     "tabCount": "{count} {count, plural, one {タブ} other {タブ}}",
     "list": {
       "thisSite": "このサイト",
+      "sameDomainSites": "同一ドメインのサイト",
       "otherSessions": "他のセッション",
       "defaultLabel": "デフォルト（セッションなし）",
       "noSessionsMatch": "「{query}」に一致するセッションがありません",

@@ -190,6 +190,7 @@ export enum MessageType {
   GET_ALL_TAB_COUNTS = 'GET_ALL_TAB_COUNTS',
   GET_SESSION_STATS = 'GET_SESSION_STATS',
   GET_SESSIONS_FOR_ORIGIN = 'GET_SESSIONS_FOR_ORIGIN',
+  GET_RELATED_DOMAIN_SESSIONS = 'GET_RELATED_DOMAIN_SESSIONS',
   GET_ALL_SESSION_ORIGINS = 'GET_ALL_SESSION_ORIGINS',
 
   // Session data capture
@@ -348,6 +349,11 @@ export interface ReorderSessionsMessage {
 
 export interface GetSessionsForOriginMessage {
   type: MessageType.GET_SESSIONS_FOR_ORIGIN;
+  origin: string;
+}
+
+export interface GetRelatedDomainSessionsMessage {
+  type: MessageType.GET_RELATED_DOMAIN_SESSIONS;
   origin: string;
 }
 
@@ -654,6 +660,7 @@ export type Message =
   | DuplicateSessionMessage
   | ReorderSessionsMessage
   | GetSessionsForOriginMessage
+  | GetRelatedDomainSessionsMessage
   | GetAllSessionOriginsMessage
   | SaveSessionDataMessage
   | DetectSessionMessage

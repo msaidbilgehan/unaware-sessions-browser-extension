@@ -20,6 +20,7 @@
     switchingSessionId: string | null;
     tabCounts: Record<string, number>;
     sessionsWithOriginData: Set<string>;
+    relatedDomainSessionIds: Set<string>;
     sessionOriginMap: Record<string, string[]>;
     currentOrigin: string;
     searchQuery: string;
@@ -40,6 +41,7 @@
     switchingSessionId,
     tabCounts,
     sessionsWithOriginData,
+    relatedDomainSessionIds,
     sessionOriginMap,
     currentOrigin,
     searchQuery,
@@ -70,14 +72,28 @@
       : sessions,
   );
 
-  // Sessions relevant to current origin (have data or are active on this tab)
+  // Sessions with snapshots saved for this exact origin.
   const thisSiteSessions = $derived(
-    filteredSessions.filter((s) => sessionsWithOriginData.has(s.id) || s.id === activeSessionId),
+    filteredSessions.filter((s) => sessionsWithOriginData.has(s.id)),
+  );
+
+  // Sessions saved on a sibling host whose Domain cookies also apply here.
+  const sameDomainSessions = $derived(
+    filteredSessions.filter(
+      (s) =>
+        relatedDomainSessionIds.has(s.id) &&
+        !sessionsWithOriginData.has(s.id),
+    ),
   );
 
   // All other sessions
   const otherSessions = $derived(
-    filteredSessions.filter((s) => !sessionsWithOriginData.has(s.id) && s.id !== activeSessionId),
+    filteredSessions.filter(
+      (s) =>
+        !sessionsWithOriginData.has(s.id) &&
+        !relatedDomainSessionIds.has(s.id) &&
+        s.id !== activeSessionId,
+    ),
   );
 
   // Group other sessions by domain — each session appears under its primary
@@ -135,7 +151,11 @@
   function handleDrop(e: DragEvent, index: number) {
     e.preventDefault();
     if (dragIndex !== null && dragIndex !== index) {
-      const allVisible = [...thisSiteSessions, ...(effectiveShowOther ? otherSessions : [])];
+      const allVisible = [
+        ...thisSiteSessions,
+        ...sameDomainSessions,
+        ...(effectiveShowOther ? otherSessions : []),
+      ];
       const items = [...allVisible];
       const [moved] = items.splice(dragIndex, 1);
       items.splice(index, 0, moved);
@@ -213,10 +233,42 @@
         {/each}
       </div>
     {/if}
+
+    {#if sameDomainSessions.length > 0}
+      <div class="group related-domain-group">
+        <div class="group-header">
+          <span class="group-label">{$_('popup.list.sameDomainSites')}</span>
+          <span class="group-count">{sameDomainSessions.length}</span>
+          <span class="group-line"></span>
+        </div>
+        {#each sameDomainSessions as session, i (session.id)}
+          {@const idx = thisSiteSessions.length + i}
+          <div class="drag-wrapper" class:drag-over={dragOverIndex === idx && dragIndex !== idx}>
+            <SessionItem
+              {session}
+              isActive={session.id === activeSessionId}
+              isSwitching={session.id === switchingSessionId}
+              hasOriginData={false}
+              tabCount={tabCounts[session.id] ?? 0}
+              {onswitch}
+              {ondelete}
+              {onrename}
+              forceEditing={editingSessionId === session.id}
+              {oncontextmenu}
+              draggable={true}
+              ondragstart={(e) => handleDragStart(e, idx)}
+              ondragover={(e) => handleDragOver(e, idx)}
+              ondrop={(e) => handleDrop(e, idx)}
+              ondragend={handleDragEnd}
+            />
+          </div>
+        {/each}
+      </div>
+    {/if}
        <!-- Site list: all origins known to any session -->
     <SiteList {sessionOriginMap} {faviconSource} />
 
-    {#if thisSiteSessions.length === 0 && !effectiveShowOther}
+    {#if thisSiteSessions.length === 0 && sameDomainSessions.length === 0 && !effectiveShowOther}
       <div class="empty-site">
         <p>{$_('popup.list.noSessionsSite')}</p>
       </div>
@@ -409,6 +461,14 @@
     flex: 1;
     height: 1px;
     background: var(--color-border-secondary);
+  }
+
+  .related-domain-group .group-label {
+    color: var(--color-accent);
+  }
+
+  .related-domain-group .group-line {
+    background: linear-gradient(90deg, var(--color-accent-soft), transparent);
   }
 
   .group-toggle {

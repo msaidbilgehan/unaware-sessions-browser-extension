@@ -31,6 +31,7 @@
     reorderSessions,
     duplicateSession as duplicateSessionApi,
     getSessionsForOrigin,
+    getRelatedDomainSessions,
     getAllSessionOrigins,
     saveSessionData,
     clearOriginData,
@@ -64,6 +65,7 @@
   let sessions = $state<SessionProfile[]>([]);
   let tabCounts = $state<Record<string, number>>({});
   let sessionsWithOriginData = $state<Set<string>>(new Set());
+  let relatedDomainSessionIds = $state<Set<string>>(new Set());
   let sessionOriginMap = $state<Record<string, string[]>>({});
   let currentTab = $state<chrome.tabs.Tab | undefined>(undefined);
   let currentTabEntry = $state<TabSessionEntry | undefined>(undefined);
@@ -156,11 +158,13 @@
         }
       }
 
-      const [originIds, allOrigins] = await Promise.all([
+      const [originIds, relatedIds, allOrigins] = await Promise.all([
         origin ? getSessionsForOrigin(origin) : Promise.resolve([]),
+        origin ? getRelatedDomainSessions(origin) : Promise.resolve([]),
         getAllSessionOrigins(),
       ]);
       sessionsWithOriginData = new Set(originIds);
+      relatedDomainSessionIds = new Set(relatedIds);
       sessionOriginMap = allOrigins;
     } catch (err) {
       console.error('[Unaware Sessions] Failed to load state:', err);
@@ -185,8 +189,12 @@
       if (currentTab?.url) {
         const origin = extractOrigin(currentTab.url);
         if (origin) {
-          const ids = await getSessionsForOrigin(origin);
-          sessionsWithOriginData = new Set(ids);
+          const [exactIds, relatedIds] = await Promise.all([
+            getSessionsForOrigin(origin),
+            getRelatedDomainSessions(origin),
+          ]);
+          sessionsWithOriginData = new Set(exactIds);
+          relatedDomainSessionIds = new Set(relatedIds);
         }
       }
     } catch {
@@ -456,10 +464,15 @@
             }
             // Refresh origin data availability
             if (origin) {
-              const ids = await getSessionsForOrigin(origin);
-              sessionsWithOriginData = new Set(ids);
+              const [exactIds, relatedIds] = await Promise.all([
+                getSessionsForOrigin(origin),
+                getRelatedDomainSessions(origin),
+              ]);
+              sessionsWithOriginData = new Set(exactIds);
+              relatedDomainSessionIds = new Set(relatedIds);
             } else {
               sessionsWithOriginData = new Set();
+              relatedDomainSessionIds = new Set();
             }
           }
         }
@@ -484,8 +497,12 @@
             }
           }
           if (origin) {
-            const ids = await getSessionsForOrigin(origin);
-            sessionsWithOriginData = new Set(ids);
+            const [exactIds, relatedIds] = await Promise.all([
+              getSessionsForOrigin(origin),
+              getRelatedDomainSessions(origin),
+            ]);
+            sessionsWithOriginData = new Set(exactIds);
+            relatedDomainSessionIds = new Set(relatedIds);
           }
         });
       }
@@ -692,6 +709,7 @@
         {switchingSessionId}
         {tabCounts}
         {sessionsWithOriginData}
+        {relatedDomainSessionIds}
         {sessionOriginMap}
         {currentOrigin}
         {searchQuery}
