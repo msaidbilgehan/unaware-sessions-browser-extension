@@ -5,7 +5,12 @@ import {
   detectConflicts,
   autoResolveOneSidedChanges,
   mergeData,
+  applyFullData,
 } from '@shared/sync/sync-engine';
+import { cookieStore } from '@background/cookie-store';
+import { storageStore } from '@background/storage-store';
+import { snapshotUndo } from '@background/snapshot-undo';
+import { hydrateSessions, listSessions } from '@background/session-manager';
 import type { FullExportData } from '@shared/types';
 import type { SyncManifest, ConflictEntry } from '@shared/sync/sync-types';
 
@@ -530,6 +535,87 @@ describe('sync-engine', () => {
       expect(merged.sessions.find((s) => s.id === 'sess-1')?.name).toBe(
         'Renamed on other device',
       );
+    });
+  });
+
+
+  // A destructive replace (delete everything, then re-save) leaves a window
+  // where an interruption — quota rejection, aborted transaction, the MV3
+  // service worker being torn down — loses every snapshot while the profiles
+  // survive. That is exactly what total local data loss looks like, so the
+  // apply writes first and prunes afterwards.
+  describe('applyFullData', () => {
+    beforeEach(async () => {
+      await cookieStore.deleteAll();
+      await storageStore.deleteAll();
+      await hydrateSessions();
+    });
+
+    it('writes incoming snapshots and profiles', async () => {
+      await applyFullData(makeExportData());
+
+      expect(await cookieStore.load('sess-1', 'https://example.com')).toBeDefined();
+      expect(await storageStore.load('sess-1', 'https://example.com')).toBeDefined();
+      expect((await listSessions()).map((s) => s.id)).toEqual(['sess-1']);
+    });
+
+    it('prunes snapshots the incoming payload does not contain', async () => {
+      await cookieStore.save({
+        sessionId: 'stale-session',
+        origin: 'https://stale.test',
+        timestamp: 1,
+        cookies: [],
+      });
+      await storageStore.save({
+        sessionId: 'stale-session',
+        origin: 'https://stale.test',
+        timestamp: 1,
+        localStorage: {},
+        sessionStorage: {},
+      });
+
+      await applyFullData(makeExportData());
+
+      expect(await cookieStore.load('stale-session', 'https://stale.test')).toBeUndefined();
+      expect(await storageStore.load('stale-session', 'https://stale.test')).toBeUndefined();
+      expect(await cookieStore.countAll()).toBe(1);
+    });
+
+    it('never leaves the store empty when the incoming payload has snapshots', async () => {
+      await cookieStore.save({
+        sessionId: 'sess-1',
+        origin: 'https://old.test',
+        timestamp: 1,
+        cookies: [],
+      });
+
+      await applyFullData(makeExportData());
+
+      // The pruned key is gone and the incoming one is present — at no point
+      // is the payload's own data deleted and re-added.
+      expect(await cookieStore.load('sess-1', 'https://old.test')).toBeUndefined();
+      expect(await cookieStore.load('sess-1', 'https://example.com')).toBeDefined();
+    });
+
+    // The slots describe local state that no longer exists after a full
+    // replace; offering to "restore previous" would silently undo the sync.
+    it('clears undo slots, which describe the replaced local state', async () => {
+      await snapshotUndo.put('cookies', {
+        sessionId: 'sess-1',
+        origin: 'https://example.com',
+        timestamp: 1,
+        cookies: [],
+      });
+
+      await applyFullData(makeExportData());
+
+      expect(await snapshotUndo.countAll()).toBe(0);
+    });
+
+    it('replaces the tombstone set with the merged one', async () => {
+      await applyFullData(makeExportData({ deletedSessions: { 'gone-session': 123 } }));
+      // A surviving profile keeps its snapshots; the tombstone map is authoritative.
+      expect((await listSessions()).map((s) => s.id)).toEqual(['sess-1']);
     });
   });
 

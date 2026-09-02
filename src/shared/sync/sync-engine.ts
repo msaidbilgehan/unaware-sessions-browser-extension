@@ -24,7 +24,6 @@ import type { DriveFileRef } from './drive-client';
 import { getSyncConfigHydrated, setSyncConfig } from './sync-store';
 import {
   listSessions,
-  deleteAllSessions,
   batchSetSessions,
   getSessionTombstones,
   setSessionTombstones,
@@ -32,6 +31,7 @@ import {
 } from '@background/session-manager';
 import { cookieStore } from '@background/cookie-store';
 import { storageStore } from '@background/storage-store';
+import { snapshotUndo } from '@background/snapshot-undo';
 import { createLogger } from '@shared/logger';
 
 const log = createLogger('sync-engine');
@@ -372,13 +372,41 @@ function mergeSessionsWithTombstones(
 // ── Apply Full Data (destructive local replace) ────────────
 
 export async function applyFullData(data: FullExportData): Promise<void> {
-  // Internal replace, not a user deletion — recording tombstones here would
-  // mark the incoming sessions as deleted and wipe them on the next sync.
-  await deleteAllSessions({ recordTombstones: false });
+  // Write first, prune second.
+  //
+  // This previously deleted every snapshot up front and re-saved the incoming
+  // ones afterwards. Anything that interrupted the gap — a quota rejection, an
+  // aborted transaction, the MV3 service worker being torn down mid-cycle —
+  // left the session profiles intact and every snapshot gone: the exact
+  // signature of total local data loss, and unrecoverable without the cloud
+  // copy. Saves are put-by-key and idempotent, so writing first is safe; the
+  // worst case of an interruption is orphaned snapshots, which the prune below
+  // (or the next apply) cleans up.
+  const keepKey = (snap: { sessionId: string; origin: string }): string =>
+    `${snap.sessionId}:${snap.origin}`;
+  const cookieKeep = new Set(data.cookieSnapshots.map(keepKey));
+  const storageKeep = new Set(data.storageSnapshots.map(keepKey));
+
+  await Promise.all([
+    ...data.cookieSnapshots.map((snap) => cookieStore.save(snap)),
+    ...data.storageSnapshots.map((snap) => storageStore.save(snap)),
+  ]);
+
+  const [cookieKeys, storageKeys] = await Promise.all([
+    cookieStore.getAllKeys(),
+    storageStore.getAllKeys(),
+  ]);
+
+  await Promise.all([
+    cookieStore.deleteKeys(cookieKeys.filter((key) => !cookieKeep.has(key))),
+    storageStore.deleteKeys(storageKeys.filter((key) => !storageKeep.has(key))),
+  ]);
 
   // batchSetSessions persists all sessions in one write and sets SESSION_ORDER once,
   // avoiding the O(N²) storage writes that would occur from calling
   // upsertSessionDirect in a loop (each call triggers persistSessions + appendOrder).
+  // No tombstones are recorded: this is an internal replace, not a user
+  // deletion, and tombstoning the incoming sessions would wipe them next sync.
   await batchSetSessions(data.sessions);
 
   // The merged tombstone set replaces the local one (deletions already
@@ -386,10 +414,10 @@ export async function applyFullData(data: FullExportData): Promise<void> {
   // sessions that survived via a newer update).
   await setSessionTombstones(data.deletedSessions ?? {});
 
-  await Promise.all([
-    ...data.cookieSnapshots.map((snap) => cookieStore.save(snap)),
-    ...data.storageSnapshots.map((snap) => storageStore.save(snap)),
-  ]);
+  // Undo slots describe the local state that was just replaced wholesale, so
+  // they no longer correspond to anything the user can reason about — and
+  // "restore previous" offering pre-sync data would silently undo the sync.
+  await snapshotUndo.deleteAll();
 }
 
 // ── Export Local Data ──────────────────────────────────────
@@ -454,6 +482,70 @@ export class SyncConcurrencyError extends Error {
     super('Remote sync data changed during the sync cycle');
     this.name = 'SyncConcurrencyError';
   }
+}
+
+/**
+ * Thrown when local snapshot data has vanished but the session profiles are
+ * still there, and the cloud copy still has data.
+ *
+ * Snapshots live in extension IndexedDB, which sits in a quota-managed bucket
+ * Chrome can evict wholesale; profiles live in chrome.storage.local, which it
+ * cannot. So "profiles present, zero snapshots" is not a state a user can
+ * produce deliberately — deleting every session removes the profiles too — it
+ * is the signature of the local database being wiped or become unreadable.
+ *
+ * Uploading that state would overwrite the last good backup with the loss,
+ * which is how a recoverable local incident becomes permanent.
+ */
+export class SyncLocalDataLossError extends Error {
+  constructor(orphanedOriginCount: number) {
+    super(
+      `The cloud copy holds ${orphanedOriginCount} origin(s) for sessions that still exist here, ` +
+        'and none of them have local data any more — refusing to overwrite the cloud backup. ' +
+        'Restore it with merge strategy "Trust cloud", or disconnect and reconnect Cloud Sync to ' +
+        'publish the local state deliberately.',
+    );
+    this.name = 'SyncLocalDataLossError';
+  }
+}
+
+function sessionIdOfKey(key: string): string {
+  const sep = key.indexOf(':');
+  return sep > 0 ? key.slice(0, sep) : key;
+}
+
+/**
+ * Guard the upload paths that publish local data verbatim (trust-local and
+ * the unreadable-remote recovery). The merge paths are exempt: they pull the
+ * remote snapshots back in, which is how a wiped local store self-heals.
+ *
+ * The test is deliberately not "local shrank by more than X%" — thresholds
+ * are arbitrary and eventually wrong in both directions. It fires only on a
+ * state that no deliberate action produces: every origin the cloud knows
+ * about is gone locally, while at least one of the sessions those origins
+ * belong to still exists here as a profile. Deleting a session takes its
+ * profile with it; deleting one session's origin data leaves the other
+ * sessions' origins in place; ordinary drift changes checksums, not keys.
+ * Losing the IndexedDB bucket while chrome.storage.local survives is what
+ * looks like this.
+ */
+function assertLocalDataIntact(
+  localData: FullExportData,
+  localManifest: SyncManifest,
+  remoteManifest: SyncManifest,
+): void {
+  const remoteKeys = Object.keys(remoteManifest.checksums);
+  if (remoteKeys.length === 0) return;
+
+  // Any surviving overlap means local data is different, not missing.
+  const localKeys = new Set(Object.keys(localManifest.checksums));
+  if (remoteKeys.some((key) => localKeys.has(key))) return;
+
+  const localSessionIds = new Set(localData.sessions.map((s) => s.id));
+  const orphaned = remoteKeys.filter((key) => localSessionIds.has(sessionIdOfKey(key)));
+  if (orphaned.length === 0) return;
+
+  throw new SyncLocalDataLossError(orphaned.length);
 }
 
 async function assertFilesUnchanged(
@@ -558,7 +650,35 @@ export async function executeSyncCycle(
     }
   }
 
-  // 4. First sync — no remote data exists (or the manifest is unreadable)
+  // 3b. A surviving payload with no readable manifest is NOT a first sync.
+  //
+  //     The manifest is only metadata; the payload is the data. With
+  //     payload-first commit ordering, "payload newer than its manifest" is the
+  //     *expected* state after a crash between the two writes, so an
+  //     unparseable or missing manifest says nothing about the payload's
+  //     health. Falling into the first-sync branch below would PATCH local data
+  //     over a healthy — and strictly newer — remote payload, without ever
+  //     reading it and without the assertLocalDataIntact guard its sibling
+  //     recovery paths use. Combined with a locally evicted IndexedDB bucket
+  //     that turns one corrupt manifest byte into permanent, account-wide data
+  //     loss. Recover the way a *stale* manifest is already recovered: rebuild
+  //     it from the AES-GCM-authenticated payload. Only when the payload is
+  //     unreadable too is there nothing left to protect, and the branch below
+  //     is then the documented overwrite recovery.
+  let preloadedRemoteData: FullExportData | null = null;
+  if (!remoteManifest && payloadRef) {
+    const payloadJson = await downloadFile(token, payloadRef.id);
+    try {
+      const encryptedPayload = JSON.parse(payloadJson) as EncryptedPayload;
+      preloadedRemoteData = await decrypt(encryptedPayload, passphrase);
+      remoteManifest = await buildLocalManifest(preloadedRemoteData, deviceId);
+      log.warn('Sync: remote manifest unreadable — rebuilt it from the remote payload');
+    } catch {
+      log.warn('Sync: remote manifest and payload are both unreadable — overwriting with local');
+    }
+  }
+
+  // 4. First sync — no remote data exists (or neither remote file is readable)
   if (!remoteManifest || !payloadRef) {
     log.info('Sync: first sync, uploading local data');
     const payload = await encrypt(localData, passphrase);
@@ -596,9 +716,7 @@ export async function executeSyncCycle(
   const remoteSessionKeys = Object.keys(remoteSessionChecksums);
   const sessionsSame =
     localSessionKeys.length === remoteSessionKeys.length &&
-    localSessionKeys.every(
-      (k) => localManifest.sessionChecksums[k] === remoteSessionChecksums[k],
-    );
+    localSessionKeys.every((k) => localManifest.sessionChecksums[k] === remoteSessionChecksums[k]);
 
   if (allSame && sessionsSame) {
     log.info('Sync: no changes detected');
@@ -615,6 +733,7 @@ export async function executeSyncCycle(
 
   // 6. Strategy: trust-local — just upload
   if (mergeStrategy === 'trust-local') {
+    assertLocalDataIntact(localData, localManifest, remoteManifest);
     log.info('Sync: trust-local, uploading');
     const payload = await encrypt(localData, passphrase);
     await uploadPayloadThenManifest(token, localManifest, payload, manifestRef, payloadRef);
@@ -635,6 +754,9 @@ export async function executeSyncCycle(
     // download (and the guard below re-prompts if the conflicts changed).
     remoteData = cachedRemote.data;
     remoteManifest = cachedRemote.manifest;
+  } else if (preloadedRemoteData) {
+    // Already downloaded and decrypted in 3b to rebuild the missing manifest.
+    remoteData = preloadedRemoteData;
   } else {
     log.info('Sync: downloading remote payload');
     const payloadJson = await downloadFile(token, payloadRef.id);
@@ -647,7 +769,10 @@ export async function executeSyncCycle(
     } catch {
       // Unreadable payload — encrypted with a different account or an old
       // passphrase, or corrupted by a partial write. Auto-recover by
-      // uploading local data (trust-local behavior).
+      // uploading local data (trust-local behavior), unless local is the
+      // side that lost its data: an unreadable backup may still be
+      // recoverable, an overwritten one never is.
+      assertLocalDataIntact(localData, localManifest, remoteManifest);
       log.warn('Sync: cannot read remote payload — overwriting with local data');
       const payload = await encrypt(localData, passphrase);
       await uploadPayloadThenManifest(token, localManifest, payload, manifestRef, payloadRef);
@@ -712,7 +837,11 @@ export async function executeSyncCycle(
         status: 'conflict',
         progress: '',
         conflicts,
-        remoteCache: { manifest: remoteManifest, data: remoteData, payloadVersion: payloadRef.version },
+        remoteCache: {
+          manifest: remoteManifest,
+          data: remoteData,
+          payloadVersion: payloadRef.version,
+        },
       };
     }
   }

@@ -17,6 +17,7 @@ import * as driveClient from '@shared/sync/drive-client';
 import {
   executeSyncCycle,
   SyncConcurrencyError,
+  SyncLocalDataLossError,
   buildLocalManifest,
 } from '@shared/sync/sync-engine';
 import { encrypt } from '@shared/sync/crypto-engine';
@@ -98,7 +99,68 @@ describe('executeSyncCycle', () => {
   });
 
   describe('corrupt remote data recovery (finding 3)', () => {
-    it('treats an unparseable manifest as absent and re-uploads local data', async () => {
+    // The manifest is only metadata; the payload is the data. Payload-first
+    // commit ordering makes "payload newer than its manifest" the expected
+    // state after a crash between the two writes, so an unreadable manifest
+    // says nothing about the payload's health. Overwriting the payload here
+    // would destroy the cloud backup for every device on the account.
+    it('rebuilds an unreadable manifest from the payload instead of overwriting it', async () => {
+      const remoteData: FullExportData = {
+        version: 1,
+        exportedAt: 2,
+        sessions: [
+          {
+            id: 'sess-remote',
+            name: 'Remote Only',
+            color: '#3B82F6',
+            createdAt: 1,
+            updatedAt: 1,
+            settings: {},
+          },
+        ],
+        cookieSnapshots: [
+          {
+            sessionId: 'sess-remote',
+            origin: 'https://remote.test',
+            timestamp: 1,
+            cookies: [],
+          },
+        ],
+        storageSnapshots: [],
+        deletedSessions: {},
+      };
+      const payloadJson = JSON.stringify(await encrypt(remoteData, 'passphrase'));
+
+      mockDrive.findFile.mockImplementation(async (_t: string, name: string) =>
+        name === MANIFEST_FILENAME
+          ? { id: 'manifest-id', version: '1' }
+          : { id: 'payload-id', version: '1' },
+      );
+      // Manifest corrupt, payload perfectly healthy.
+      mockDrive.downloadFile.mockImplementation(async (_t: string, id: string) =>
+        id === 'manifest-id' ? 'not json {{{' : payloadJson,
+      );
+      mockDrive.getFileVersion.mockResolvedValue('1');
+
+      await setSyncConfig({
+        enabled: true,
+        googleId: 'g',
+        deviceId: 'dev-1',
+        mergeStrategy: 'trust-cloud',
+      });
+
+      const state = await executeSyncCycle('passphrase');
+      expect(state.status).toBe('idle');
+
+      // The healthy payload must never be PATCHed over.
+      const payloadWrites = mockDrive.updateFile.mock.calls.filter((c) => c[1] === 'payload-id');
+      expect(payloadWrites).toHaveLength(0);
+
+      // And the remote data it held was actually applied, proving it was read.
+      expect(await cookieStore.load('sess-remote', 'https://remote.test')).toBeDefined();
+    });
+
+    it('re-uploads local data when the manifest AND payload are both unreadable', async () => {
       mockDrive.findFile.mockImplementation(async (_t: string, name: string) =>
         name === MANIFEST_FILENAME
           ? { id: 'manifest-id', version: '1' }
@@ -240,6 +302,149 @@ describe('executeSyncCycle', () => {
       await expect(executeSyncCycle('passphrase')).rejects.toBeInstanceOf(SyncConcurrencyError);
       // Aborted before clobbering the changed remote file.
       expect(mockDrive.updateFile).not.toHaveBeenCalled();
+    });
+  });
+
+
+  // Snapshots live in extension IndexedDB (a quota-managed bucket Chrome can
+  // evict wholesale); profiles live in chrome.storage.local (which it cannot).
+  // "Every cloud origin gone locally while its session profile survives" is
+  // therefore a local wipe, not a state a deliberate action produces — and
+  // uploading it turns a recoverable incident into a permanent one by
+  // overwriting the last good backup.
+  describe('local data loss guard', () => {
+    const OWNED_KEY = 'sess-1:https://example.com';
+
+    function manifestJson(checksums: Record<string, string>): string {
+      const manifest: SyncManifest = {
+        version: 1,
+        updatedAt: 1,
+        deviceId: 'other-device',
+        checksums,
+        sessionChecksums: {},
+      };
+      return JSON.stringify(manifest);
+    }
+
+    function emptyCookieSnap(sessionId: string, origin: string): CookieSnapshot {
+      return { sessionId, origin, timestamp: 1, cookies: [] };
+    }
+
+    beforeEach(() => {
+      mockDrive.findFile.mockImplementation(async (_t: string, name: string) =>
+        name === MANIFEST_FILENAME
+          ? { id: 'manifest-id', version: '1' }
+          : { id: 'payload-id', version: '1' },
+      );
+      mockDrive.downloadFile.mockResolvedValue(manifestJson({ [OWNED_KEY]: 'remote-hash' }));
+      mockDrive.getFileVersion.mockResolvedValue('1');
+    });
+
+    async function trustLocal(): Promise<void> {
+      await setSyncConfig({
+        enabled: true,
+        googleId: 'g',
+        deviceId: 'dev-1',
+        mergeStrategy: 'trust-local',
+      });
+    }
+
+    it('refuses a trust-local upload when the cloud origin is gone locally but its session remains', async () => {
+      await createSession('Work', '#3B82F6', undefined, 'sess-1');
+      await trustLocal();
+
+      await expect(executeSyncCycle('passphrase')).rejects.toBeInstanceOf(SyncLocalDataLossError);
+      expect(mockDrive.updateFile).not.toHaveBeenCalled();
+      expect(mockDrive.createFile).not.toHaveBeenCalled();
+    });
+
+    // The state right after a wipe plus one newly captured session: local is
+    // no longer empty, but nothing the cloud knows about survived.
+    it('refuses even when unrelated new local data exists', async () => {
+      await createSession('Work', '#3B82F6', undefined, 'sess-1');
+      await createSession('Fresh', '#EF4444', undefined, 'sess-new');
+      await cookieStore.save(emptyCookieSnap('sess-new', 'https://fresh.test'));
+      await trustLocal();
+
+      await expect(executeSyncCycle('passphrase')).rejects.toBeInstanceOf(SyncLocalDataLossError);
+      expect(mockDrive.updateFile).not.toHaveBeenCalled();
+    });
+
+    it('allows the upload when the cloud origin still has local data (ordinary drift)', async () => {
+      await createSession('Work', '#3B82F6', undefined, 'sess-1');
+      await cookieStore.save(emptyCookieSnap('sess-1', 'https://example.com'));
+      await trustLocal();
+
+      const state = await executeSyncCycle('passphrase');
+      expect(state.status).toBe('idle');
+      expect(mockDrive.updateFile).toHaveBeenCalled();
+    });
+
+    it('allows the upload after a deliberate deletion of every session', async () => {
+      // No profiles left either — the user really did delete everything.
+      await trustLocal();
+
+      const state = await executeSyncCycle('passphrase');
+      expect(state.status).toBe('idle');
+      expect(mockDrive.updateFile).toHaveBeenCalled();
+    });
+
+    it('allows the upload when the cloud data belongs to sessions deleted here', async () => {
+      await createSession('Other', '#000', undefined, 'sess-other');
+      await cookieStore.save(emptyCookieSnap('sess-other', 'https://other.test'));
+      await trustLocal();
+
+      const state = await executeSyncCycle('passphrase');
+      expect(state.status).toBe('idle');
+      expect(mockDrive.updateFile).toHaveBeenCalled();
+    });
+
+    it('refuses to overwrite an unreadable remote payload with wiped local data', async () => {
+      await createSession('Work', '#3B82F6', undefined, 'sess-1');
+      mockDrive.downloadFile.mockImplementation(async (_t: string, id: string) =>
+        id === 'manifest-id' ? manifestJson({ [OWNED_KEY]: 'remote-hash' }) : 'not-decryptable',
+      );
+
+      await setSyncConfig({ enabled: true, googleId: 'g', deviceId: 'dev-1', mergeStrategy: 'ask' });
+
+      await expect(executeSyncCycle('passphrase')).rejects.toBeInstanceOf(SyncLocalDataLossError);
+      expect(mockDrive.updateFile).not.toHaveBeenCalled();
+    });
+
+    it('still lets the ask strategy pull remote data back into a wiped local store', async () => {
+      await createSession('Work', '#3B82F6', undefined, 'sess-1');
+
+      const remoteData: FullExportData = {
+        version: 1,
+        exportedAt: 2,
+        sessions: [
+          {
+            id: 'sess-1',
+            name: 'Work',
+            color: '#3B82F6',
+            createdAt: 1,
+            updatedAt: 1,
+            settings: {},
+          },
+        ],
+        cookieSnapshots: [emptyCookieSnap('sess-1', 'https://example.com')],
+        storageSnapshots: [],
+        deletedSessions: {},
+      };
+      const remoteManifest = await buildLocalManifest(remoteData, 'other-device');
+      const payloadJson = JSON.stringify(await encrypt(remoteData, 'passphrase'));
+
+      mockDrive.downloadFile.mockImplementation(async (_t: string, id: string) =>
+        id === 'manifest-id' ? JSON.stringify(remoteManifest) : payloadJson,
+      );
+
+      await setSyncConfig({ enabled: true, googleId: 'g', deviceId: 'dev-1', mergeStrategy: 'ask' });
+
+      const state = await executeSyncCycle('passphrase');
+
+      expect(state.status).toBe('idle');
+      // The remote snapshot is restored locally instead of being overwritten.
+      expect(await cookieStore.load('sess-1', 'https://example.com')).toBeDefined();
     });
   });
 
