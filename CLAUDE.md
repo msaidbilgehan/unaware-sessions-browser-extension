@@ -159,6 +159,7 @@ npm run release:major # Major version bump + push tags
 - `Docs/1-Idea.md` — project concept and motivation
 - `Docs/2-Product-Specifications.md` — architecture, data model, isolation matrix, future work
 - `Docs/3-implementation-Plan.md` — phased delivery plan with exit criteria
+- `Docs/4-Concurrent-Isolation/` — design study for concurrent per-tab isolation (Approach B vs C, C recommended, spike plan, implementation plan)
 - `PRIVACY_POLICY.md` — privacy commitments
 - `CHANGELOG.md` — version history
 
