@@ -168,3 +168,31 @@ describe('deleteForOrigin', () => {
     expect(await storageStore.load('s1', 'https://b.com')).toBeDefined();
   });
 });
+
+describe('getAllKeys / deleteKeys / countAll', () => {
+  it('lists every stored key', async () => {
+    await storageStore.save(makeStorageSnapshot('s1', 'https://a.com'));
+    await storageStore.save(makeStorageSnapshot('s2', 'https://b.com'));
+
+    expect((await storageStore.getAllKeys()).sort()).toEqual([
+      's1:https://a.com',
+      's2:https://b.com',
+    ]);
+  });
+
+  it('deletes only the listed keys', async () => {
+    await storageStore.save(makeStorageSnapshot('s1', 'https://a.com'));
+    await storageStore.save(makeStorageSnapshot('s1', 'https://b.com'));
+
+    await storageStore.deleteKeys(['s1:https://a.com']);
+
+    expect(await storageStore.load('s1', 'https://a.com')).toBeUndefined();
+    expect(await storageStore.load('s1', 'https://b.com')).toBeDefined();
+  });
+
+  it('counts records', async () => {
+    expect(await storageStore.countAll()).toBe(0);
+    await storageStore.save(makeStorageSnapshot('s1', 'https://a.com'));
+    expect(await storageStore.countAll()).toBe(1);
+  });
+});

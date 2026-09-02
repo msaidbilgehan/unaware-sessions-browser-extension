@@ -5,6 +5,7 @@ import {
   STORAGE_STORE_DB_VERSION,
 } from '@shared/constants';
 import { estimateRecordBytes } from '@shared/utils';
+import { openSnapshotDb, rejectOnTxFailure } from './idb-support';
 
 function buildKey(sessionId: string, origin: string): string {
   return `${sessionId}:${origin}`;
@@ -12,29 +13,31 @@ function buildKey(sessionId: string, origin: string): string {
 
 class StorageStore {
   private db: IDBDatabase | null = null;
+  private opening: Promise<IDBDatabase> | null = null;
 
   async open(): Promise<IDBDatabase> {
     if (this.db) return this.db;
+    // Share one in-flight open: concurrent callers (a switch and an
+    // auto-save, say) would otherwise each open a connection.
+    if (this.opening) return this.opening;
 
-    return new Promise((resolve, reject) => {
-      const request = indexedDB.open(STORAGE_STORE_DB_NAME, STORAGE_STORE_DB_VERSION);
+    this.opening = openSnapshotDb(
+      STORAGE_STORE_DB_NAME,
+      [STORAGE_STORE_NAME],
+      STORAGE_STORE_DB_VERSION,
+      () => {
+        this.db = null;
+      },
+    )
+      .then((db) => {
+        this.db = db;
+        return db;
+      })
+      .finally(() => {
+        this.opening = null;
+      });
 
-      request.onupgradeneeded = () => {
-        const db = request.result;
-        if (!db.objectStoreNames.contains(STORAGE_STORE_NAME)) {
-          db.createObjectStore(STORAGE_STORE_NAME);
-        }
-      };
-
-      request.onsuccess = () => {
-        this.db = request.result;
-        resolve(this.db);
-      };
-
-      request.onerror = () => {
-        reject(new Error(`Failed to open StorageStore DB: ${request.error?.message}`));
-      };
-    });
+    return this.opening;
   }
 
   async save(snapshot: StorageSnapshot): Promise<void> {
@@ -45,7 +48,7 @@ class StorageStore {
       const tx = db.transaction(STORAGE_STORE_NAME, 'readwrite');
       tx.objectStore(STORAGE_STORE_NAME).put(snapshot, key);
       tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(new Error(`Failed to save storage snapshot: ${tx.error?.message}`));
+      rejectOnTxFailure(tx, reject, 'Failed to save storage snapshot');
     });
   }
 
@@ -57,8 +60,7 @@ class StorageStore {
       const tx = db.transaction(STORAGE_STORE_NAME, 'readonly');
       const request = tx.objectStore(STORAGE_STORE_NAME).get(key);
       request.onsuccess = () => resolve(request.result as StorageSnapshot | undefined);
-      request.onerror = () =>
-        reject(new Error(`Failed to load storage snapshot: ${request.error?.message}`));
+      rejectOnTxFailure(tx, reject, 'Failed to load storage snapshot');
     });
   }
 
@@ -99,7 +101,7 @@ class StorageStore {
 
       tx.oncomplete = () =>
         resolve({ entryCount, storageBytes, idbCount, origins: [...originSet] });
-      tx.onerror = () => reject(new Error(`Failed to get storage stats: ${tx.error?.message}`));
+      rejectOnTxFailure(tx, reject, 'Failed to get storage stats');
     });
   }
 
@@ -124,8 +126,7 @@ class StorageStore {
       };
 
       tx.oncomplete = () => resolve([...sessionIdSet]);
-      tx.onerror = () =>
-        reject(new Error(`Failed to get sessions for origin: ${tx.error?.message}`));
+      rejectOnTxFailure(tx, reject, 'Failed to get sessions for origin');
     });
   }
 
@@ -163,8 +164,7 @@ class StorageStore {
         }
         resolve(result);
       };
-      tx.onerror = () =>
-        reject(new Error(`Failed to get all session origins: ${tx.error?.message}`));
+      rejectOnTxFailure(tx, reject, 'Failed to get all session origins');
     });
   }
 
@@ -189,7 +189,7 @@ class StorageStore {
       };
 
       tx.oncomplete = () => resolve(snapshots);
-      tx.onerror = () => reject(new Error(`Failed to get snapshots: ${tx.error?.message}`));
+      rejectOnTxFailure(tx, reject, 'Failed to get snapshots');
     });
   }
 
@@ -201,7 +201,7 @@ class StorageStore {
       const tx = db.transaction(STORAGE_STORE_NAME, 'readwrite');
       tx.objectStore(STORAGE_STORE_NAME).delete(key);
       tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(new Error(`Failed to delete origin data: ${tx.error?.message}`));
+      rejectOnTxFailure(tx, reject, 'Failed to delete origin data');
     });
   }
 
@@ -225,8 +225,7 @@ class StorageStore {
       };
 
       tx.oncomplete = () => resolve();
-      tx.onerror = () =>
-        reject(new Error(`Failed to delete session storage: ${tx.error?.message}`));
+      rejectOnTxFailure(tx, reject, 'Failed to delete session storage');
     });
   }
 
@@ -247,7 +246,46 @@ class StorageStore {
       };
 
       tx.oncomplete = () => resolve(snapshots);
-      tx.onerror = () => reject(new Error(`Failed to get all snapshots: ${tx.error?.message}`));
+      rejectOnTxFailure(tx, reject, 'Failed to get all snapshots');
+    });
+  }
+
+  /** Every `sessionId:origin` key currently stored. */
+  async getAllKeys(): Promise<string[]> {
+    const db = await this.open();
+
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORAGE_STORE_NAME, 'readonly');
+      const request = tx.objectStore(STORAGE_STORE_NAME).getAllKeys();
+      request.onsuccess = () => resolve(request.result as string[]);
+      rejectOnTxFailure(tx, reject, 'Failed to get all keys');
+    });
+  }
+
+  async deleteKeys(keys: readonly string[]): Promise<void> {
+    if (keys.length === 0) return;
+    const db = await this.open();
+
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORAGE_STORE_NAME, 'readwrite');
+      const store = tx.objectStore(STORAGE_STORE_NAME);
+      for (const key of keys) {
+        store.delete(key);
+      }
+      tx.oncomplete = () => resolve();
+      rejectOnTxFailure(tx, reject, 'Failed to delete keys');
+    });
+  }
+
+  /** Record count — reported by the Debug tab to distinguish "no data" from "unreadable data". */
+  async countAll(): Promise<number> {
+    const db = await this.open();
+
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORAGE_STORE_NAME, 'readonly');
+      const request = tx.objectStore(STORAGE_STORE_NAME).count();
+      request.onsuccess = () => resolve(request.result);
+      rejectOnTxFailure(tx, reject, 'Failed to count storage snapshots');
     });
   }
 
@@ -258,7 +296,7 @@ class StorageStore {
       const tx = db.transaction(STORAGE_STORE_NAME, 'readwrite');
       tx.objectStore(STORAGE_STORE_NAME).clear();
       tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(new Error(`Failed to clear storage store: ${tx.error?.message}`));
+      rejectOnTxFailure(tx, reject, 'Failed to clear storage store');
     });
   }
 }

@@ -5,6 +5,7 @@ import {
   COOKIE_STORE_DB_VERSION,
 } from '@shared/constants';
 import { estimateCookieBytes } from '@shared/utils';
+import { openSnapshotDb, rejectOnTxFailure } from './idb-support';
 
 function buildKey(sessionId: string, origin: string): string {
   return `${sessionId}:${origin}`;
@@ -12,29 +13,31 @@ function buildKey(sessionId: string, origin: string): string {
 
 class CookieStore {
   private db: IDBDatabase | null = null;
+  private opening: Promise<IDBDatabase> | null = null;
 
   async open(): Promise<IDBDatabase> {
     if (this.db) return this.db;
+    // Share one in-flight open: concurrent callers (a switch and an
+    // auto-save, say) would otherwise each open a connection.
+    if (this.opening) return this.opening;
 
-    return new Promise((resolve, reject) => {
-      const request = indexedDB.open(COOKIE_STORE_DB_NAME, COOKIE_STORE_DB_VERSION);
+    this.opening = openSnapshotDb(
+      COOKIE_STORE_DB_NAME,
+      [COOKIE_STORE_NAME],
+      COOKIE_STORE_DB_VERSION,
+      () => {
+        this.db = null;
+      },
+    )
+      .then((db) => {
+        this.db = db;
+        return db;
+      })
+      .finally(() => {
+        this.opening = null;
+      });
 
-      request.onupgradeneeded = () => {
-        const db = request.result;
-        if (!db.objectStoreNames.contains(COOKIE_STORE_NAME)) {
-          db.createObjectStore(COOKIE_STORE_NAME);
-        }
-      };
-
-      request.onsuccess = () => {
-        this.db = request.result;
-        resolve(this.db);
-      };
-
-      request.onerror = () => {
-        reject(new Error(`Failed to open CookieStore DB: ${request.error?.message}`));
-      };
-    });
+    return this.opening;
   }
 
   async save(snapshot: CookieSnapshot): Promise<void> {
@@ -45,7 +48,7 @@ class CookieStore {
       const tx = db.transaction(COOKIE_STORE_NAME, 'readwrite');
       tx.objectStore(COOKIE_STORE_NAME).put(snapshot, key);
       tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(new Error(`Failed to save cookie snapshot: ${tx.error?.message}`));
+      rejectOnTxFailure(tx, reject, 'Failed to save cookie snapshot');
     });
   }
 
@@ -57,8 +60,7 @@ class CookieStore {
       const tx = db.transaction(COOKIE_STORE_NAME, 'readonly');
       const request = tx.objectStore(COOKIE_STORE_NAME).get(key);
       request.onsuccess = () => resolve(request.result as CookieSnapshot | undefined);
-      request.onerror = () =>
-        reject(new Error(`Failed to load cookie snapshot: ${request.error?.message}`));
+      rejectOnTxFailure(tx, reject, 'Failed to load cookie snapshot');
     });
   }
 
@@ -82,8 +84,7 @@ class CookieStore {
       };
 
       tx.oncomplete = () => resolve();
-      tx.onerror = () =>
-        reject(new Error(`Failed to delete session cookies: ${tx.error?.message}`));
+      rejectOnTxFailure(tx, reject, 'Failed to delete session cookies');
     });
   }
 
@@ -117,7 +118,7 @@ class CookieStore {
       };
 
       tx.oncomplete = () => resolve({ cookieCount, cookieBytes, origins: [...originSet] });
-      tx.onerror = () => reject(new Error(`Failed to get cookie stats: ${tx.error?.message}`));
+      rejectOnTxFailure(tx, reject, 'Failed to get cookie stats');
     });
   }
 
@@ -142,8 +143,7 @@ class CookieStore {
       };
 
       tx.oncomplete = () => resolve([...sessionIdSet]);
-      tx.onerror = () =>
-        reject(new Error(`Failed to get sessions for origin: ${tx.error?.message}`));
+      rejectOnTxFailure(tx, reject, 'Failed to get sessions for origin');
     });
   }
 
@@ -181,8 +181,7 @@ class CookieStore {
         }
         resolve(result);
       };
-      tx.onerror = () =>
-        reject(new Error(`Failed to get all session origins: ${tx.error?.message}`));
+      rejectOnTxFailure(tx, reject, 'Failed to get all session origins');
     });
   }
 
@@ -207,7 +206,7 @@ class CookieStore {
       };
 
       tx.oncomplete = () => resolve(snapshots);
-      tx.onerror = () => reject(new Error(`Failed to get snapshots: ${tx.error?.message}`));
+      rejectOnTxFailure(tx, reject, 'Failed to get snapshots');
     });
   }
 
@@ -219,7 +218,7 @@ class CookieStore {
       const tx = db.transaction(COOKIE_STORE_NAME, 'readwrite');
       tx.objectStore(COOKIE_STORE_NAME).delete(key);
       tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(new Error(`Failed to delete origin data: ${tx.error?.message}`));
+      rejectOnTxFailure(tx, reject, 'Failed to delete origin data');
     });
   }
 
@@ -240,7 +239,46 @@ class CookieStore {
       };
 
       tx.oncomplete = () => resolve(snapshots);
-      tx.onerror = () => reject(new Error(`Failed to get all snapshots: ${tx.error?.message}`));
+      rejectOnTxFailure(tx, reject, 'Failed to get all snapshots');
+    });
+  }
+
+  /** Every `sessionId:origin` key currently stored. */
+  async getAllKeys(): Promise<string[]> {
+    const db = await this.open();
+
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(COOKIE_STORE_NAME, 'readonly');
+      const request = tx.objectStore(COOKIE_STORE_NAME).getAllKeys();
+      request.onsuccess = () => resolve(request.result as string[]);
+      rejectOnTxFailure(tx, reject, 'Failed to get all keys');
+    });
+  }
+
+  async deleteKeys(keys: readonly string[]): Promise<void> {
+    if (keys.length === 0) return;
+    const db = await this.open();
+
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(COOKIE_STORE_NAME, 'readwrite');
+      const store = tx.objectStore(COOKIE_STORE_NAME);
+      for (const key of keys) {
+        store.delete(key);
+      }
+      tx.oncomplete = () => resolve();
+      rejectOnTxFailure(tx, reject, 'Failed to delete keys');
+    });
+  }
+
+  /** Record count — reported by the Debug tab to distinguish "no data" from "unreadable data". */
+  async countAll(): Promise<number> {
+    const db = await this.open();
+
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(COOKIE_STORE_NAME, 'readonly');
+      const request = tx.objectStore(COOKIE_STORE_NAME).count();
+      request.onsuccess = () => resolve(request.result);
+      rejectOnTxFailure(tx, reject, 'Failed to count cookie snapshots');
     });
   }
 
@@ -251,7 +289,7 @@ class CookieStore {
       const tx = db.transaction(COOKIE_STORE_NAME, 'readwrite');
       tx.objectStore(COOKIE_STORE_NAME).clear();
       tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(new Error(`Failed to clear cookie store: ${tx.error?.message}`));
+      rejectOnTxFailure(tx, reject, 'Failed to clear cookie store');
     });
   }
 }

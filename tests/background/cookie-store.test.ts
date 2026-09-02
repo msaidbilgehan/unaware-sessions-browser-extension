@@ -161,3 +161,38 @@ describe('deleteForOrigin', () => {
     expect(await cookieStore.load('s1', 'https://b.com')).toBeDefined();
   });
 });
+
+describe('getAllKeys / deleteKeys / countAll', () => {
+  it('lists every stored key', async () => {
+    await cookieStore.save(makeCookieSnapshot('s1', 'https://a.com'));
+    await cookieStore.save(makeCookieSnapshot('s2', 'https://b.com'));
+
+    expect((await cookieStore.getAllKeys()).sort()).toEqual([
+      's1:https://a.com',
+      's2:https://b.com',
+    ]);
+  });
+
+  it('deletes only the listed keys', async () => {
+    await cookieStore.save(makeCookieSnapshot('s1', 'https://a.com'));
+    await cookieStore.save(makeCookieSnapshot('s1', 'https://b.com'));
+
+    await cookieStore.deleteKeys(['s1:https://a.com']);
+
+    expect(await cookieStore.load('s1', 'https://a.com')).toBeUndefined();
+    expect(await cookieStore.load('s1', 'https://b.com')).toBeDefined();
+  });
+
+  it('is a no-op for an empty key list', async () => {
+    await cookieStore.save(makeCookieSnapshot('s1', 'https://a.com'));
+    await cookieStore.deleteKeys([]);
+    expect(await cookieStore.countAll()).toBe(1);
+  });
+
+  it('counts records', async () => {
+    expect(await cookieStore.countAll()).toBe(0);
+    await cookieStore.save(makeCookieSnapshot('s1', 'https://a.com'));
+    await cookieStore.save(makeCookieSnapshot('s2', 'https://a.com'));
+    expect(await cookieStore.countAll()).toBe(2);
+  });
+});

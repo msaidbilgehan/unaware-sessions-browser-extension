@@ -33,6 +33,7 @@
   ],
   "permissions": [
     "storage",
+    "unlimitedStorage",
     "cookies",
     "tabs",
     "alarms",
