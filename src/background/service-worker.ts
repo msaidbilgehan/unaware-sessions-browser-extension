@@ -12,17 +12,25 @@ import { initBadgeManager } from './badge-manager';
 import { cleanupStaleRules } from './dnr-manager';
 import { initAutoRefresh, refreshAllActiveSessions } from './auto-refresh';
 import { initDriveSync, handleDriveSyncAlarm } from './drive-sync';
+import { logStorageInventory } from './storage-health';
 import { initSettings } from '@shared/settings-store';
 import { initSyncStore } from '@shared/sync/sync-store';
-import { createLogger } from '@shared/logger';
+import { createLogger, enableLogPersistence } from '@shared/logger';
 
 const log = createLogger('service-worker');
 
 async function hydrateState(): Promise<void> {
+  // Restore the persisted log tail before anything else can log: the
+  // in-memory buffer dies with each service worker, so without this an
+  // incident is unreadable minutes after it happened.
+  await enableLogPersistence();
   // Init settings first so the logger level is available for all subsequent modules
   await initSettings();
   await initSyncStore();
   await Promise.all([hydrateSessions(), hydrateTabMap()]);
+  // Snapshot inventory per SW start — the baseline that makes a wholesale
+  // loss of IndexedDB snapshots attributable to a point in time.
+  await logStorageInventory();
 }
 
 // Hydrate on every SW wake (top-level runs each time the worker starts)

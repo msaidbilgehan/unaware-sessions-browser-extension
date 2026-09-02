@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { SessionProfile, FullExportData } from '@shared/types';
-  import { createSession, deleteSession as deleteSessionApi, exportFull, importFull } from '@shared/api';
+  import { createSession, clearAllSessions, exportFull, importFull } from '@shared/api';
   import ConfirmDialog from '@shared/components/ConfirmDialog.svelte';
   import AuthGate from '@shared/components/AuthGate.svelte';
   import { checkAuth } from '@shared/auth-check';
@@ -8,6 +8,7 @@
   import DragDropZone from './DragDropZone.svelte';
   import ImportDiff from './ImportDiff.svelte';
   import ExportSelector from './ExportSelector.svelte';
+  import StorageDashboard from './StorageDashboard.svelte';
 
   interface Props {
     sessions: SessionProfile[];
@@ -22,6 +23,7 @@
   let fullExporting = $state(false);
   let fullImportData = $state<FullExportData | null>(null);
   let fullImporting = $state(false);
+  let selectedFileName = $state('');
 
   // Auth gate state
   let authGateData = $state<{ onauth: () => void } | null>(null);
@@ -44,9 +46,10 @@
     await withAuth(async () => {
       showClearConfirm = false;
       try {
-        for (const session of sessions) {
-          await deleteSessionApi(session.id);
-        }
+        // One message: looping DELETE_SESSION cost a round trip, a profile
+        // write, a tombstone read-modify-write and a context menu rebuild per
+        // session, and a failure partway left half the sessions deleted.
+        await clearAllSessions();
         onupdate();
       } catch (err) {
         console.error('[Unaware Sessions] Failed to clear all sessions:', err);
@@ -94,6 +97,7 @@
     importSuccess = '';
     importedProfiles = null;
     fullImportData = null;
+    selectedFileName = file.name;
 
     try {
       const text = await file.text();
@@ -122,35 +126,33 @@
     }
   }
 
-  function handleImportClick() {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.json';
-    input.onchange = () => {
-      const file = input.files?.[0];
-      if (file) processFile(file);
-    };
-    input.click();
-  }
-
-  function handleFileDrop(files: FileList) {
+  function handleFiles(files: FileList) {
     const file = files[0];
     if (file) processFile(file);
   }
 
   async function handleConfirmImport(selected: SessionProfile[]) {
     importError = '';
+    let created = 0;
     try {
-      let created = 0;
       for (const profile of selected) {
         await createSession(profile.name, profile.color, profile.emoji);
         created++;
       }
-      importSuccess = `Imported ${created} session(s)`;
+      importSuccess = `Imported ${created} ${created === 1 ? 'session' : 'sessions'}`;
       importedProfiles = null;
-      onupdate();
+      selectedFileName = '';
     } catch (err) {
-      importError = `Import failed: ${err instanceof Error ? err.message : 'Unknown error'}`;
+      // Sessions are created one at a time, so a mid-run failure leaves some
+      // already imported. Saying only "failed" would send the user back for a
+      // second pass and duplicate everything that did land.
+      const reason = err instanceof Error ? err.message : 'Unknown error';
+      importError =
+        created > 0
+          ? `Imported ${created} of ${selected.length} before failing: ${reason}`
+          : `Import failed: ${reason}`;
+    } finally {
+      onupdate();
     }
   }
 
@@ -162,8 +164,11 @@
       importError = '';
       try {
         const result = await importFull(fullImportData);
-        importSuccess = `Imported ${result.imported} session(s) with cookie and storage data`;
+        importSuccess = `Imported ${result.imported} ${
+          result.imported === 1 ? 'session' : 'sessions'
+        } with their cookies and storage`;
         fullImportData = null;
+        selectedFileName = '';
         onupdate();
       } catch (err) {
         importError = `Import failed: ${err instanceof Error ? err.message : 'Unknown error'}`;
@@ -177,15 +182,14 @@
     return new Date(ts).toLocaleString();
   }
 
-  const fullExportStats = $derived(() => {
+  const fullExportStats = $derived.by(() => {
     if (!fullImportData) return null;
     const totalCookies = fullImportData.cookieSnapshots.reduce(
       (sum, s) => sum + s.cookies.length,
       0,
     );
     const totalStorageEntries = fullImportData.storageSnapshots.reduce(
-      (sum, s) =>
-        sum + Object.keys(s.localStorage).length + Object.keys(s.sessionStorage).length,
+      (sum, s) => sum + Object.keys(s.localStorage).length + Object.keys(s.sessionStorage).length,
       0,
     );
     const origins = new Set([
@@ -210,9 +214,10 @@
         <Icon name="download" size={16} />
       </div>
       <div>
-        <h2>Export Sessions</h2>
+        <h2>Export</h2>
         <p class="description">
-          Download session data as a JSON file.
+          Save the selected sessions to a JSON file, including their cookies and storage — enough to
+          restore your signed-in state on another browser.
         </p>
       </div>
     </div>
@@ -224,7 +229,11 @@
     {/if}
 
     <div class="export-hint">
-      <p><strong>Full Export</strong> — Includes all saved cookies and storage data for the sessions you select above. Use this to transfer sessions between browsers or back up login states.</p>
+      <p>
+        <Icon name="alert-triangle" size={12} />
+        The file contains live login cookies in plain text. Anyone who opens it can sign in as you — store
+        it somewhere you would keep a password.
+      </p>
     </div>
   </section>
 
@@ -235,19 +244,15 @@
         <Icon name="upload" size={16} />
       </div>
       <div>
-        <h2>Import Sessions</h2>
+        <h2>Import</h2>
         <p class="description">
-          Import from a previously exported JSON file. Supports both profile-only and full exports.
+          Restore from a file exported here or on another device. Sessions whose name already exists
+          are skipped, so importing twice will not duplicate them.
         </p>
       </div>
     </div>
 
-    <DragDropZone onfiles={handleFileDrop} />
-
-    <button class="btn" onclick={handleImportClick}>
-      <Icon name="upload" size={14} />
-      Choose File
-    </button>
+    <DragDropZone onfiles={handleFiles} selectedName={selectedFileName} />
 
     {#if importError}
       <div class="message error">
@@ -272,9 +277,9 @@
     {/if}
 
     {#if fullImportData}
-      {@const stats = fullExportStats()}
+      {@const stats = fullExportStats}
       <div class="full-import-preview">
-        <h3>Full Import Preview</h3>
+        <h3>Ready to import</h3>
         {#if stats}
           <div class="stats-grid">
             <div class="stat">
@@ -305,7 +310,8 @@
             <div class="preview-row" class:dimmed={exists}>
               <span class="dot" style="background-color: {profile.color}"></span>
               <span class="preview-name">
-                {profile.emoji ?? ''} {profile.name}
+                {profile.emoji ?? ''}
+                {profile.name}
               </span>
               {#if exists}
                 <span class="preview-badge skip">exists</span>
@@ -317,14 +323,8 @@
         </div>
 
         <div class="preview-actions">
-          <button class="btn cancel-btn" onclick={() => (fullImportData = null)}>
-            Cancel
-          </button>
-          <button
-            class="btn primary"
-            onclick={handleConfirmFullImport}
-            disabled={fullImporting}
-          >
+          <button class="btn cancel-btn" onclick={() => (fullImportData = null)}> Cancel </button>
+          <button class="btn primary" onclick={handleConfirmFullImport} disabled={fullImporting}>
             {#if fullImporting}
               <span class="spinner"></span>
               Importing...
@@ -338,6 +338,8 @@
     {/if}
   </section>
 
+  <StorageDashboard {sessions} />
+
   <!-- Data Management card -->
   <section class="card danger-zone">
     <div class="card-header">
@@ -345,9 +347,10 @@
         <Icon name="alert-triangle" size={16} />
       </div>
       <div>
-        <h2>Data Management</h2>
+        <h2>Delete everything</h2>
         <p class="description">
-          Remove all session profiles, saved cookies, and storage snapshots.
+          Remove every session along with its saved cookies and storage. Export first if you might
+          want any of it back.
         </p>
       </div>
     </div>
@@ -358,7 +361,7 @@
       disabled={sessions.length === 0}
     >
       <Icon name="trash-2" size={14} />
-      Clear All Data
+      Delete all sessions
       {#if sessions.length > 0}
         <span class="count">({sessions.length} session{sessions.length === 1 ? '' : 's'})</span>
       {/if}
@@ -368,9 +371,12 @@
 
 {#if showClearConfirm}
   <ConfirmDialog
-    title="Clear All Data"
-    message="Delete ALL sessions and their data? This cannot be undone. All session profiles, cookies, and storage snapshots will be permanently removed."
-    confirmLabel="Clear All"
+    title="Delete all sessions"
+    message={`Permanently delete all ${sessions.length} ${
+      sessions.length === 1 ? 'session' : 'sessions'
+    }?`}
+    detail="Every saved cookie and storage snapshot goes with them. There is no undo for this one."
+    confirmLabel="Delete everything"
     danger={true}
     onconfirm={handleClearAll}
     oncancel={() => (showClearConfirm = false)}
@@ -521,10 +527,15 @@
 
   .export-hint p {
     margin: 0;
+    display: flex;
+    gap: var(--space-3);
+    align-items: flex-start;
   }
 
-  .export-hint strong {
-    color: var(--color-text-primary);
+  .export-hint :global(svg) {
+    flex-shrink: 0;
+    margin-top: 2px;
+    color: var(--color-warning);
   }
 
   /* Full import preview */
@@ -651,12 +662,6 @@
     border-top-color: var(--color-text-inverse);
     border-radius: 50%;
     animation: spin 0.7s linear infinite;
-  }
-
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
   }
 
   /* Data Management */

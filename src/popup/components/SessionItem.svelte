@@ -14,7 +14,8 @@
     onswitch: (sessionId: string) => void;
     ondelete: (sessionId: string) => void;
     onrename: (sessionId: string, newName: string) => void;
-    oncontextmenu?: (e: MouseEvent, sessionId: string) => void;
+    /** Opens the shared action menu; `anchor` positions it when not from a mouse event. */
+    onmenu?: (position: { x: number; y: number }, sessionId: string) => void;
     forceEditing?: boolean;
     draggable?: boolean;
     ondragstart?: (e: DragEvent) => void;
@@ -32,7 +33,7 @@
     onswitch,
     ondelete,
     onrename,
-    oncontextmenu,
+    onmenu,
     forceEditing = false,
     draggable = false,
     ondragstart,
@@ -41,9 +42,9 @@
     ondrop,
   }: Props = $props();
 
-  let showActions = $state(false);
   let editing = $state(false);
   let expanded = $state(false);
+  let rowRef = $state<HTMLDivElement | undefined>(undefined);
 
   $effect(() => {
     if (forceEditing) {
@@ -51,29 +52,39 @@
     }
   });
 
-  function handleDelete(e: MouseEvent) {
-    e.stopPropagation();
-    ondelete(session.id);
-  }
-
-  function handleDoubleClick(e: MouseEvent) {
-    e.preventDefault();
-    editing = true;
-  }
-
   function handleRename(newName: string) {
     onrename(session.id, newName);
     editing = false;
   }
 
-  function handleContextMenu(e: MouseEvent) {
-    e.preventDefault();
-    oncontextmenu?.(e, session.id);
+  /** Anchor a keyboard-opened menu to the row instead of the pointer. */
+  function menuAnchor(): { x: number; y: number } {
+    const rect = rowRef?.getBoundingClientRect();
+    return rect ? { x: rect.right - 8, y: rect.bottom - 4 } : { x: 0, y: 0 };
   }
 
-  function toggleDetail(e: MouseEvent) {
-    e.stopPropagation();
-    expanded = !expanded;
+  function handleContextMenu(e: MouseEvent) {
+    e.preventDefault();
+    onmenu?.({ x: e.clientX, y: e.clientY }, session.id);
+  }
+
+  // Row-level shortcuts. The primary button owns Enter/Space (switch); these
+  // give the destructive and secondary actions keyboard parity with the menu
+  // without adding a tab stop per action to a list that can hold dozens of rows.
+  function handleRowKeydown(e: KeyboardEvent) {
+    if (e.key === 'F2') {
+      e.preventDefault();
+      editing = true;
+    } else if (e.key === 'Delete') {
+      e.preventDefault();
+      ondelete(session.id);
+    } else if (e.key === 'ArrowRight' && !expanded) {
+      e.preventDefault();
+      expanded = true;
+    } else if (e.key === 'ArrowLeft' && expanded) {
+      e.preventDefault();
+      expanded = false;
+    }
   }
 </script>
 
@@ -81,18 +92,12 @@
   class="session-item"
   class:active={isActive}
   class:switching={isSwitching}
-  role="button"
-  tabindex="0"
+  class:expanded
   style="--session-color: {session.color}"
-  onmouseenter={() => (showActions = true)}
-  onmouseleave={() => (showActions = false)}
-  onclick={() => !isSwitching && onswitch(session.id)}
-  onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && !isSwitching && (e.preventDefault(), onswitch(session.id))}
-  oncontextmenu={handleContextMenu}
-  aria-label={isSwitching ? `Switching to ${session.name}...` : `Switch to session ${session.name}`}
-  aria-busy={isSwitching}
-  title={session.name}
-  draggable={draggable && !isSwitching ? 'true' : undefined}
+  bind:this={rowRef}
+  role="group"
+  aria-label={session.name}
+  draggable={draggable && !isSwitching && !editing ? 'true' : undefined}
   {ondragstart}
   {ondragover}
   {ondragend}
@@ -105,129 +110,193 @@
       </span>
     {/if}
 
-    <span class="indicator">
-      {#if isSwitching}
-        <span class="switch-spinner" style="border-top-color: {session.color}"></span>
-      {:else if session.emoji}
-        <span class="emoji">{session.emoji}</span>
-      {:else}
-        <span class="dot" style="background-color: {session.color}"></span>
-      {/if}
-    </span>
-
     {#if editing}
-      <span
-        class="name-edit"
-        onclick={(e) => e.stopPropagation()}
-        onkeydown={(e) => e.stopPropagation()}
-        role="presentation"
-      >
+      <span class="indicator">
+        {#if session.emoji}
+          <span class="emoji">{session.emoji}</span>
+        {:else}
+          <span class="dot" style="background-color: {session.color}"></span>
+        {/if}
+      </span>
+      <span class="name-edit">
         <InlineEdit value={session.name} onsave={handleRename} oncancel={() => (editing = false)} />
       </span>
     {:else}
-      <div class="name-group">
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <span class="name" ondblclick={handleDoubleClick}>{session.name}</span>
-        {#if session.lastRefreshedAt}
-          <span class="last-refreshed" title={new Date(session.lastRefreshedAt).toLocaleString()}>
-            {formatRelativeTime(session.lastRefreshedAt)}
-          </span>
-        {/if}
-      </div>
-    {/if}
-
-    <div class="badges">
-      {#if session.pinned}
-        <span class="badge pin-badge" aria-label="Pinned">
-          <Icon name="pin" size={9} />
+      <button
+        class="row-main"
+        onclick={() => !isSwitching && onswitch(session.id)}
+        ondblclick={() => (editing = true)}
+        oncontextmenu={handleContextMenu}
+        onkeydown={handleRowKeydown}
+        disabled={isSwitching}
+        aria-label={isActive
+          ? `${session.name} — active on this site`
+          : `Switch this tab to ${session.name}`}
+        aria-busy={isSwitching}
+      >
+        <span class="indicator">
+          {#if isSwitching}
+            <span class="switch-spinner" style="border-top-color: {session.color}"></span>
+          {:else if session.emoji}
+            <span class="emoji">{session.emoji}</span>
+          {:else}
+            <span class="dot" style="background-color: {session.color}"></span>
+          {/if}
         </span>
-      {/if}
 
-      {#if hasOriginData && !isActive}
-        <span class="badge data-badge" title="Has saved data for this site">
-          <Icon name="database" size={9} />
+        <span class="name-group">
+          <span class="name">{session.name}</span>
+          {#if isSwitching}
+            <span class="meta">Switching…</span>
+          {:else if session.lastRefreshedAt}
+            <span class="meta" title={new Date(session.lastRefreshedAt).toLocaleString()}>
+              Saved {formatRelativeTime(session.lastRefreshedAt)}
+            </span>
+          {/if}
         </span>
-      {/if}
 
-      {#if tabCount > 0}
-        <span class="badge tab-badge" title="{tabCount} tab{tabCount === 1 ? '' : 's'}">
-          {tabCount}
+        <span class="badges">
+          {#if session.pinned}
+            <span class="badge pin-badge" title="Pinned">
+              <Icon name="pin" size={9} />
+              <span class="sr-only">Pinned</span>
+            </span>
+          {/if}
+
+          {#if hasOriginData && !isActive}
+            <span class="badge data-badge" title="Has saved data for this site">
+              <Icon name="database" size={9} />
+              <span class="sr-only">Has saved data for this site</span>
+            </span>
+          {/if}
+
+          {#if tabCount > 0}
+            <span class="badge tab-badge" title="Open in {tabCount} tab{tabCount === 1 ? '' : 's'}">
+              {tabCount}
+              <span class="sr-only">open tabs</span>
+            </span>
+          {/if}
+
+          {#if isActive}
+            <span class="badge active-badge">Active</span>
+          {/if}
         </span>
-      {/if}
+      </button>
 
-      {#if isActive}
-        <span class="badge active-badge">active</span>
-      {/if}
-    </div>
-
-    {#if showActions}
-      <div class="hover-actions">
+      <div class="row-actions">
         <button
           class="action-icon"
-          onclick={toggleDetail}
-          aria-label={expanded ? 'Collapse details' : 'Expand details'}
+          onclick={() => (expanded = !expanded)}
+          aria-expanded={expanded}
+          aria-label={expanded
+            ? `Hide details for ${session.name}`
+            : `Show details for ${session.name}`}
+          title={expanded ? 'Hide details' : 'Show details'}
         >
-          <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={11} />
+          <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={12} />
         </button>
-        <button class="action-icon danger" onclick={handleDelete} aria-label="Delete session {session.name}">
-          <Icon name="x" size={12} />
+        <button
+          class="action-icon"
+          onclick={(e) => {
+            e.stopPropagation();
+            onmenu?.(menuAnchor(), session.id);
+          }}
+          aria-haspopup="menu"
+          aria-label="More actions for {session.name}"
+          title="More actions"
+        >
+          <Icon name="more-vertical" size={13} />
         </button>
       </div>
     {/if}
   </div>
-</div>
 
-{#if expanded}
-  <SessionDetail sessionId={session.id} />
-{/if}
+  {#if expanded}
+    <SessionDetail sessionId={session.id} />
+  {/if}
+</div>
 
 <style>
   .session-item {
     border-radius: var(--radius-lg);
-    cursor: pointer;
-    transition: all var(--transition-smooth);
+    transition:
+      background var(--transition-smooth),
+      border-color var(--transition-smooth),
+      box-shadow var(--transition-smooth);
     position: relative;
     background: var(--color-bg-elevated);
-    border: 1px solid var(--color-border-secondary);
+    border: 1px solid var(--color-border-primary);
     border-left: 3px solid var(--session-color);
+    overflow: hidden;
   }
 
-  .session-item:hover,
-  .session-item:focus-visible {
+  .session-item:hover {
     background: var(--color-bg-secondary);
     border-color: var(--color-border-primary);
+    border-left-color: var(--session-color);
     box-shadow: var(--shadow-sm);
-  }
-
-  .session-item:focus-visible {
-    outline: none;
-    box-shadow: var(--shadow-focus);
   }
 
   .session-item.active {
     background: color-mix(in srgb, var(--session-color) 6%, var(--color-bg-elevated));
     border-color: color-mix(in srgb, var(--session-color) 25%, var(--color-border-secondary));
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--session-color) 10%, transparent),
-                var(--shadow-xs);
+    border-left-width: 4px;
+    border-left-color: var(--session-color);
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--session-color) 10%, transparent),
+      var(--shadow-xs);
+  }
+
+  .session-item.switching {
+    opacity: 0.75;
   }
 
   .item-content {
     display: flex;
     align-items: center;
-    gap: var(--space-3);
-    padding: var(--space-4) var(--space-4);
+    gap: var(--space-2);
+    padding-right: var(--space-2);
   }
 
   .grip {
     color: var(--color-text-tertiary);
     cursor: grab;
     flex-shrink: 0;
-    opacity: 0.5;
+    opacity: 0.35;
+    padding-left: var(--space-3);
     transition: opacity var(--transition-fast);
+    display: flex;
   }
 
   .session-item:hover .grip {
     opacity: 1;
+  }
+
+  /* The primary target fills the row so the whole card is clickable, while the
+     secondary actions stay real siblings instead of buttons nested in a button. */
+  .row-main {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    flex: 1;
+    min-width: 0;
+    padding: var(--space-4);
+    background: none;
+    border: none;
+    border-radius: var(--radius-md);
+    font-family: var(--font-sans);
+    text-align: left;
+    cursor: pointer;
+    color: inherit;
+  }
+
+  .row-main:disabled {
+    cursor: default;
+  }
+
+  .row-main:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
   }
 
   .indicator {
@@ -262,11 +331,6 @@
     animation: spin 0.7s linear infinite;
   }
 
-  .session-item.switching {
-    opacity: 0.7;
-    pointer-events: none;
-  }
-
   .name-group {
     flex: 1;
     min-width: 0;
@@ -285,7 +349,7 @@
     line-height: var(--leading-snug);
   }
 
-  .last-refreshed {
+  .meta {
     font-size: var(--text-2xs);
     color: var(--color-text-tertiary);
     line-height: 1;
@@ -293,6 +357,8 @@
 
   .name-edit {
     flex: 1;
+    min-width: 0;
+    padding: var(--space-4) 0;
   }
 
   .badges {
@@ -327,7 +393,6 @@
     font-weight: var(--font-semibold);
     min-width: 16px;
     height: 16px;
-    text-align: center;
     line-height: 16px;
   }
 
@@ -341,7 +406,9 @@
     line-height: 14px;
   }
 
-  .hover-actions {
+  /* Always rendered and always reachable — the previous hover-gated actions
+     were invisible to keyboard and screen-reader users entirely. */
+  .row-actions {
     display: flex;
     align-items: center;
     gap: var(--space-1);
@@ -353,20 +420,22 @@
     border: none;
     color: var(--color-text-tertiary);
     cursor: pointer;
-    padding: var(--space-1);
+    width: 24px;
+    height: 24px;
     border-radius: var(--radius-sm);
-    line-height: 1;
     display: flex;
+    align-items: center;
+    justify-content: center;
     transition: all var(--transition-fast);
   }
 
   .action-icon:hover {
-    color: var(--color-text-secondary);
+    color: var(--color-text-primary);
     background: var(--color-interactive-hover);
   }
 
-  .action-icon.danger:hover {
-    color: var(--color-error);
-    background: var(--color-error-soft);
+  .action-icon:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
   }
 </style>

@@ -8,11 +8,20 @@ export function generateSalt(): Uint8Array {
 
 export async function hashPasscode(passcode: string, salt: Uint8Array): Promise<string> {
   const encoder = new TextEncoder();
-  const keyMaterial = await crypto.subtle.importKey('raw', encoder.encode(passcode), 'PBKDF2', false, [
-    'deriveBits',
-  ]);
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(passcode),
+    'PBKDF2',
+    false,
+    ['deriveBits'],
+  );
   const derived = await crypto.subtle.deriveBits(
-    { name: 'PBKDF2', salt: salt.buffer as ArrayBuffer, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
+    {
+      name: 'PBKDF2',
+      salt: salt.buffer as ArrayBuffer,
+      iterations: PBKDF2_ITERATIONS,
+      hash: 'SHA-256',
+    },
     keyMaterial,
     HASH_BIT_LENGTH,
   );

@@ -41,9 +41,16 @@
   <div class="selector-table">
     <div class="selector-header">
       <label class="checkbox-cell">
-        <input type="checkbox" checked={allSelected} onchange={toggleAll} />
+        <input
+          type="checkbox"
+          checked={allSelected}
+          indeterminate={selectedCount > 0 && !allSelected}
+          onchange={toggleAll}
+          aria-label={allSelected ? 'Deselect all sessions' : 'Select all sessions'}
+        />
       </label>
-      <span>Session</span>
+      <span>{allSelected ? 'All sessions' : `${selectedCount} of ${sessions.length} selected`}</span
+      >
     </div>
     {#each sessions as session (session.id)}
       <div class="selector-row" class:dimmed={deselected.has(session.id)}>
@@ -52,11 +59,13 @@
             type="checkbox"
             checked={!deselected.has(session.id)}
             onchange={() => toggleOne(session.id)}
+            aria-label="Include {session.name} in the export"
           />
         </label>
         <span class="session-name">
           <span class="dot" style="background-color: {session.color}"></span>
-          {session.emoji ?? ''} {session.name}
+          {session.emoji ?? ''}
+          {session.name}
         </span>
       </div>
     {/each}
@@ -67,8 +76,8 @@
       <span class="spinner"></span>
       Exporting...
     {:else}
-      <Icon name="database" size={14} />
-      Export {selectedCount} Session{selectedCount === 1 ? '' : 's'}
+      <Icon name="download" size={14} />
+      Export {selectedCount} session{selectedCount === 1 ? '' : 's'}
     {/if}
   </button>
 </div>
@@ -105,10 +114,9 @@
     font-size: var(--text-xs);
     font-weight: var(--font-semibold);
     color: var(--color-text-tertiary);
-    text-transform: uppercase;
     position: sticky;
     top: 0;
-    z-index: 1;
+    z-index: var(--z-sticky);
   }
 
   .selector-row.dimmed {
@@ -177,11 +185,5 @@
     border-top-color: var(--color-text-inverse);
     border-radius: 50%;
     animation: spin 0.7s linear infinite;
-  }
-
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
   }
 </style>

@@ -1,5 +1,10 @@
 import { STORAGE_KEYS, DEFAULT_EXTENSION_SETTINGS } from '@shared/constants';
-import type { ExtensionSettings, AutoRefreshInterval, IsolationMode, LogLevel } from '@shared/types';
+import type {
+  ExtensionSettings,
+  AutoRefreshInterval,
+  IsolationMode,
+  LogLevel,
+} from '@shared/types';
 import { setLogLevel as applyLogLevel } from '@shared/logger';
 
 let currentSettings: ExtensionSettings = { ...DEFAULT_EXTENSION_SETTINGS };
@@ -155,10 +160,7 @@ export async function setIsolationModeDefault(mode: IsolationMode): Promise<void
   notifySettingsListeners();
 }
 
-export async function setDomainIsolationMode(
-  domain: string,
-  mode: IsolationMode,
-): Promise<void> {
+export async function setDomainIsolationMode(domain: string, mode: IsolationMode): Promise<void> {
   domainIsolationMap = { ...domainIsolationMap, [domain]: mode };
   await chrome.storage.local.set({
     [STORAGE_KEYS.DOMAIN_ISOLATION_MODES]: domainIsolationMap,

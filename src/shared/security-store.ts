@@ -242,7 +242,9 @@ export function resetSecurityInit(): void {
 export async function initSecurity(): Promise<void> {
   const result = await chrome.storage.local.get(STORAGE_KEYS.SECURITY_CONFIG);
   const stored = result[STORAGE_KEYS.SECURITY_CONFIG] as SecurityConfig | undefined;
-  securityConfig = stored ? { ...DEFAULT_SECURITY_CONFIG, ...stored } : { ...DEFAULT_SECURITY_CONFIG };
+  securityConfig = stored
+    ? { ...DEFAULT_SECURITY_CONFIG, ...stored }
+    : { ...DEFAULT_SECURITY_CONFIG };
 
   notifyListeners();
 
@@ -253,9 +255,7 @@ export async function initSecurity(): Promise<void> {
     if (area !== 'local') return;
 
     if (STORAGE_KEYS.SECURITY_CONFIG in changes) {
-      const updated = changes[STORAGE_KEYS.SECURITY_CONFIG].newValue as
-        | SecurityConfig
-        | undefined;
+      const updated = changes[STORAGE_KEYS.SECURITY_CONFIG].newValue as SecurityConfig | undefined;
       securityConfig = updated
         ? { ...DEFAULT_SECURITY_CONFIG, ...updated }
         : { ...DEFAULT_SECURITY_CONFIG };

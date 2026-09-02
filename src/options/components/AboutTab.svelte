@@ -1,8 +1,25 @@
 <script lang="ts">
   import Icon from '@shared/components/Icon.svelte';
-  import { GITHUB_URL, OPENCOLLECTIVE_URL } from '@shared/constants';
+  import {
+    GITHUB_URL,
+    OPENCOLLECTIVE_URL,
+    PRIVACY_POLICY_URL,
+    ISSUES_URL,
+    CHANGELOG_URL,
+  } from '@shared/constants';
 
   const extensionVersion = chrome.runtime.getManifest().version;
+
+  const shortcuts: { key: string; description: string }[] = [
+    { key: '1 – 9', description: 'Switch to that session' },
+    { key: 'N', description: 'New session' },
+    { key: '/', description: 'Search sessions and sites' },
+    { key: '?', description: 'Show shortcuts' },
+    { key: 'F2', description: 'Rename the focused session' },
+    { key: 'Del', description: 'Delete the focused session' },
+    { key: '→ / ←', description: 'Show or hide saved data' },
+    { key: 'Esc', description: 'Close or go back' },
+  ];
 </script>
 
 <div class="about-layout">
@@ -25,7 +42,9 @@
     </div>
 
     <p class="about-text">
-      Privacy-first multi-session browser manager. Open-source, entirely local. Zero network calls, zero analytics, zero telemetry.
+      Keep several signed-in identities apart in one browser window. Everything stays on this
+      device: no analytics, no telemetry, and no network calls at all unless you switch on Google
+      Drive sync yourself.
     </p>
 
     <div class="link-cards">
@@ -34,12 +53,74 @@
           <Icon name="github" size={16} />
         </div>
         <div class="link-info">
-          <span class="link-title">GitHub Repository</span>
-          <span class="link-desc">Source code, issues, and contributions</span>
+          <span class="link-title">Source code</span>
+          <span class="link-desc">Read exactly what the extension does, on GitHub</span>
+        </div>
+        <Icon name="external-link" size={12} />
+      </a>
+
+      <a href={PRIVACY_POLICY_URL} target="_blank" rel="noopener noreferrer" class="link-card">
+        <div class="link-icon">
+          <Icon name="lock" size={16} />
+        </div>
+        <div class="link-info">
+          <span class="link-title">Privacy policy</span>
+          <span class="link-desc">What is stored, where it stays, and what never leaves</span>
+        </div>
+        <Icon name="external-link" size={12} />
+      </a>
+
+      <a href={ISSUES_URL} target="_blank" rel="noopener noreferrer" class="link-card">
+        <div class="link-icon">
+          <Icon name="alert-circle" size={16} />
+        </div>
+        <div class="link-info">
+          <span class="link-title">Report a problem</span>
+          <span class="link-desc">Bugs, missing features and questions</span>
+        </div>
+        <Icon name="external-link" size={12} />
+      </a>
+
+      <a href={CHANGELOG_URL} target="_blank" rel="noopener noreferrer" class="link-card">
+        <div class="link-icon">
+          <Icon name="file-text" size={16} />
+        </div>
+        <div class="link-info">
+          <span class="link-title">What's new in v{extensionVersion}</span>
+          <span class="link-desc">Full changelog</span>
         </div>
         <Icon name="external-link" size={12} />
       </a>
     </div>
+  </section>
+
+  <!-- Keyboard shortcuts -->
+  <section class="card">
+    <div class="card-header">
+      <div class="card-icon">
+        <Icon name="keyboard" size={16} />
+      </div>
+      <div>
+        <h2>Keyboard shortcuts</h2>
+        <p class="description">
+          Available in the popup. Press <kbd>?</kbd> there to see this list in place.
+        </p>
+      </div>
+    </div>
+
+    <div class="shortcut-grid">
+      {#each shortcuts as row (row.description)}
+        <div class="shortcut-row">
+          <kbd>{row.key}</kbd>
+          <span class="shortcut-desc">{row.description}</span>
+        </div>
+      {/each}
+    </div>
+
+    <p class="hint">
+      The browser-level shortcut that opens the popup can be changed at
+      <code>chrome://extensions/shortcuts</code>.
+    </p>
   </section>
 
   <!-- Support card -->
@@ -85,8 +166,6 @@
       </a>
     </div>
   </section>
-
-
 </div>
 
 <style>
@@ -253,5 +332,53 @@
   .link-card > :global(svg:last-child) {
     color: var(--color-text-tertiary);
     flex-shrink: 0;
+  }
+
+  .shortcut-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: var(--space-3) var(--space-6);
+  }
+
+  .shortcut-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+  }
+
+  .shortcut-desc {
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+  }
+
+  kbd {
+    font-family: var(--font-sans);
+    font-size: var(--text-2xs);
+    font-weight: var(--font-semibold);
+    color: var(--color-text-secondary);
+    background: var(--color-bg-tertiary);
+    border: 1px solid var(--color-border-primary);
+    border-bottom-width: 2px;
+    border-radius: var(--radius-sm);
+    padding: 0 var(--space-3);
+    line-height: 17px;
+    white-space: nowrap;
+    min-width: 52px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+
+  .hint {
+    margin: 0;
+    font-size: var(--text-xs);
+    color: var(--color-text-tertiary);
+    line-height: var(--leading-relaxed);
+  }
+
+  code {
+    font-size: var(--text-xs);
+    background: var(--color-bg-tertiary);
+    border-radius: var(--radius-sm);
+    padding: 1px var(--space-2);
   }
 </style>

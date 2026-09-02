@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getTheme, toggleTheme, onThemeChange } from '@shared/theme-store';
+  import { getTheme, setTheme, onThemeChange } from '@shared/theme-store';
   import type { ThemePreference } from '@shared/theme-store';
   import {
     getAutoRefreshInterval,
@@ -31,6 +31,8 @@
   import Icon from '@shared/components/Icon.svelte';
   import Toast from '@shared/components/Toast.svelte';
   import ConfirmDialog from '@shared/components/ConfirmDialog.svelte';
+  import Switch from '@shared/components/Switch.svelte';
+  import SegmentedControl from '@shared/components/SegmentedControl.svelte';
   import SyncConflictDialog from './SyncConflictDialog.svelte';
   import {
     syncConnect,
@@ -40,12 +42,14 @@
     syncConfigure,
     syncResolveConflicts,
   } from '@shared/api';
-  import {
-    getSyncConfig,
-    initSyncStore,
-    onSyncConfigChange,
-  } from '@shared/sync/sync-store';
-  import type { SyncConfig, SyncState, MergeStrategy, SyncInterval, ConflictEntry } from '@shared/sync/sync-types';
+  import { getSyncConfig, initSyncStore, onSyncConfigChange } from '@shared/sync/sync-store';
+  import type {
+    SyncConfig,
+    SyncState,
+    MergeStrategy,
+    SyncInterval,
+    ConflictEntry,
+  } from '@shared/sync/sync-types';
   import { SYNC_INTERVAL_OPTIONS } from '@shared/constants';
   import { formatRelativeTime } from '@shared/utils';
 
@@ -58,72 +62,37 @@
     return unsub;
   });
 
-  async function setTheme(preference: ThemePreference) {
-    while (getTheme() !== preference) {
-      await toggleTheme();
-    }
-    theme = preference;
-  }
-
-  // Auto-refresh interval
-  let refreshInterval = $state<AutoRefreshInterval>(getAutoRefreshInterval());
-
-  $effect(() => {
-    const unsub = onSettingsChange((settings) => {
-      refreshInterval = settings.autoRefreshInterval;
-    });
-    return unsub;
-  });
-
-  const intervalOptions: { value: AutoRefreshInterval; label: string }[] = [
-    { value: 0, label: 'Off' },
-    { value: 60, label: '1m' },
-    { value: 120, label: '2m' },
-    { value: 300, label: '5m' },
-  ];
-
-  async function handleIntervalChange(value: AutoRefreshInterval) {
-    await setAutoRefreshInterval(value);
-  }
-
-  // Auto-refresh default for new domains
-  let defaultEnabled = $state<boolean>(getAutoRefreshDefaultEnabled());
-
-  $effect(() => {
-    const unsub = onSettingsChange((settings) => {
-      defaultEnabled = settings.autoRefreshDefaultEnabled;
-    });
-    return unsub;
-  });
-
-  async function handleDefaultEnabledChange(enabled: boolean) {
-    await setAutoRefreshDefaultEnabled(enabled);
-  }
-
   const themeOptions: { value: ThemePreference; label: string; icon: string }[] = [
     { value: 'light', label: 'Light', icon: 'sun' },
     { value: 'dark', label: 'Dark', icon: 'moon' },
     { value: 'system', label: 'System', icon: 'monitor' },
   ];
 
-  // Isolation mode default
+  // Auto-save interval
+  let refreshInterval = $state<AutoRefreshInterval>(getAutoRefreshInterval());
+  let defaultEnabled = $state<boolean>(getAutoRefreshDefaultEnabled());
   let isolationDefault = $state<IsolationMode>(getIsolationModeDefault());
 
   $effect(() => {
     const unsub = onSettingsChange((settings) => {
+      refreshInterval = settings.autoRefreshInterval;
+      defaultEnabled = settings.autoRefreshDefaultEnabled;
       isolationDefault = settings.isolationModeDefault;
     });
     return unsub;
   });
 
-  const isolationOptions: { value: IsolationMode; label: string; icon: string }[] = [
-    { value: 'soft', label: 'Soft', icon: 'shield' },
-    { value: 'strict', label: 'Strict', icon: 'lock' },
+  const intervalOptions: { value: AutoRefreshInterval; label: string; hint: string }[] = [
+    { value: 0, label: 'Off', hint: 'Pause auto-save for every site' },
+    { value: 60, label: 'Every 1m', hint: 'Save tracked tabs once a minute' },
+    { value: 120, label: 'Every 2m', hint: 'Save tracked tabs every two minutes' },
+    { value: 300, label: 'Every 5m', hint: 'Save tracked tabs every five minutes' },
   ];
 
-  async function handleIsolationDefaultChange(mode: IsolationMode) {
-    await setIsolationModeDefault(mode);
-  }
+  const isolationOptions: { value: IsolationMode; label: string; icon: string; hint: string }[] = [
+    { value: 'soft', label: 'Soft', icon: 'shield', hint: 'Preserve unrelated logins' },
+    { value: 'strict', label: 'Strict', icon: 'lock', hint: 'Always clear cookies on switch' },
+  ];
 
   // ── Security state ──────────────────────────────────────────────
   let passcodeOn = $state(isPasscodeEnabled());
@@ -132,7 +101,15 @@
   let gracePeriod = $state<GracePeriodMs>(getGracePeriodMs());
 
   // Passcode setup flow
-  type SecurityFlow = 'idle' | 'setup-enter' | 'setup-confirm' | 'verify-then-disable' | 'verify-then-change' | 'verify-then-biometric' | 'change-enter' | 'change-confirm';
+  type SecurityFlow =
+    | 'idle'
+    | 'setup-enter'
+    | 'setup-confirm'
+    | 'verify-then-disable'
+    | 'verify-then-change'
+    | 'verify-then-biometric'
+    | 'change-enter'
+    | 'change-confirm';
   let securityFlow = $state<SecurityFlow>('idle');
   let pinDigits = $state<string[]>(['', '', '', '']);
   let pinConfirm = $state<string[]>(['', '', '', '']);
@@ -172,9 +149,14 @@
     const arr = target === 'digits' ? pinDigits : pinConfirm;
     arr[index] = value.slice(-1);
     input.value = arr[index];
+    pinError = '';
 
     if (arr[index] && index < 3) {
       pinInputRefs[index + 1]?.focus();
+    } else if (arr[index] && index === 3 && arr.every((d) => d.length === 1)) {
+      // Advance on the fourth digit, like every OS passcode field. The explicit
+      // button stays for keyboard and screen-reader users who prefer it.
+      void advanceFlow();
     }
   }
 
@@ -202,6 +184,29 @@
     }
   }
 
+  /** Run whichever step the current flow is on. */
+  async function advanceFlow() {
+    switch (securityFlow) {
+      case 'setup-enter':
+        handleSetupEnterComplete();
+        break;
+      case 'setup-confirm':
+        await handleSetupConfirmComplete();
+        break;
+      case 'verify-then-disable':
+      case 'verify-then-change':
+      case 'verify-then-biometric':
+        await handleVerifyComplete();
+        break;
+      case 'change-enter':
+        handleChangeEnterComplete();
+        break;
+      case 'change-confirm':
+        await handleChangeConfirmComplete();
+        break;
+    }
+  }
+
   function startPasscodeSetup() {
     resetPinState();
     securityFlow = 'setup-enter';
@@ -209,8 +214,7 @@
   }
 
   function handleSetupEnterComplete() {
-    const pin = pinDigits.join('');
-    if (pin.length !== 4) return;
+    if (pinDigits.join('').length !== 4) return;
     securityFlow = 'setup-confirm';
     pinInputRefs = [null, null, null, null];
     focusFirstPin();
@@ -221,13 +225,14 @@
     const confirm = pinConfirm.join('');
     if (confirm.length !== 4) return;
     if (pin !== confirm) {
-      pinError = 'PINs do not match';
+      pinError = 'Passcodes do not match';
       pinConfirm = ['', '', '', ''];
       focusFirstPin();
       return;
     }
     await setupPasscode(pin);
     resetPinState();
+    toast('Passcode enabled', 'success');
   }
 
   function startPasscodeDisable() {
@@ -256,6 +261,7 @@
       if (biometricOn) await removeBiometric();
       await removePasscode();
       resetPinState();
+      toast('Passcode removed', 'info');
     } else if (securityFlow === 'verify-then-change') {
       pinDigits = ['', '', '', ''];
       pinError = '';
@@ -269,8 +275,7 @@
   }
 
   function handleChangeEnterComplete() {
-    const pin = pinDigits.join('');
-    if (pin.length !== 4) return;
+    if (pinDigits.join('').length !== 4) return;
     securityFlow = 'change-confirm';
     pinInputRefs = [null, null, null, null];
     focusFirstPin();
@@ -281,13 +286,14 @@
     const confirm = pinConfirm.join('');
     if (confirm.length !== 4) return;
     if (pin !== confirm) {
-      pinError = 'PINs do not match';
+      pinError = 'Passcodes do not match';
       pinConfirm = ['', '', '', ''];
       focusFirstPin();
       return;
     }
     await changePasscode(pin);
     resetPinState();
+    toast('Passcode updated', 'success');
   }
 
   async function handleBiometricToggle() {
@@ -324,16 +330,15 @@
     try {
       if (biometricOn) {
         await removeBiometric();
+        toast('Biometric unlock disabled', 'info');
       } else {
         await setupBiometric();
+        toast('Biometric unlock enabled', 'success');
       }
     } catch {
-      // setupBiometric can fail if user cancels the WebAuthn prompt
+      // setupBiometric can fail if the user cancels the WebAuthn prompt.
+      toast('Biometric setup was cancelled', 'info');
     }
-  }
-
-  async function handleGracePeriodChange(ms: GracePeriodMs) {
-    await setGracePeriodDuration(ms);
   }
 
   // ── Cloud Sync state ──────────────────────────────────────
@@ -344,7 +349,15 @@
   let showConflictDialog = $state(false);
   let syncing = $state(false);
   let connecting = $state(false);
-  let syncToast = $state<{ message: string; type: 'error' | 'success' | 'info' } | null>(null);
+  let toastData = $state<{ message: string; type: 'error' | 'success' | 'info' } | null>(null);
+
+  function toast(message: string, type: 'error' | 'success' | 'info' = 'info') {
+    toastData = { message, type };
+  }
+
+  function failed(prefix: string, err: unknown) {
+    toast(`${prefix}: ${err instanceof Error ? err.message : 'Unknown error'}`, 'error');
+  }
 
   // Persisted conflict set survives SW restarts (syncState.conflicts is
   // volatile), so the banner and status pill stay accurate even when the
@@ -367,10 +380,10 @@
     return unsub;
   });
 
-  const mergeOptions: { value: MergeStrategy; label: string }[] = [
-    { value: 'trust-cloud', label: 'Trust Cloud' },
-    { value: 'trust-local', label: 'Trust Local' },
-    { value: 'ask', label: 'Ask' },
+  const mergeOptions: { value: MergeStrategy; label: string; hint: string }[] = [
+    { value: 'trust-cloud', label: 'Trust cloud', hint: 'Cloud data wins every conflict' },
+    { value: 'trust-local', label: 'Trust local', hint: 'This device wins every conflict' },
+    { value: 'ask', label: 'Ask me', hint: 'Choose per site when both sides changed' },
   ];
 
   async function handleSyncConnect() {
@@ -378,9 +391,9 @@
     try {
       await syncConnect();
       syncCfg = getSyncConfig();
-      syncToast = { message: 'Connected to Google Drive', type: 'success' };
+      toast('Connected to Google Drive', 'success');
     } catch (err) {
-      syncToast = { message: `Connection failed: ${err instanceof Error ? err.message : 'Unknown error'}`, type: 'error' };
+      failed('Connection failed', err);
     } finally {
       connecting = false;
     }
@@ -392,9 +405,9 @@
       await syncDisconnect();
       syncCfg = getSyncConfig();
       syncState = { status: 'idle', progress: '', conflicts: [] };
-      syncToast = { message: 'Disconnected from Google Drive', type: 'info' };
+      toast('Disconnected from Google Drive', 'info');
     } catch (err) {
-      syncToast = { message: `Disconnect failed: ${err instanceof Error ? err.message : 'Unknown error'}`, type: 'error' };
+      failed('Disconnect failed', err);
     }
   }
 
@@ -407,12 +420,12 @@
       if (state.status === 'conflict') {
         showConflictDialog = true;
       } else if (state.status === 'error') {
-        syncToast = { message: state.progress, type: 'error' };
+        toast(state.progress, 'error');
       } else {
-        syncToast = { message: 'Sync completed', type: 'success' };
+        toast('Sync completed', 'success');
       }
     } catch (err) {
-      syncToast = { message: `Sync failed: ${err instanceof Error ? err.message : 'Unknown error'}`, type: 'error' };
+      failed('Sync failed', err);
     } finally {
       syncing = false;
     }
@@ -425,29 +438,21 @@
       const state = await syncResolveConflicts(resolutions);
       syncState = state;
       if (state.status === 'error') {
-        syncToast = { message: state.progress, type: 'error' };
+        toast(state.progress, 'error');
       } else if (state.status === 'conflict') {
         // Local or remote drifted while the dialog was open — the resolution
         // cycle surfaced fresh conflicts the user never saw. Re-open rather
         // than falsely reporting success (pendingConflicts is already updated).
         showConflictDialog = true;
-        syncToast = { message: 'New changes need resolving', type: 'info' };
+        toast('New changes need resolving', 'info');
       } else {
-        syncToast = { message: 'Sync completed with resolved conflicts', type: 'success' };
+        toast('Sync completed with resolved conflicts', 'success');
       }
     } catch (err) {
-      syncToast = { message: `Sync failed: ${err instanceof Error ? err.message : 'Unknown error'}`, type: 'error' };
+      failed('Sync failed', err);
     } finally {
       syncing = false;
     }
-  }
-
-  async function handleMergeStrategyChange(strategy: MergeStrategy) {
-    await syncConfigure({ mergeStrategy: strategy });
-  }
-
-  async function handleSyncIntervalChange(interval: SyncInterval) {
-    await syncConfigure({ syncInterval: interval });
   }
 
   async function refreshSyncState() {
@@ -463,430 +468,268 @@
       refreshSyncState();
     }
   });
-
 </script>
+
+<!--
+  One markup definition for all five passcode steps. The steps differed only in
+  their heading, which array they write to, and what the confirm button does;
+  copy-pasting them five times meant every a11y or masking fix had to be made
+  five times.
+-->
+{#snippet pinFlow(
+  label: string,
+  target: 'digits' | 'confirm',
+  submitLabel: string,
+  onsubmit: () => void,
+)}
+  {@const values = target === 'digits' ? pinDigits : pinConfirm}
+  <div class="pin-flow">
+    <span class="pin-flow-label">{label}</span>
+    <div class="pin-row">
+      {#each values as _, i (i)}
+        <input
+          bind:this={pinInputRefs[i]}
+          type="password"
+          inputmode="numeric"
+          maxlength="1"
+          autocomplete="off"
+          class="pin-box"
+          class:filled={values[i].length > 0}
+          class:error={!!pinError}
+          oninput={(e) => handlePinDigitInput(i, e, target)}
+          onkeydown={(e) => handlePinDigitKeydown(i, e, target)}
+          aria-label="{label}, digit {i + 1} of 4"
+          aria-invalid={!!pinError}
+        />
+      {/each}
+    </div>
+    {#if pinError}
+      <span class="pin-error" role="alert">{pinError}</span>
+    {/if}
+    <div class="pin-flow-actions">
+      <button class="text-btn" onclick={resetPinState}>Cancel</button>
+      <button class="text-btn primary" onclick={onsubmit} disabled={values.join('').length !== 4}>
+        {submitLabel}
+      </button>
+    </div>
+  </div>
+{/snippet}
+
+{#snippet cardHeader(icon: string, tone: string, title: string, description: string)}
+  <div class="card-header">
+    <div class="card-icon {tone}">
+      <Icon name={icon} size={16} />
+    </div>
+    <div>
+      <h2>{title}</h2>
+      <p class="description">{description}</p>
+    </div>
+  </div>
+{/snippet}
 
 <div class="settings-layout">
   <!-- Appearance -->
-  <section class="card">
-    <div class="card-header">
-      <div class="card-icon">
-        <Icon name="sun" size={16} />
-      </div>
-      <div>
-        <h2>Appearance</h2>
-        <p class="description">Choose how Unaware Sessions looks to you.</p>
-      </div>
-    </div>
-
-    <div class="theme-options">
-      {#each themeOptions as opt}
-        <button
-          class="theme-option"
-          class:active={theme === opt.value}
-          onclick={() => setTheme(opt.value)}
-          aria-pressed={theme === opt.value}
-        >
-          <Icon name={opt.icon} size={16} />
-          <span>{opt.label}</span>
-        </button>
-      {/each}
-    </div>
+  <section class="card" id="appearance">
+    {@render cardHeader('sun', '', 'Appearance', 'Choose how Unaware Sessions looks to you.')}
+    <SegmentedControl
+      options={themeOptions}
+      value={theme}
+      onchange={(v) => setTheme(v)}
+      label="Colour theme"
+      stretch
+      size="md"
+    />
   </section>
 
   <!-- Cookie Isolation -->
-  <section class="card">
-    <div class="card-header">
-      <div class="card-icon">
-        <Icon name="shield" size={16} />
-      </div>
-      <div>
-        <h2>Cookie Isolation</h2>
-        <p class="description">
-          Controls how cookies are handled when switching sessions on domains without saved data.
-        </p>
-      </div>
-    </div>
+  <section class="card" id="isolation">
+    {@render cardHeader(
+      'shield',
+      '',
+      'Cookie isolation',
+      'What happens to a site’s cookies when you switch sessions on it.',
+    )}
 
     <div class="setting-row">
       <span class="setting-label">Default mode</span>
-      <div class="interval-options">
-        {#each isolationOptions as opt (opt.value)}
-          <button
-            class="interval-pill"
-            class:active={isolationDefault === opt.value}
-            onclick={() => handleIsolationDefaultChange(opt.value)}
-            aria-pressed={isolationDefault === opt.value}
-          >
-            <Icon name={opt.icon} size={12} />
-            {opt.label}
-          </button>
-        {/each}
-      </div>
+      <SegmentedControl
+        options={isolationOptions}
+        value={isolationDefault}
+        onchange={setIsolationModeDefault}
+        label="Default cookie isolation mode"
+      />
     </div>
 
-    <div class="isolation-explainer">
+    <div class="explainer">
       <div class="explainer-row">
         <Icon name="shield" size={14} />
         <div>
-          <strong>Soft</strong> — Preserves cookies on domains where the target session has no saved data. Prevents breaking unrelated services (e.g., Google) when switching between domain-specific sessions.
+          <strong>Soft</strong> — leaves cookies alone on sites where the target session has nothing saved,
+          so switching a work session on one site does not sign you out of unrelated ones.
         </div>
       </div>
       <div class="explainer-row">
         <Icon name="lock" size={14} />
         <div>
-          <strong>Strict</strong> — Always clears cookies on switch, even when nothing will be restored. Use for domains that require full isolation between sessions.
+          <strong>Strict</strong> — always clears the site’s cookies on switch, even when nothing will
+          be restored. Use it where sessions must never bleed into each other.
         </div>
+      </div>
+      <div class="explainer-row">
+        <Icon name="info" size={14} />
+        <div>Individual sites can override this from the popup.</div>
       </div>
     </div>
   </section>
 
-  <!-- Data Refresh -->
-  <section class="card">
-    <div class="card-header">
-      <div class="card-icon">
-        <Icon name="refresh-cw" size={16} />
-      </div>
-      <div>
-        <h2>Auto-Refresh</h2>
-        <p class="description">
-          Periodically save session cookies and storage for all tracked tabs. When set to Off, all per-domain auto-refresh toggles are paused.
-        </p>
-      </div>
-    </div>
+  <!-- Auto-save -->
+  <section class="card" id="auto-save">
+    {@render cardHeader(
+      'refresh-cw',
+      '',
+      'Auto-save',
+      'Periodically copy the live cookies and storage of tracked tabs into their session, so a crash or a closed tab does not cost you a signed-in state.',
+    )}
 
     <div class="setting-row">
-      <span class="setting-label">Refresh interval</span>
-      <div class="interval-options">
-        {#each intervalOptions as opt (opt.value)}
-          <button
-            class="interval-pill"
-            class:active={refreshInterval === opt.value}
-            onclick={() => handleIntervalChange(opt.value)}
-            aria-pressed={refreshInterval === opt.value}
-          >
-            {opt.label}
-          </button>
-        {/each}
+      <div class="setting-info">
+        <span class="setting-label">How often</span>
+        <span class="setting-description">
+          Off pauses auto-save everywhere, including sites you enabled it on individually.
+        </span>
       </div>
+      <SegmentedControl
+        options={intervalOptions}
+        value={refreshInterval}
+        onchange={setAutoRefreshInterval}
+        label="Auto-save interval"
+      />
     </div>
 
     <div class="divider"></div>
 
-    <label class="toggle-row">
-      <div class="toggle-info">
-        <span class="toggle-label">Auto-refresh for new domains</span>
-        <span class="toggle-description">
-          Newly discovered domains in sessions will have auto-refresh turned on automatically.
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label" id="auto-save-default-label">On for new sites</span>
+        <span class="setting-description" id="auto-save-default-desc">
+          Sites a session visits for the first time start with auto-save switched on.
         </span>
       </div>
-      <button
-        class="toggle-switch"
-        class:on={defaultEnabled}
-        onclick={() => handleDefaultEnabledChange(!defaultEnabled)}
-        role="switch"
-        aria-checked={defaultEnabled}
-        aria-label="Toggle auto-refresh for new domains"
-      >
-        <span class="toggle-thumb"></span>
-      </button>
-    </label>
+      <Switch
+        checked={defaultEnabled}
+        onchange={setAutoRefreshDefaultEnabled}
+        label="Turn on auto-save for new sites"
+        describedby="auto-save-default-desc"
+      />
+    </div>
   </section>
 
   <!-- Security -->
-  <section class="card">
-    <div class="card-header">
-      <div class="card-icon security">
-        <Icon name="lock" size={16} />
-      </div>
-      <div>
-        <h2>Security</h2>
-        <p class="description">
-          Protect session switching and data export with a passcode or biometric authentication.
-        </p>
-      </div>
-    </div>
+  <section class="card" id="security">
+    {@render cardHeader(
+      'lock',
+      'security',
+      'Security',
+      'Ask for a passcode before switching sessions, deleting them, or exporting your data.',
+    )}
 
-    <!-- Passcode toggle row -->
-    <div class="toggle-row">
-      <div class="toggle-info">
-        <span class="toggle-label">Passcode</span>
-        <span class="toggle-description">
-          Require a 4-digit PIN to switch sessions, delete, or export data.
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">Passcode</span>
+        <span class="setting-description" id="passcode-desc">
+          A 4-digit PIN, checked before session switches, deletions and exports.
         </span>
       </div>
-      {#if passcodeOn && securityFlow === 'idle'}
-        <div class="security-actions">
-          <button class="security-text-btn" onclick={startPasscodeChange}>Change</button>
-          <button
-            class="toggle-switch on"
-            onclick={startPasscodeDisable}
-            role="switch"
-            aria-checked={true}
-            aria-label="Disable passcode"
-          >
-            <span class="toggle-thumb"></span>
-          </button>
+      {#if securityFlow === 'idle'}
+        <div class="row-actions">
+          {#if passcodeOn}
+            <button class="text-btn" onclick={startPasscodeChange}>Change</button>
+          {/if}
+          <Switch
+            checked={passcodeOn}
+            onchange={() => (passcodeOn ? startPasscodeDisable() : startPasscodeSetup())}
+            label={passcodeOn ? 'Disable passcode' : 'Enable passcode'}
+            describedby="passcode-desc"
+          />
         </div>
-      {:else if !passcodeOn && securityFlow === 'idle'}
-        <button
-          class="toggle-switch"
-          onclick={startPasscodeSetup}
-          role="switch"
-          aria-checked={false}
-          aria-label="Enable passcode"
-        >
-          <span class="toggle-thumb"></span>
-        </button>
       {/if}
     </div>
 
-    <!-- Inline PIN entry flows -->
     {#if securityFlow === 'setup-enter'}
-      <div class="pin-flow">
-        <span class="pin-flow-label">Enter a 4-digit passcode</span>
-        <div class="pin-row">
-          {#each pinDigits as _, i}
-            <input
-              bind:this={pinInputRefs[i]}
-              type="tel"
-              inputmode="numeric"
-              maxlength="1"
-              autocomplete="off"
-              class="pin-box"
-              class:filled={pinDigits[i].length > 0}
-              oninput={(e) => handlePinDigitInput(i, e, 'digits')}
-              onkeydown={(e) => handlePinDigitKeydown(i, e, 'digits')}
-              aria-label="Digit {i + 1}"
-            />
-          {/each}
-        </div>
-        <div class="pin-flow-actions">
-          <button class="security-text-btn" onclick={resetPinState}>Cancel</button>
-          <button
-            class="security-text-btn primary"
-            onclick={handleSetupEnterComplete}
-            disabled={pinDigits.join('').length !== 4}
-          >Next</button>
-        </div>
-      </div>
+      {@render pinFlow('Choose a 4-digit passcode', 'digits', 'Next', handleSetupEnterComplete)}
+    {:else if securityFlow === 'setup-confirm'}
+      {@render pinFlow('Confirm your passcode', 'confirm', 'Save', handleSetupConfirmComplete)}
+    {:else if securityFlow === 'verify-then-disable' || securityFlow === 'verify-then-change' || securityFlow === 'verify-then-biometric'}
+      {@render pinFlow('Enter your current passcode', 'digits', 'Verify', handleVerifyComplete)}
+    {:else if securityFlow === 'change-enter'}
+      {@render pinFlow('Choose a new passcode', 'digits', 'Next', handleChangeEnterComplete)}
+    {:else if securityFlow === 'change-confirm'}
+      {@render pinFlow('Confirm the new passcode', 'confirm', 'Save', handleChangeConfirmComplete)}
     {/if}
 
-    {#if securityFlow === 'setup-confirm'}
-      <div class="pin-flow">
-        <span class="pin-flow-label">Confirm passcode</span>
-        <div class="pin-row">
-          {#each pinConfirm as _, i}
-            <input
-              bind:this={pinInputRefs[i]}
-              type="tel"
-              inputmode="numeric"
-              maxlength="1"
-              autocomplete="off"
-              class="pin-box"
-              class:filled={pinConfirm[i].length > 0}
-              class:error={!!pinError}
-              oninput={(e) => handlePinDigitInput(i, e, 'confirm')}
-              onkeydown={(e) => handlePinDigitKeydown(i, e, 'confirm')}
-              aria-label="Confirm digit {i + 1}"
-            />
-          {/each}
-        </div>
-        {#if pinError}
-          <span class="pin-error">{pinError}</span>
-        {/if}
-        <div class="pin-flow-actions">
-          <button class="security-text-btn" onclick={resetPinState}>Cancel</button>
-          <button
-            class="security-text-btn primary"
-            onclick={handleSetupConfirmComplete}
-            disabled={pinConfirm.join('').length !== 4}
-          >Save</button>
-        </div>
-      </div>
-    {/if}
-
-    {#if securityFlow === 'verify-then-disable' || securityFlow === 'verify-then-change' || securityFlow === 'verify-then-biometric'}
-      <div class="pin-flow">
-        <span class="pin-flow-label">Enter current passcode</span>
-        <div class="pin-row">
-          {#each pinDigits as _, i}
-            <input
-              bind:this={pinInputRefs[i]}
-              type="tel"
-              inputmode="numeric"
-              maxlength="1"
-              autocomplete="off"
-              class="pin-box"
-              class:filled={pinDigits[i].length > 0}
-              class:error={!!pinError}
-              oninput={(e) => handlePinDigitInput(i, e, 'digits')}
-              onkeydown={(e) => handlePinDigitKeydown(i, e, 'digits')}
-              aria-label="Digit {i + 1}"
-            />
-          {/each}
-        </div>
-        {#if pinError}
-          <span class="pin-error">{pinError}</span>
-        {/if}
-        <div class="pin-flow-actions">
-          <button class="security-text-btn" onclick={resetPinState}>Cancel</button>
-          <button
-            class="security-text-btn primary"
-            onclick={handleVerifyComplete}
-            disabled={pinDigits.join('').length !== 4}
-          >Verify</button>
-        </div>
-      </div>
-    {/if}
-
-    {#if securityFlow === 'change-enter'}
-      <div class="pin-flow">
-        <span class="pin-flow-label">Enter new passcode</span>
-        <div class="pin-row">
-          {#each pinDigits as _, i}
-            <input
-              bind:this={pinInputRefs[i]}
-              type="tel"
-              inputmode="numeric"
-              maxlength="1"
-              autocomplete="off"
-              class="pin-box"
-              class:filled={pinDigits[i].length > 0}
-              oninput={(e) => handlePinDigitInput(i, e, 'digits')}
-              onkeydown={(e) => handlePinDigitKeydown(i, e, 'digits')}
-              aria-label="Digit {i + 1}"
-            />
-          {/each}
-        </div>
-        <div class="pin-flow-actions">
-          <button class="security-text-btn" onclick={resetPinState}>Cancel</button>
-          <button
-            class="security-text-btn primary"
-            onclick={handleChangeEnterComplete}
-            disabled={pinDigits.join('').length !== 4}
-          >Next</button>
-        </div>
-      </div>
-    {/if}
-
-    {#if securityFlow === 'change-confirm'}
-      <div class="pin-flow">
-        <span class="pin-flow-label">Confirm new passcode</span>
-        <div class="pin-row">
-          {#each pinConfirm as _, i}
-            <input
-              bind:this={pinInputRefs[i]}
-              type="tel"
-              inputmode="numeric"
-              maxlength="1"
-              autocomplete="off"
-              class="pin-box"
-              class:filled={pinConfirm[i].length > 0}
-              class:error={!!pinError}
-              oninput={(e) => handlePinDigitInput(i, e, 'confirm')}
-              onkeydown={(e) => handlePinDigitKeydown(i, e, 'confirm')}
-              aria-label="Confirm digit {i + 1}"
-            />
-          {/each}
-        </div>
-        {#if pinError}
-          <span class="pin-error">{pinError}</span>
-        {/if}
-        <div class="pin-flow-actions">
-          <button class="security-text-btn" onclick={resetPinState}>Cancel</button>
-          <button
-            class="security-text-btn primary"
-            onclick={handleChangeConfirmComplete}
-            disabled={pinConfirm.join('').length !== 4}
-          >Save</button>
-        </div>
-      </div>
-    {/if}
-
-    <!-- Biometric toggle row (only if platform supports it) -->
     {#if biometricSupported}
       <div class="divider"></div>
-      <label class="toggle-row" class:disabled={!passcodeOn}>
-        <div class="toggle-info">
-          <span class="toggle-label">
+      <div class="setting-row" class:disabled={!passcodeOn}>
+        <div class="setting-info">
+          <span class="setting-label">
             <Icon name="fingerprint" size={14} class="inline-icon" />
-            Biometric
+            Biometric unlock
           </span>
-          <span class="toggle-description">
-            {#if !passcodeOn}
-              Enable a passcode first to use biometric authentication.
+          <span class="setting-description" id="biometric-desc">
+            {#if passcodeOn}
+              Use a fingerprint or Face ID instead of typing the passcode.
             {:else}
-              Use fingerprint or Face ID to authenticate instead of the passcode.
+              Set a passcode first — it is the fallback if biometrics ever fail.
             {/if}
           </span>
         </div>
-        <button
-          class="toggle-switch"
-          class:on={biometricOn}
-          onclick={handleBiometricToggle}
+        <Switch
+          checked={biometricOn}
+          onchange={handleBiometricToggle}
           disabled={!passcodeOn}
-          role="switch"
-          aria-checked={biometricOn}
-          aria-label="Toggle biometric authentication"
-        >
-          <span class="toggle-thumb"></span>
-        </button>
-      </label>
+          label="Use biometric unlock"
+          describedby="biometric-desc"
+        />
+      </div>
     {/if}
 
-    <!-- Grace period selector (only if any security is enabled) -->
     {#if passcodeOn || biometricOn}
       <div class="divider"></div>
       <div class="setting-row">
-        <div class="toggle-info">
-          <span class="setting-label">Grace period</span>
-          <span class="toggle-description">
-            Skip re-authentication within this window after a successful check.
+        <div class="setting-info">
+          <span class="setting-label">Ask again after</span>
+          <span class="setting-description">
+            Once you unlock, further actions go through without asking until this much time has
+            passed. Always resets when the browser closes.
           </span>
         </div>
-        <div class="interval-options">
-          {#each GRACE_PERIOD_OPTIONS as opt (opt.value)}
-            <button
-              class="interval-pill"
-              class:active={gracePeriod === opt.value}
-              onclick={() => handleGracePeriodChange(opt.value)}
-              aria-pressed={gracePeriod === opt.value}
-            >
-              {opt.label}
-            </button>
-          {/each}
-        </div>
+        <SegmentedControl
+          options={GRACE_PERIOD_OPTIONS}
+          value={gracePeriod}
+          onchange={setGracePeriodDuration}
+          label="Re-authentication grace period"
+        />
       </div>
     {/if}
   </section>
 
   <!-- Cloud Sync -->
-  <section class="card">
-    <div class="card-header">
-      <div class="card-icon sync">
-        <Icon name="cloud" size={16} />
-      </div>
-      <div>
-        <h2>Cloud Sync</h2>
-        <p class="description">
-          Sync session data to your Google Drive. Data is encrypted with your passphrase before leaving the browser.
-        </p>
-      </div>
-    </div>
+  <section class="card" id="sync">
+    {@render cardHeader(
+      'cloud',
+      'sync',
+      'Cloud sync',
+      'Keep your sessions in step across devices through your own Google Drive.',
+    )}
 
     {#if !syncCfg.enabled}
-      <button
-        class="security-text-btn primary"
-        onclick={handleSyncConnect}
-        disabled={connecting}
-      >
+      <button class="text-btn primary wide" onclick={handleSyncConnect} disabled={connecting}>
         {#if connecting}
           <span class="spinner-sm"></span>
-          Connecting...
+          Connecting…
         {:else}
           <Icon name="cloud" size={14} />
-          Connect to Google Drive
+          Connect Google Drive
         {/if}
       </button>
     {:else}
@@ -900,16 +743,14 @@
         >
           {#if syncing}
             <span class="spinner-sm"></span>
-          {:else if syncState.status === 'error'}
-            <Icon name="alert-triangle" size={14} />
-          {:else if hasPendingConflict}
+          {:else if syncState.status === 'error' || hasPendingConflict}
             <Icon name="alert-triangle" size={14} />
           {:else}
             <Icon name="check" size={14} />
           {/if}
           <span class="sync-status-text">
             {#if syncing}
-              Syncing...
+              Syncing…
             {:else if syncState.status === 'error'}
               Error
             {:else if hasPendingConflict}
@@ -920,104 +761,95 @@
           </span>
         </div>
         {#if syncCfg.lastSyncAt > 0}
-          <span class="sync-last-time">Last: {formatRelativeTime(syncCfg.lastSyncAt)}</span>
+          <span class="sync-last-time">Last synced {formatRelativeTime(syncCfg.lastSyncAt)}</span>
         {/if}
       </div>
 
       {#if hasPendingConflict && !syncing}
-        <div class="sync-conflict-banner" role="alert">
+        <div class="banner warning" role="alert">
           <Icon name="alert-triangle" size={16} />
-          <div class="conflict-banner-text">
-            <span class="conflict-banner-title">
+          <div class="banner-text">
+            <span class="banner-title">
               Auto-sync paused — {pendingConflicts.length}
               {pendingConflicts.length === 1 ? 'conflict' : 'conflicts'} to resolve
             </span>
-            <span class="conflict-banner-desc">
-              The same data changed on this device and in the cloud. Choose which to keep to
-              resume syncing.
+            <span class="banner-desc">
+              The same data changed on this device and in the cloud. Choose which to keep to resume
+              syncing.
             </span>
           </div>
-          <button class="conflict-review-btn" onclick={() => (showConflictDialog = true)}>
-            Review
-          </button>
+          <button class="review-btn" onclick={() => (showConflictDialog = true)}>Review</button>
+        </div>
+      {/if}
+
+      <!-- A background auto-sync failure is only in the persisted config; without
+           this the card reads "Connected" with a stale "Last synced" and the
+           reason (e.g. a refused upload after local data loss) stays invisible
+           until someone presses Sync Now. -->
+      {#if syncCfg.lastSyncError && !syncing}
+        <div class="banner error" role="alert">
+          <Icon name="alert-triangle" size={16} />
+          <div class="banner-text">
+            <span class="banner-title">Last sync failed</span>
+            <span class="banner-desc">{syncCfg.lastSyncError}</span>
+          </div>
         </div>
       {/if}
 
       <div class="divider"></div>
 
-      <!-- Merge strategy -->
       <div class="setting-row">
-        <div class="toggle-info">
-          <span class="setting-label">Merge strategy</span>
-          <span class="toggle-description">
-            How conflicts are resolved when both local and cloud data have changed.
+        <div class="setting-info">
+          <span class="setting-label">When both sides changed</span>
+          <span class="setting-description">
+            How to resolve a site whose data differs here and in the cloud.
           </span>
         </div>
-        <div class="interval-options">
-          {#each mergeOptions as opt (opt.value)}
-            <button
-              class="interval-pill"
-              class:active={syncCfg.mergeStrategy === opt.value}
-              onclick={() => handleMergeStrategyChange(opt.value)}
-              aria-pressed={syncCfg.mergeStrategy === opt.value}
-            >
-              {opt.label}
-            </button>
-          {/each}
-        </div>
+        <SegmentedControl
+          options={mergeOptions}
+          value={syncCfg.mergeStrategy}
+          onchange={(v) => syncConfigure({ mergeStrategy: v })}
+          label="Merge strategy"
+        />
       </div>
 
       <div class="divider"></div>
 
-      <!-- Auto-sync interval -->
       <div class="setting-row">
-        <span class="setting-label">Auto-sync interval</span>
-        <div class="interval-options">
-          {#each SYNC_INTERVAL_OPTIONS as opt (opt.value)}
-            <button
-              class="interval-pill"
-              class:active={syncCfg.syncInterval === opt.value}
-              onclick={() => handleSyncIntervalChange(opt.value)}
-              aria-pressed={syncCfg.syncInterval === opt.value}
-            >
-              {opt.label}
-            </button>
-          {/each}
-        </div>
+        <span class="setting-label">Sync automatically</span>
+        <SegmentedControl
+          options={SYNC_INTERVAL_OPTIONS}
+          value={syncCfg.syncInterval}
+          onchange={(v: SyncInterval) => syncConfigure({ syncInterval: v })}
+          label="Auto-sync interval"
+        />
       </div>
 
       <div class="divider"></div>
 
-      <!-- Actions -->
-      <div class="sync-actions">
-        <button
-          class="security-text-btn primary"
-          onclick={handleSyncNow}
-          disabled={syncing}
-        >
+      <div class="row-actions">
+        <button class="text-btn primary" onclick={handleSyncNow} disabled={syncing}>
           {#if syncing}
             <span class="spinner-sm"></span>
-            Syncing...
+            Syncing…
           {:else}
             <Icon name="refresh-cw" size={14} />
-            Sync Now
+            Sync now
           {/if}
         </button>
-        <button
-          class="security-text-btn"
-          onclick={() => (showDisconnectConfirm = true)}
-        >
+        <button class="text-btn" onclick={() => (showDisconnectConfirm = true)}>
           <Icon name="cloud-off" size={14} />
           Disconnect
         </button>
       </div>
 
-      <!-- Encryption explainer -->
-      <div class="isolation-explainer">
+      <div class="explainer">
         <div class="explainer-row">
           <Icon name="lock" size={14} />
           <div>
-            Your data is encrypted with <strong>AES-256-GCM</strong> using your Google account identity before leaving the browser.
+            Sessions are encrypted with <strong>AES-256-GCM</strong> in this browser before upload, using
+            a key derived from your Google account identity. Google stores the ciphertext in a hidden
+            app folder and never receives the key.
           </div>
         </div>
       </div>
@@ -1027,8 +859,9 @@
 
 {#if showDisconnectConfirm}
   <ConfirmDialog
-    title="Disconnect Cloud Sync"
-    message="Disconnect from Google Drive? Your cloud data will remain on Drive but sync will stop. You can reconnect later."
+    title="Disconnect cloud sync"
+    message="Stop syncing this device with Google Drive?"
+    detail="Data already in Drive stays there, and your local sessions are untouched. You can reconnect at any time."
     confirmLabel="Disconnect"
     danger={true}
     onconfirm={handleSyncDisconnect}
@@ -1040,16 +873,14 @@
   <SyncConflictDialog
     conflicts={conflictSource}
     onresolve={handleConflictResolve}
-    oncancel={() => { showConflictDialog = false; }}
+    oncancel={() => {
+      showConflictDialog = false;
+    }}
   />
 {/if}
 
-{#if syncToast}
-  <Toast
-    message={syncToast.message}
-    type={syncToast.type}
-    ondismiss={() => (syncToast = null)}
-  />
+{#if toastData}
+  <Toast message={toastData.message} type={toastData.type} ondismiss={() => (toastData = null)} />
 {/if}
 
 <style>
@@ -1068,6 +899,7 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-6);
+    scroll-margin-top: var(--space-10);
   }
 
   .card-header {
@@ -1088,6 +920,11 @@
     flex-shrink: 0;
   }
 
+  .card-icon.security {
+    background: var(--color-warning-soft);
+    color: var(--color-warning);
+  }
+
   h2 {
     font-size: var(--text-md);
     font-weight: var(--font-semibold);
@@ -1103,89 +940,36 @@
     line-height: var(--leading-relaxed);
   }
 
-  /* Theme options */
-  .theme-options {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-3);
-  }
-
-  .theme-option {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    padding: var(--space-4) var(--space-6);
-    border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-lg);
-    background: var(--color-bg-primary);
-    cursor: pointer;
-    transition: all var(--transition-smooth);
-    font-size: var(--text-sm);
-    font-weight: var(--font-medium);
-    font-family: var(--font-sans);
-    color: var(--color-text-secondary);
-    flex: 1;
-    justify-content: center;
-  }
-
-  .theme-option:hover:not(.active) {
-    background: var(--color-interactive-hover);
-    border-color: var(--color-border-primary);
-  }
-
-  .theme-option.active {
-    border-color: var(--color-accent);
-    background: var(--color-accent-soft);
-    color: var(--color-accent);
-    box-shadow: var(--shadow-glow);
-  }
-
-  /* Interval */
   .setting-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: var(--space-4);
+    gap: var(--space-6);
+    flex-wrap: wrap;
+  }
+
+  .setting-row.disabled {
+    opacity: 0.55;
+  }
+
+  .setting-info {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    flex: 1;
+    min-width: 220px;
   }
 
   .setting-label {
     font-size: var(--text-sm);
     font-weight: var(--font-medium);
-    color: var(--color-text-secondary);
-  }
-
-  .interval-options {
-    display: flex;
-    gap: var(--space-1);
-    padding: var(--space-1);
-    background: var(--color-bg-tertiary);
-    border-radius: var(--radius-lg);
-    border: 1px solid var(--color-border-secondary);
-  }
-
-  .interval-pill {
-    padding: var(--space-2) var(--space-4);
-    background: none;
-    border: none;
-    border-radius: var(--radius-md);
-    font-size: var(--text-xs);
-    font-family: var(--font-sans);
-    font-weight: var(--font-medium);
-    color: var(--color-text-tertiary);
-    cursor: pointer;
-    transition: all var(--transition-fast);
-    white-space: nowrap;
-  }
-
-  .interval-pill:hover:not(.active) {
-    color: var(--color-text-secondary);
-    background: var(--color-interactive-hover);
-  }
-
-  .interval-pill.active {
     color: var(--color-text-primary);
-    background: var(--color-bg-elevated);
-    box-shadow: var(--shadow-xs);
+  }
+
+  .setting-description {
+    font-size: var(--text-xs);
+    color: var(--color-text-tertiary);
+    line-height: var(--leading-relaxed);
   }
 
   .divider {
@@ -1194,80 +978,15 @@
     margin: 0;
   }
 
-  /* Toggle row */
-  .toggle-row {
+  .row-actions {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: var(--space-6);
-    cursor: pointer;
-  }
-
-  .toggle-row.disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .toggle-info {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-1);
-  }
-
-  .toggle-label {
-    font-size: var(--text-sm);
-    font-weight: var(--font-medium);
-    color: var(--color-text-primary);
-  }
-
-  .toggle-description {
-    font-size: var(--text-xs);
-    color: var(--color-text-tertiary);
-    line-height: var(--leading-relaxed);
-  }
-
-  /* Toggle switch */
-  .toggle-switch {
-    position: relative;
-    width: 40px;
-    height: 22px;
-    background: var(--color-bg-tertiary);
-    border: 1px solid var(--color-border-primary);
-    border-radius: var(--radius-full);
-    cursor: pointer;
-    transition: all var(--transition-smooth);
+    gap: var(--space-3);
     flex-shrink: 0;
-    padding: 0;
   }
 
-  .toggle-switch.on {
-    background: var(--color-accent);
-    border-color: var(--color-accent);
-  }
-
-  .toggle-switch:focus-visible {
-    outline: none;
-    box-shadow: var(--shadow-focus);
-  }
-
-  .toggle-thumb {
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 16px;
-    height: 16px;
-    background: var(--color-interactive-thumb);
-    border-radius: var(--radius-full);
-    box-shadow: var(--shadow-sm);
-    transition: transform var(--transition-spring);
-  }
-
-  .toggle-switch.on .toggle-thumb {
-    transform: translateX(18px);
-  }
-
-  /* Isolation explainer */
-  .isolation-explainer {
+  /* Explainers */
+  .explainer {
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
@@ -1295,24 +1014,13 @@
     color: var(--color-text-primary);
   }
 
-  .interval-pill :global(svg) {
-    vertical-align: -1px;
-  }
-
-  /* Security card */
-  .card-icon.security {
-    background: var(--color-warning-soft);
-    color: var(--color-warning);
-  }
-
-  .security-actions {
-    display: flex;
+  /* Buttons */
+  .text-btn {
+    display: inline-flex;
     align-items: center;
-    gap: var(--space-3);
-  }
-
-  .security-text-btn {
-    padding: var(--space-2) var(--space-4);
+    justify-content: center;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-5);
     border: 1px solid var(--color-border-primary);
     border-radius: var(--radius-md);
     background: var(--color-bg-primary);
@@ -1324,28 +1032,38 @@
     transition: all var(--transition-fast);
   }
 
-  .security-text-btn:hover:not(:disabled) {
+  .text-btn:hover:not(:disabled) {
     background: var(--color-interactive-hover);
   }
 
-  .security-text-btn:disabled {
+  .text-btn:disabled {
     opacity: 0.4;
     cursor: not-allowed;
   }
 
-  .security-text-btn.primary {
+  .text-btn.primary {
     background: var(--color-accent);
     border-color: var(--color-accent);
-    color: var(--color-text-inverse);
+    color: var(--color-on-accent);
   }
 
-  .security-text-btn.primary:hover:not(:disabled) {
+  .text-btn.primary:hover:not(:disabled) {
     background: var(--color-accent-hover);
   }
 
-  .security-text-btn:focus-visible {
+  .text-btn.wide {
+    align-self: flex-start;
+    padding: var(--space-4) var(--space-6);
+    font-size: var(--text-sm);
+  }
+
+  .text-btn:focus-visible {
     outline: none;
     box-shadow: var(--shadow-focus);
+  }
+
+  .text-btn :global(svg) {
+    flex-shrink: 0;
   }
 
   /* PIN flow */
@@ -1370,19 +1088,21 @@
     gap: var(--space-3);
   }
 
+  /* type=password rather than a -webkit- masking hack, so the digits are hidden
+     in every browser the extension supports. */
   .pin-box {
     width: 40px;
     height: 48px;
     text-align: center;
     font-size: var(--text-xl);
     font-weight: var(--font-bold);
+    font-family: var(--font-sans);
     border: 2px solid var(--color-border-primary);
     border-radius: var(--radius-md);
     background: var(--color-bg-elevated);
     color: var(--color-text-primary);
     outline: none;
     transition: all var(--transition-fast);
-    -webkit-text-security: disc;
   }
 
   .pin-box:focus {
@@ -1412,7 +1132,7 @@
     vertical-align: -2px;
   }
 
-  /* Cloud Sync card */
+  /* Cloud Sync */
   .card-icon.sync {
     background: var(--color-accent-soft);
     color: var(--color-accent);
@@ -1422,6 +1142,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: var(--space-4);
     padding: var(--space-3) var(--space-5);
     background: var(--color-bg-secondary);
     border-radius: var(--radius-lg);
@@ -1452,24 +1173,45 @@
     font-size: var(--text-sm);
   }
 
-  /* Conflict banner */
-  .sync-conflict-banner {
+  .sync-last-time {
+    font-size: var(--text-xs);
+    color: var(--color-text-tertiary);
+  }
+
+  /* Banners */
+  .banner {
     display: flex;
     align-items: flex-start;
     gap: var(--space-4);
     padding: var(--space-4) var(--space-5);
-    background: var(--color-warning-soft);
-    border: 1px solid var(--color-warning);
     border-radius: var(--radius-lg);
+    border: 1px solid;
   }
 
-  .sync-conflict-banner :global(svg) {
+  .banner.warning {
+    background: var(--color-warning-soft);
+    border-color: var(--color-warning);
+  }
+
+  .banner.warning :global(svg) {
     color: var(--color-warning);
+  }
+
+  .banner.error {
+    background: var(--color-error-soft);
+    border-color: var(--color-error);
+  }
+
+  .banner.error :global(svg) {
+    color: var(--color-error);
+  }
+
+  .banner :global(svg) {
     flex-shrink: 0;
     margin-top: 1px;
   }
 
-  .conflict-banner-text {
+  .banner-text {
     display: flex;
     flex-direction: column;
     gap: var(--space-1);
@@ -1477,19 +1219,20 @@
     min-width: 0;
   }
 
-  .conflict-banner-title {
+  .banner-title {
     font-size: var(--text-sm);
     font-weight: var(--font-semibold);
     color: var(--color-text-primary);
   }
 
-  .conflict-banner-desc {
+  .banner-desc {
     font-size: var(--text-xs);
     color: var(--color-text-secondary);
     line-height: var(--leading-relaxed);
   }
 
-  .conflict-review-btn {
+  /* Amber needs a dark foreground; white on --color-warning is ~2:1. */
+  .review-btn {
     padding: var(--space-2) var(--space-5);
     border: 1px solid var(--color-warning);
     border-radius: var(--radius-md);
@@ -1497,30 +1240,21 @@
     font-size: var(--text-xs);
     font-family: var(--font-sans);
     font-weight: var(--font-semibold);
-    color: #ffffff;
+    color: var(--color-on-warning);
     cursor: pointer;
     transition: all var(--transition-fast);
     flex-shrink: 0;
     white-space: nowrap;
   }
 
-  .conflict-review-btn:hover {
-    filter: brightness(0.95);
+  .review-btn:hover {
+    background: var(--color-warning-hover);
+    border-color: var(--color-warning-hover);
   }
 
-  .conflict-review-btn:focus-visible {
+  .review-btn:focus-visible {
     outline: none;
     box-shadow: var(--shadow-focus);
-  }
-
-  .sync-last-time {
-    font-size: var(--text-xs);
-    color: var(--color-text-tertiary);
-  }
-
-  .sync-actions {
-    display: flex;
-    gap: var(--space-3);
   }
 
   .spinner-sm {
@@ -1529,18 +1263,8 @@
     height: 14px;
     border: 2px solid var(--color-border-primary);
     border-top-color: currentColor;
-    border-radius: 50%;
+    border-radius: var(--radius-full);
     animation: spin 0.7s linear infinite;
-    vertical-align: -2px;
-  }
-
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-
-  .security-text-btn :global(svg) {
-    vertical-align: -2px;
+    flex-shrink: 0;
   }
 </style>

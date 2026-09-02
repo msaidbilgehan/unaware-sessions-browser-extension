@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import Icon from '@shared/components/Icon.svelte';
 
   export interface ContextMenuItem {
@@ -6,6 +7,10 @@
     icon?: string;
     onclick: () => void;
     danger?: boolean;
+    /** Keyboard equivalent shown right-aligned, e.g. "F2". */
+    shortcut?: string;
+    /** Draw a divider above this item. */
+    separatorBefore?: boolean;
   }
 
   interface Props {
@@ -17,54 +22,69 @@
 
   let { x, y, items, onclose }: Props = $props();
   let menuRef = $state<HTMLDivElement | undefined>(undefined);
-  let focusedIndex = $state(0);
+  // The menu is remounted on every open, so the anchor never changes during its
+  // lifetime — snapshot it rather than tracking the props reactively.
+  const anchor = untrack(() => ({ x, y }));
+  let position = $state({ left: anchor.x, top: anchor.y });
 
   $effect(() => {
-    function handleClick(e: MouseEvent) {
-      if (menuRef && !menuRef.contains(e.target as Node)) {
-        onclose();
-      }
+    function handlePointerDown(e: MouseEvent) {
+      if (menuRef && !menuRef.contains(e.target as Node)) onclose();
     }
-    function handleKeydown(e: KeyboardEvent) {
-      if (e.key === 'Escape') onclose();
-    }
-    document.addEventListener('click', handleClick, true);
-    document.addEventListener('keydown', handleKeydown);
-    return () => {
-      document.removeEventListener('click', handleClick, true);
-      document.removeEventListener('keydown', handleKeydown);
+    document.addEventListener('mousedown', handlePointerDown, true);
+    return () => document.removeEventListener('mousedown', handlePointerDown, true);
+  });
+
+  // Clamp against the real menu box and the real viewport. The previous
+  // hardcoded 380/500 bounds let the menu run off the bottom of the popup as
+  // soon as it had more than a couple of items.
+  $effect(() => {
+    if (!menuRef) return;
+    const opener = document.activeElement as HTMLElement | null;
+    const { offsetWidth: w, offsetHeight: h } = menuRef;
+    const margin = 6;
+    position = {
+      left: Math.max(margin, Math.min(anchor.x, window.innerWidth - w - margin)),
+      top: Math.max(margin, Math.min(anchor.y, window.innerHeight - h - margin)),
     };
+    menuRef.querySelector<HTMLElement>('.menu-item')?.focus();
+    return () => opener?.focus?.();
   });
-
-  // Focus first menu item on open
-  $effect(() => {
-    if (menuRef) {
-      const firstItem = menuRef.querySelector<HTMLElement>('.menu-item');
-      firstItem?.focus();
-    }
-  });
-
-  function handleMenuKeydown(e: KeyboardEvent) {
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      focusedIndex = (focusedIndex + 1) % items.length;
-      focusItem(focusedIndex);
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      focusedIndex = (focusedIndex - 1 + items.length) % items.length;
-      focusItem(focusedIndex);
-    }
-  }
 
   function focusItem(index: number) {
-    if (!menuRef) return;
-    const btns = menuRef.querySelectorAll<HTMLElement>('.menu-item');
-    btns[index]?.focus();
+    const btns = menuRef?.querySelectorAll<HTMLElement>('.menu-item');
+    if (!btns || btns.length === 0) return;
+    const clamped = (index + btns.length) % btns.length;
+    btns[clamped]?.focus();
   }
 
-  // Clamp to popup bounds
-  const clampedX = $derived(Math.min(x, 380 - 160));
-  const clampedY = $derived(Math.min(y, 500));
+  function currentIndex(): number {
+    const btns = Array.from(menuRef?.querySelectorAll<HTMLElement>('.menu-item') ?? []);
+    return btns.indexOf(document.activeElement as HTMLElement);
+  }
+
+  function handleMenuKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      onclose();
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      focusItem(currentIndex() + 1);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      focusItem(currentIndex() - 1);
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      focusItem(0);
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      focusItem(items.length - 1);
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      onclose();
+    }
+  }
 
   function handleItemClick(item: ContextMenuItem) {
     item.onclick();
@@ -74,28 +94,33 @@
 
 <div
   class="context-menu"
-  style="left: {clampedX}px; top: {clampedY}px"
+  style="left: {position.left}px; top: {position.top}px"
   bind:this={menuRef}
   role="menu"
+  aria-orientation="vertical"
   tabindex="-1"
   onkeydown={handleMenuKeydown}
 >
-  {#each items as item, i}
-    {#if i > 0 && item.danger}
-      <div class="separator"></div>
+  {#each items as item (item.label)}
+    {#if item.separatorBefore}
+      <div class="separator" role="separator"></div>
     {/if}
     <button
       class="menu-item"
       class:danger={item.danger}
       onclick={() => handleItemClick(item)}
       role="menuitem"
+      tabindex="-1"
     >
       {#if item.icon}
         <span class="menu-icon">
           <Icon name={item.icon} size={13} />
         </span>
       {/if}
-      <span>{item.label}</span>
+      <span class="menu-label">{item.label}</span>
+      {#if item.shortcut}
+        <kbd class="menu-shortcut">{item.shortcut}</kbd>
+      {/if}
     </button>
   {/each}
 </div>
@@ -107,10 +132,10 @@
     border: 1px solid var(--color-border-primary);
     border-radius: var(--radius-xl);
     padding: var(--space-2);
-    min-width: 150px;
+    min-width: 170px;
     box-shadow: var(--shadow-lg);
-    z-index: 900;
-    animation: slideUp 0.12s ease-out;
+    z-index: var(--z-menu);
+    animation: scaleIn 0.12s ease-out;
   }
 
   .separator {
@@ -146,6 +171,22 @@
     box-shadow: var(--shadow-focus);
   }
 
+  .menu-label {
+    flex: 1;
+  }
+
+  .menu-shortcut {
+    font-family: var(--font-sans);
+    font-size: var(--text-2xs);
+    color: var(--color-text-tertiary);
+    background: var(--color-bg-tertiary);
+    border: 1px solid var(--color-border-secondary);
+    border-radius: var(--radius-sm);
+    padding: 0 var(--space-2);
+    line-height: 15px;
+    flex-shrink: 0;
+  }
+
   .menu-icon {
     display: flex;
     color: var(--color-text-tertiary);
@@ -155,10 +196,7 @@
     color: var(--color-text-secondary);
   }
 
-  .menu-item.danger {
-    color: var(--color-error);
-  }
-
+  .menu-item.danger,
   .menu-item.danger .menu-icon {
     color: var(--color-error);
   }

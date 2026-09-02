@@ -22,6 +22,19 @@ export interface SessionStats {
   idbDatabases: number;
 }
 
+/**
+ * Metadata for the one-slot undo buffer of an origin (see
+ * `background/snapshot-undo.ts`). Present only while a non-empty snapshot has
+ * been replaced by an empty capture and not yet superseded by real data.
+ */
+export interface PreviousSnapshotInfo {
+  cookieTimestamp: number | null;
+  cookieCount: number;
+  storageTimestamp: number | null;
+  storageEntries: number;
+  idbDatabases: number;
+}
+
 export interface SessionOriginDetail {
   origin: string;
   cookieCount: number;
@@ -42,6 +55,8 @@ export interface SessionOriginDetail {
   }>;
   localStorage: Record<string, string>;
   sessionStorage: Record<string, string>;
+  /** Recoverable pre-empty snapshot, or null when there is nothing to undo. */
+  previous: PreviousSnapshotInfo | null;
 }
 
 export interface SessionDetails {
@@ -196,6 +211,8 @@ export enum MessageType {
   DELETE_SESSION_COOKIE = 'DELETE_SESSION_COOKIE',
   UPDATE_SESSION_STORAGE_ENTRY = 'UPDATE_SESSION_STORAGE_ENTRY',
   DELETE_SESSION_STORAGE_ENTRY = 'DELETE_SESSION_STORAGE_ENTRY',
+  RESTORE_PREVIOUS_SNAPSHOT = 'RESTORE_PREVIOUS_SNAPSHOT',
+  CLEAR_ALL_SESSIONS = 'CLEAR_ALL_SESSIONS',
 
   // Session operations
   DUPLICATE_SESSION = 'DUPLICATE_SESSION',
@@ -219,6 +236,7 @@ export enum MessageType {
   GET_LIVE_COOKIES = 'GET_LIVE_COOKIES',
   GET_COOKIE_DIFF = 'GET_COOKIE_DIFF',
   GET_RESTORE_FAILURES = 'GET_RESTORE_FAILURES',
+  GET_STORAGE_HEALTH = 'GET_STORAGE_HEALTH',
 
   // Logging
   GET_LOGS = 'GET_LOGS',
@@ -376,6 +394,16 @@ export interface DeleteSessionOriginDataMessage {
   origin: string;
 }
 
+export interface ClearAllSessionsMessage {
+  type: MessageType.CLEAR_ALL_SESSIONS;
+}
+
+export interface RestorePreviousSnapshotMessage {
+  type: MessageType.RESTORE_PREVIOUS_SNAPSHOT;
+  sessionId: string;
+  origin: string;
+}
+
 export interface UpdateSessionCookieMessage {
   type: MessageType.UPDATE_SESSION_COOKIE;
   sessionId: string;
@@ -513,6 +541,10 @@ export interface GetRestoreFailuresMessage {
   type: MessageType.GET_RESTORE_FAILURES;
 }
 
+export interface GetStorageHealthMessage {
+  type: MessageType.GET_STORAGE_HEALTH;
+}
+
 export interface GetLogsMessage {
   type: MessageType.GET_LOGS;
 }
@@ -593,6 +625,40 @@ export interface RestoreFailureEntry {
   reason: string;
 }
 
+// ── Storage Health ──────────────────────────────────────────────
+//
+// Snapshots live in extension IndexedDB, which — unlike chrome.storage.local —
+// sits in a quota-managed bucket. Without the unlimitedStorage permission
+// Chrome may evict the whole bucket under storage pressure, taking every
+// snapshot with it while the session profiles survive. These types surface
+// that state instead of leaving it to be discovered as "my data vanished".
+
+export interface StorageWriteErrorEntry {
+  timestamp: number;
+  /** Operation that failed, e.g. "cookieStore.save". */
+  operation: string;
+  sessionId: string;
+  origin: string;
+  reason: string;
+  /** True when the failure was a quota rejection rather than a transient error. */
+  quotaExceeded: boolean;
+}
+
+export interface StorageHealth {
+  /** Records in the cookie-snapshot database. */
+  cookieRecords: number;
+  /** Records in the DOM-storage-snapshot database. */
+  storageRecords: number;
+  /** Session profiles held in chrome.storage.local (survives IDB eviction). */
+  sessionProfiles: number;
+  /** Records in the local-only undo buffer. */
+  undoRecords: number;
+  /** navigator.storage.estimate() — null when the API is unavailable. */
+  usageBytes: number | null;
+  quotaBytes: number | null;
+  writeErrors: StorageWriteErrorEntry[];
+}
+
 export interface LiveCookieInfo {
   name: string;
   value: string;
@@ -643,6 +709,8 @@ export type Message =
   | DeleteSessionCookieMessage
   | UpdateSessionStorageEntryMessage
   | DeleteSessionStorageEntryMessage
+  | RestorePreviousSnapshotMessage
+  | ClearAllSessionsMessage
   | RefreshActiveSessionsMessage
   | ExportFullInitMessage
   | ExportFullChunkMessage
@@ -652,6 +720,7 @@ export type Message =
   | GetLiveCookiesMessage
   | GetCookieDiffMessage
   | GetRestoreFailuresMessage
+  | GetStorageHealthMessage
   | GetLogsMessage
   | ClearLogsMessage
   | SyncConnectMessage

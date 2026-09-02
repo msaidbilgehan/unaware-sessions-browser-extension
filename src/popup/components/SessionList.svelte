@@ -1,112 +1,65 @@
 <script lang="ts">
   import type { SessionProfile } from '@shared/types';
   import { SvelteSet } from 'svelte/reactivity';
-  import { extractDomain } from '@shared/utils';
+  import { UNGROUPED_KEY, type SessionGrouping } from '../session-grouping';
   import SessionItem from './SessionItem.svelte';
   import OnboardingEmpty from './OnboardingEmpty.svelte';
 
   import Icon from '@shared/components/Icon.svelte';
 
   interface Props {
+    /** Computed once in App so the 1-9 shortcuts index the same order. */
+    grouping: SessionGrouping;
+    /** Full session list, used for reordering and the empty state. */
     sessions: SessionProfile[];
     activeSessionId: string | undefined;
     switchingSessionId: string | null;
     tabCounts: Record<string, number>;
     sessionsWithOriginData: Set<string>;
-    sessionOriginMap: Record<string, string[]>;
-    currentOrigin: string;
     searchQuery: string;
     onswitch: (sessionId: string) => void;
-    onunassign: () => void;
+    ondetach: () => void;
     ondelete: (sessionId: string) => void;
     onrename: (sessionId: string, newName: string) => void;
     editingSessionId: string | null;
-    oncontextmenu: (e: MouseEvent, sessionId: string) => void;
+    onmenu: (position: { x: number; y: number }, sessionId: string) => void;
     oncreate: () => void;
-    ondragend: (orderedIds: string[]) => void;
+    onclearsearch: () => void;
+    /** Receives the complete session order, not just the visible slice. */
+    onreorder: (orderedIds: string[]) => void;
   }
 
   let {
+    grouping,
     sessions,
     activeSessionId,
     switchingSessionId,
     tabCounts,
     sessionsWithOriginData,
-    sessionOriginMap,
-    currentOrigin,
     searchQuery,
     onswitch,
-    onunassign,
+    ondetach,
     ondelete,
     onrename,
     editingSessionId,
-    oncontextmenu,
+    onmenu,
     oncreate,
-    ondragend,
+    onclearsearch,
+    onreorder,
   }: Props = $props();
 
-  let dragIndex = $state<number | null>(null);
-  let dragOverIndex = $state<number | null>(null);
+  let draggingId = $state<string | null>(null);
+  let dragOverId = $state<string | null>(null);
   let showOtherSessions = $state(false);
   let collapsedDomains = new SvelteSet<string>();
 
-  const filteredSessions = $derived(
-    searchQuery
-      ? sessions.filter((s) => {
-          const q = searchQuery.toLowerCase();
-          if (s.name.toLowerCase().includes(q)) return true;
-          const origins = sessionOriginMap[s.id] ?? [];
-          return origins.some((o) => o.toLowerCase().includes(q));
-        })
-      : sessions,
-  );
-
-  // Sessions relevant to current origin (have data or are active on this tab)
-  const thisSiteSessions = $derived(
-    filteredSessions.filter((s) => sessionsWithOriginData.has(s.id) || s.id === activeSessionId),
-  );
-
-  // All other sessions
-  const otherSessions = $derived(
-    filteredSessions.filter((s) => !sessionsWithOriginData.has(s.id) && s.id !== activeSessionId),
-  );
-
-  // Group other sessions by domain — each session appears under its primary
-  // non-current domain.  Sessions without any saved origin go into "No data".
-  const domainGroups = $derived.by(() => {
-    const currentDomain = currentOrigin ? extractDomain(currentOrigin) : '';
-    const groups: Record<string, SessionProfile[]> = {};
-
-    for (const session of otherSessions) {
-      const origins = sessionOriginMap[session.id] ?? [];
-
-      // Pick domains that aren't the current site
-      const otherDomains = origins
-        .map((o) => extractDomain(o))
-        .filter((d) => d && d !== currentDomain);
-
-      if (otherDomains.length > 0) {
-        // Place under first (primary) domain
-        const domain = otherDomains[0];
-        if (groups[domain]) groups[domain].push(session);
-        else groups[domain] = [session];
-      } else {
-        if (groups['']) groups[''].push(session);
-        else groups[''] = [session];
-      }
-    }
-
-    // Sort: named domains first (alphabetically), then "No data" last
-    return Object.entries(groups).sort((a, b) => {
-      if (!a[0]) return 1;
-      if (!b[0]) return -1;
-      return a[0].localeCompare(b[0]);
-    });
-  });
-
   // Auto-expand other sessions when no site-specific sessions exist
   const effectiveShowOther = $derived(
-    showOtherSessions || (thisSiteSessions.length === 0 && otherSessions.length > 0),
+    showOtherSessions || (grouping.thisSite.length === 0 && grouping.other.length > 0),
+  );
+
+  const flattenSingleBucket = $derived(
+    grouping.domainGroups.length === 1 && grouping.domainGroups[0][0] === UNGROUPED_KEY,
   );
 
   function toggleDomain(domain: string) {
@@ -114,166 +67,213 @@
     else collapsedDomains.add(domain);
   }
 
-  function handleDragStart(e: DragEvent, index: number) {
-    dragIndex = index;
+  // ── Drag reordering ───────────────────────────────────────────────
+  //
+  // Reordering is expressed as "move A to where B is" against the *complete*
+  // session list. Sending only the visible slice would push every filtered-out
+  // or collapsed session to the end of the stored order, silently reshuffling
+  // sessions the user cannot even see. Drops are confined to the group the drag
+  // started in, because the list is regrouped by site on every render and a
+  // cross-group move would produce no visible change.
+  function handleDragStart(e: DragEvent, sessionId: string) {
+    draggingId = sessionId;
     if (e.dataTransfer) {
       e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', sessionId);
     }
   }
 
-  function handleDragOver(e: DragEvent, index: number) {
+  function handleDragOver(e: DragEvent, sessionId: string, group: readonly SessionProfile[]) {
+    if (!draggingId || !group.some((s) => s.id === draggingId)) return;
     e.preventDefault();
-    dragOverIndex = index;
+    dragOverId = sessionId;
   }
 
-  function handleDrop(e: DragEvent, index: number) {
+  function handleDrop(e: DragEvent, targetId: string, group: readonly SessionProfile[]) {
     e.preventDefault();
-    if (dragIndex !== null && dragIndex !== index) {
-      const allVisible = [...thisSiteSessions, ...(effectiveShowOther ? otherSessions : [])];
-      const items = [...allVisible];
-      const [moved] = items.splice(dragIndex, 1);
-      items.splice(index, 0, moved);
-      ondragend(items.map((s) => s.id));
-    }
-    dragIndex = null;
-    dragOverIndex = null;
+    const sourceId = draggingId;
+    resetDrag();
+    if (!sourceId || sourceId === targetId) return;
+    if (!group.some((s) => s.id === sourceId)) return;
+
+    const ids = sessions.map((s) => s.id);
+    const from = ids.indexOf(sourceId);
+    const to = ids.indexOf(targetId);
+    if (from < 0 || to < 0) return;
+
+    ids.splice(from, 1);
+    ids.splice(to, 0, sourceId);
+    onreorder(ids);
   }
 
-  function handleDragEnd() {
-    dragIndex = null;
-    dragOverIndex = null;
+  function resetDrag() {
+    draggingId = null;
+    dragOverId = null;
   }
 </script>
 
 <div class="session-list">
   {#if sessions.length === 0}
     <OnboardingEmpty {oncreate} />
-  {:else if filteredSessions.length === 0}
+  {:else if grouping.filtered.length === 0}
     <div class="empty-search">
-      <Icon name="search" size={16} />
-      <p>No sessions match "{searchQuery}"</p>
+      <Icon name="search" size={18} />
+      <p>No sessions match “{searchQuery}”</p>
+      <button class="text-btn" onclick={onclearsearch}>Clear search</button>
     </div>
   {:else}
-    <!-- Default (no session) option -->
-    <div
+    <!-- Browsing with no session: the tab uses the browser's own cookie jar. -->
+    <button
       class="default-item"
       class:active={!activeSessionId}
-      role="button"
-      tabindex="0"
-      onclick={onunassign}
-      onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onunassign())}
+      onclick={ondetach}
+      aria-current={!activeSessionId ? 'true' : undefined}
+      title="Detach this tab: saves the current session's data, clears this site's cookies, then reloads."
     >
       <span class="default-icon">
         <Icon name="globe" size={13} />
       </span>
-      <span class="default-label">Default (no session)</span>
+      <span class="default-text">
+        <span class="default-label">No session</span>
+        <span class="default-meta">Use the browser's own cookies</span>
+      </span>
       {#if !activeSessionId}
-        <span class="default-badge">active</span>
+        <span class="default-badge">Active</span>
       {/if}
-    </div>
+    </button>
 
-    {#if thisSiteSessions.length > 0}
+    {#if grouping.thisSite.length > 0}
       <div class="group">
         <div class="group-header">
           <span class="group-label">This site</span>
+          <span class="group-count">{grouping.thisSite.length}</span>
           <span class="group-line"></span>
         </div>
-        {#each thisSiteSessions as session, i (session.id)}
-          <div class="drag-wrapper" class:drag-over={dragOverIndex === i && dragIndex !== i}>
-            <SessionItem
-              {session}
-              isActive={session.id === activeSessionId}
-              isSwitching={session.id === switchingSessionId}
-              hasOriginData={sessionsWithOriginData.has(session.id)}
-              tabCount={tabCounts[session.id] ?? 0}
-              {onswitch}
-              {ondelete}
-              {onrename}
-              forceEditing={editingSessionId === session.id}
-              {oncontextmenu}
-              draggable={true}
-              ondragstart={(e) => handleDragStart(e, i)}
-              ondragover={(e) => handleDragOver(e, i)}
-              ondrop={(e) => handleDrop(e, i)}
-              ondragend={handleDragEnd}
-            />
-          </div>
-        {/each}
+        <div class="group-items">
+          {#each grouping.thisSite as session (session.id)}
+            <div
+              class="drag-wrapper"
+              class:drag-over={dragOverId === session.id && draggingId !== session.id}
+            >
+              <SessionItem
+                {session}
+                isActive={session.id === activeSessionId}
+                isSwitching={session.id === switchingSessionId}
+                hasOriginData={sessionsWithOriginData.has(session.id)}
+                tabCount={tabCounts[session.id] ?? 0}
+                {onswitch}
+                {ondelete}
+                {onrename}
+                forceEditing={editingSessionId === session.id}
+                {onmenu}
+                draggable={grouping.thisSite.length > 1}
+                ondragstart={(e) => handleDragStart(e, session.id)}
+                ondragover={(e) => handleDragOver(e, session.id, grouping.thisSite)}
+                ondrop={(e) => handleDrop(e, session.id, grouping.thisSite)}
+                ondragend={resetDrag}
+              />
+            </div>
+          {/each}
+        </div>
       </div>
     {/if}
 
-    {#if otherSessions.length > 0}
+    {#if grouping.other.length > 0}
       <div class="group">
         <button
           class="group-toggle"
           onclick={() => (showOtherSessions = !showOtherSessions)}
           aria-expanded={effectiveShowOther}
         >
-          <div class="group-header">
+          <span class="group-header">
             <span class="group-label">Other sessions</span>
-            <span class="group-count">{otherSessions.length}</span>
+            <span class="group-count">{grouping.other.length}</span>
             <span class="group-line"></span>
-          </div>
+          </span>
           <span class="toggle-icon" class:open={effectiveShowOther}>
             <Icon name="chevron-down" size={12} />
           </span>
         </button>
         {#if effectiveShowOther}
           <div class="other-list">
-            {#each domainGroups as [domain, domainSessions] (domain)}
-              {@const isCollapsed = collapsedDomains.has(domain)}
-              <div class="domain-folder">
-                <button
-                  class="domain-toggle"
-                  onclick={() => toggleDomain(domain)}
-                  aria-expanded={!isCollapsed}
-                >
-                  <span class="domain-chevron" class:open={!isCollapsed}>
-                    <Icon name="chevron-right" size={10} />
-                  </span>
-                  <Icon name="folder" size={12} />
-                  <span class="domain-name">{domain || 'No data'}</span>
-                  <span class="group-count">{domainSessions.length}</span>
-                </button>
-                {#if !isCollapsed}
-                  <div class="domain-items">
-                    {#each domainSessions as session (session.id)}
-                      {@const idx = thisSiteSessions.length + otherSessions.indexOf(session)}
-                      <div
-                        class="drag-wrapper"
-                        class:drag-over={dragOverIndex === idx && dragIndex !== idx}
-                      >
-                        <SessionItem
-                          {session}
-                          isActive={false}
-                          isSwitching={session.id === switchingSessionId}
-                          hasOriginData={false}
-                          tabCount={tabCounts[session.id] ?? 0}
-                          {onswitch}
-                          {ondelete}
-                          {onrename}
-                          forceEditing={editingSessionId === session.id}
-                          {oncontextmenu}
-                          draggable={true}
-                          ondragstart={(e) => handleDragStart(e, idx)}
-                          ondragover={(e) => handleDragOver(e, idx)}
-                          ondrop={(e) => handleDrop(e, idx)}
-                          ondragend={handleDragEnd}
-                        />
-                      </div>
-                    {/each}
+            {#if flattenSingleBucket}
+              <div class="domain-items flat">
+                {#each grouping.other as session (session.id)}
+                  <div
+                    class="drag-wrapper"
+                    class:drag-over={dragOverId === session.id && draggingId !== session.id}
+                  >
+                    <SessionItem
+                      {session}
+                      isActive={false}
+                      isSwitching={session.id === switchingSessionId}
+                      hasOriginData={false}
+                      tabCount={tabCounts[session.id] ?? 0}
+                      {onswitch}
+                      {ondelete}
+                      {onrename}
+                      forceEditing={editingSessionId === session.id}
+                      {onmenu}
+                      draggable={grouping.other.length > 1}
+                      ondragstart={(e) => handleDragStart(e, session.id)}
+                      ondragover={(e) => handleDragOver(e, session.id, grouping.other)}
+                      ondrop={(e) => handleDrop(e, session.id, grouping.other)}
+                      ondragend={resetDrag}
+                    />
                   </div>
-                {/if}
+                {/each}
               </div>
-            {/each}
+            {:else}
+              {#each grouping.domainGroups as [domain, domainSessions] (domain)}
+                {@const isCollapsed = collapsedDomains.has(domain)}
+                <div class="domain-folder">
+                  <button
+                    class="domain-toggle"
+                    onclick={() => toggleDomain(domain)}
+                    aria-expanded={!isCollapsed}
+                  >
+                    <span class="domain-chevron" class:open={!isCollapsed}>
+                      <Icon name="chevron-right" size={10} />
+                    </span>
+                    <Icon name={domain === UNGROUPED_KEY ? 'folder' : 'globe'} size={12} />
+                    <span class="domain-name">
+                      {domain === UNGROUPED_KEY ? 'No saved sites' : domain}
+                    </span>
+                    <span class="group-count">{domainSessions.length}</span>
+                  </button>
+                  {#if !isCollapsed}
+                    <div class="domain-items">
+                      {#each domainSessions as session (session.id)}
+                        <div
+                          class="drag-wrapper"
+                          class:drag-over={dragOverId === session.id && draggingId !== session.id}
+                        >
+                          <SessionItem
+                            {session}
+                            isActive={false}
+                            isSwitching={session.id === switchingSessionId}
+                            hasOriginData={false}
+                            tabCount={tabCounts[session.id] ?? 0}
+                            {onswitch}
+                            {ondelete}
+                            {onrename}
+                            forceEditing={editingSessionId === session.id}
+                            {onmenu}
+                            draggable={domainSessions.length > 1}
+                            ondragstart={(e) => handleDragStart(e, session.id)}
+                            ondragover={(e) => handleDragOver(e, session.id, domainSessions)}
+                            ondrop={(e) => handleDrop(e, session.id, domainSessions)}
+                            ondragend={resetDrag}
+                          />
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+              {/each}
+            {/if}
           </div>
         {/if}
-      </div>
-    {/if}
-
-    {#if thisSiteSessions.length === 0 && !effectiveShowOther}
-      <div class="empty-site">
-        <p>No sessions for this site yet.</p>
       </div>
     {/if}
   {/if}
@@ -283,24 +283,26 @@
   .session-list {
     display: flex;
     flex-direction: column;
-    gap: var(--space-3);
+    gap: var(--space-4);
   }
 
   .default-item {
     display: flex;
     align-items: center;
     gap: var(--space-3);
-    padding: var(--space-4) var(--space-4);
+    width: 100%;
+    padding: var(--space-4);
     border-radius: var(--radius-lg);
     border: 1px solid var(--color-border-secondary);
     cursor: pointer;
     color: var(--color-text-tertiary);
     transition: all var(--transition-smooth);
     background: transparent;
+    font-family: var(--font-sans);
+    text-align: left;
   }
 
-  .default-item:hover,
-  .default-item:focus-visible {
+  .default-item:hover {
     background: var(--color-interactive-hover);
     color: var(--color-text-secondary);
     border-color: var(--color-border-primary);
@@ -324,12 +326,26 @@
     align-items: center;
     justify-content: center;
     opacity: 0.6;
+    flex-shrink: 0;
+  }
+
+  .default-text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
   }
 
   .default-label {
-    flex: 1;
     font-size: var(--text-base);
     font-weight: var(--font-medium);
+  }
+
+  .default-meta {
+    font-size: var(--text-2xs);
+    color: var(--color-text-tertiary);
+    line-height: 1;
   }
 
   .default-badge {
@@ -340,9 +356,17 @@
     border-radius: var(--radius-full);
     font-weight: var(--font-semibold);
     line-height: 14px;
+    flex-shrink: 0;
   }
 
   .group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .group-items,
+  .domain-items {
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
@@ -353,6 +377,7 @@
     align-items: center;
     gap: var(--space-3);
     flex: 1;
+    min-width: 0;
   }
 
   .group-label {
@@ -394,6 +419,7 @@
     cursor: pointer;
     width: 100%;
     font-family: var(--font-sans);
+    border-radius: var(--radius-md);
   }
 
   .group-toggle:hover .group-label {
@@ -403,7 +429,6 @@
   .group-toggle:focus-visible {
     outline: none;
     box-shadow: var(--shadow-focus);
-    border-radius: var(--radius-md);
   }
 
   .toggle-icon {
@@ -420,13 +445,7 @@
   .other-list {
     display: flex;
     flex-direction: column;
-    gap: var(--space-2);
-    opacity: 0.85;
-    transition: opacity var(--transition-fast);
-  }
-
-  .other-list:hover {
-    opacity: 1;
+    gap: var(--space-3);
   }
 
   /* ── Domain folders ──────────────────────────────────────────── */
@@ -434,7 +453,7 @@
   .domain-folder {
     display: flex;
     flex-direction: column;
-    gap: var(--space-1);
+    gap: var(--space-2);
   }
 
   .domain-toggle {
@@ -486,14 +505,14 @@
   }
 
   .domain-items {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
     padding-left: var(--space-5);
   }
 
-  .empty-search,
-  .empty-site {
+  .domain-items.flat {
+    padding-left: 0;
+  }
+
+  .empty-search {
     text-align: center;
     padding: var(--space-7) var(--space-4);
     display: flex;
@@ -507,19 +526,39 @@
     opacity: 0.5;
   }
 
-  .empty-search p,
-  .empty-site p {
+  .empty-search p {
     margin: 0;
     font-size: var(--text-sm);
     color: var(--color-text-tertiary);
   }
 
+  .text-btn {
+    background: none;
+    border: none;
+    color: var(--color-accent);
+    font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+    cursor: pointer;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+  }
+
+  .text-btn:hover {
+    background: var(--color-accent-soft);
+  }
+
+  .text-btn:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
+  }
+
   .drag-wrapper {
     transition: transform var(--transition-fast);
+    border-top: 2px solid transparent;
   }
 
   .drag-wrapper.drag-over {
-    border-top: 2px solid var(--color-accent);
-    padding-top: var(--space-1);
+    border-top-color: var(--color-accent);
   }
 </style>

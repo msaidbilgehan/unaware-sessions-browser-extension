@@ -58,11 +58,7 @@ export async function decrypt(
   try {
     const ivBuffer = new Uint8Array(iv).buffer as ArrayBuffer;
     const ctBuffer = new Uint8Array(ciphertext).buffer as ArrayBuffer;
-    decrypted = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv: ivBuffer },
-      key,
-      ctBuffer,
-    );
+    decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: ivBuffer }, key, ctBuffer);
   } catch {
     throw new Error('Decryption failed — encryption key mismatch or corrupted data');
   }

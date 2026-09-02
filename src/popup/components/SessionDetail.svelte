@@ -12,19 +12,22 @@
   let loading = $state(true);
   let error = $state('');
 
-  $effect(() => {
+  // One loader for both the initial fetch and Retry — the retry path used to
+  // carry its own copy of this promise chain inline in the markup.
+  async function load(id: string) {
     loading = true;
     error = '';
-    getSessionStats(sessionId)
-      .then((s) => {
-        stats = s;
-      })
-      .catch((err) => {
-        error = err instanceof Error ? err.message : 'Failed to load stats';
-      })
-      .finally(() => {
-        loading = false;
-      });
+    try {
+      stats = await getSessionStats(id);
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Could not read this session’s data';
+    } finally {
+      loading = false;
+    }
+  }
+
+  $effect(() => {
+    void load(sessionId);
   });
 
   function formatBytes(bytes: number): string {
@@ -43,11 +46,12 @@
       <div class="skel skel-stat"></div>
     </div>
   {:else if error}
-    <div class="error-row">
+    <div class="error-row" role="alert">
       <Icon name="alert-triangle" size={12} />
       <span class="error-text">{error}</span>
-      <button class="retry-btn" onclick={() => { loading = true; error = ''; getSessionStats(sessionId).then((s) => { stats = s; }).catch((err) => { error = err instanceof Error ? err.message : 'Failed'; }).finally(() => { loading = false; }); }} aria-label="Retry">
+      <button class="retry-btn" onclick={() => load(sessionId)}>
         <Icon name="refresh-cw" size={11} />
+        Retry
       </button>
     </div>
   {:else if stats}
@@ -66,18 +70,20 @@
       </div>
       <div class="stat">
         <span class="stat-value">{stats.idbDatabases}</span>
-        <span class="stat-label">IDB</span>
+        <span class="stat-label">Databases</span>
       </div>
     </div>
     {#if stats.origins.length > 0}
       <div class="origins">
-        {#each stats.origins as origin}
+        {#each stats.origins as origin (origin)}
           <span class="origin-tag">
             <Icon name="globe" size={9} />
             {origin.replace(/^https?:\/\//, '')}
           </span>
         {/each}
       </div>
+    {:else}
+      <p class="no-origins">No saved data yet.</p>
     {/if}
   {/if}
 </div>
@@ -85,7 +91,7 @@
 <style>
   .detail-panel {
     padding: var(--space-4);
-    margin-top: var(--space-2);
+    margin: 0 var(--space-4) var(--space-4);
     background: var(--color-bg-secondary);
     border-radius: var(--radius-lg);
     border: 1px solid var(--color-border-secondary);
@@ -124,18 +130,24 @@
     font-size: var(--text-xs);
     color: var(--color-error);
     flex: 1;
+    min-width: 0;
   }
 
   .retry-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
     background: none;
     border: 1px solid var(--color-error-border);
     color: var(--color-error);
     cursor: pointer;
-    padding: var(--space-1) var(--space-2);
+    padding: var(--space-1) var(--space-3);
     border-radius: var(--radius-sm);
-    display: flex;
-    align-items: center;
+    font-family: var(--font-sans);
+    font-size: var(--text-2xs);
+    font-weight: var(--font-medium);
     transition: all var(--transition-fast);
+    flex-shrink: 0;
   }
 
   .retry-btn:hover {
@@ -191,5 +203,12 @@
     background: var(--color-bg-tertiary);
     padding: var(--space-1) var(--space-3);
     border-radius: var(--radius-full);
+  }
+
+  .no-origins {
+    margin: var(--space-4) 0 0;
+    font-size: var(--text-xs);
+    color: var(--color-text-tertiary);
+    text-align: center;
   }
 </style>

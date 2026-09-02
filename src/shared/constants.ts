@@ -18,6 +18,15 @@ export const STORAGE_KEYS = {
   SECURITY_GRACE_UNTIL: 'securityGraceUntil',
   SYNC_CONFIG: 'syncConfig',
   SESSION_TOMBSTONES: 'sessionTombstones',
+  LOG_BUFFER: 'logBuffer',
+  STORAGE_WRITE_ERRORS: 'storageWriteErrors',
+  /**
+   * Sessions the popup has hidden behind an "Undo" toast but not yet deleted.
+   * Journalled to chrome.storage.session so closing the popup mid-countdown
+   * cannot strand a session in a half-deleted state — the next popup finishes
+   * the job. DELETE_SESSION is idempotent, so replaying an entry is harmless.
+   */
+  PENDING_SESSION_DELETES: 'pendingSessionDeletes',
 } as const;
 
 export const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
@@ -48,6 +57,17 @@ export const GRACE_PERIOD_OPTIONS: { value: GracePeriodMs; label: string }[] = [
 ];
 
 export const LOG_BUFFER_MAX_SIZE = 2000;
+
+// The in-memory log buffer dies with the MV3 service worker (~30 s idle), so
+// an incident is unreadable minutes after it happened. A bounded tail is
+// mirrored to chrome.storage.local and re-hydrated on every SW start; keep it
+// small enough that it can never crowd out session data in the 10 MB local
+// storage area.
+export const LOG_PERSIST_MAX_SIZE = 500;
+export const LOG_PERSIST_DEBOUNCE_MS = 2000;
+
+/** Retained snapshot-write failures (quota, aborted transaction, …). */
+export const STORAGE_WRITE_ERROR_MAX_SIZE = 50;
 
 export const ALARM_DRIVE_SYNC = 'drive-sync';
 
@@ -93,6 +113,18 @@ export const STORAGE_STORE_DB_NAME = 'unaware-sessions-storage';
 export const STORAGE_STORE_NAME = 'snapshots';
 export const STORAGE_STORE_DB_VERSION = 1;
 
+// One-slot undo buffer for snapshots that went empty. Deliberately a separate
+// database, not extra object stores in the two above: it needs no version bump
+// on the databases holding the irreplaceable data, every prefix/suffix key scan
+// in those stores stays free of foreign keys, and the whole buffer can be
+// dropped without touching primary data. Local-only by construction — export
+// and sync read the primary stores, so the buffer can never leak into a
+// payload or a Drive upload.
+export const UNDO_STORE_DB_NAME = 'unaware-sessions-undo';
+export const UNDO_COOKIE_STORE_NAME = 'cookies';
+export const UNDO_STORAGE_STORE_NAME = 'storage';
+export const UNDO_STORE_DB_VERSION = 1;
+
 // These two move together: the timeout bounds how long a single database's
 // cursor iteration + JSON encoding may run in the content script, so raising
 // the size ceiling without raising the timeout just trades a clear
@@ -102,6 +134,9 @@ export const IDB_SNAPSHOT_MAX_SIZE_MB = 500;
 
 export const GITHUB_URL = 'https://github.com/msaidbilgehan/unaware-sessions-browser-extension/';
 export const OPENCOLLECTIVE_URL = 'https://opencollective.com/unaware-sessions-browser-ext';
+export const PRIVACY_POLICY_URL = `${GITHUB_URL}blob/master/PRIVACY_POLICY.md`;
+export const ISSUES_URL = `${GITHUB_URL}issues`;
+export const CHANGELOG_URL = `${GITHUB_URL}blob/master/CHANGELOG.md`;
 
 export const DEFAULT_SESSION_EMOJIS = [
   '\u{1F3E0}',

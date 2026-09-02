@@ -27,15 +27,28 @@ export function onThemeChange(listener: (theme: ThemePreference) => void): () =>
   };
 }
 
-export async function toggleTheme(): Promise<void> {
-  const cycle: ThemePreference[] = ['light', 'dark', 'system'];
-  const nextIndex = (cycle.indexOf(currentTheme) + 1) % cycle.length;
-  currentTheme = cycle[nextIndex];
+/**
+ * Apply a theme directly.
+ *
+ * Callers that know the target preference must use this rather than cycling
+ * with {@link toggleTheme}: every intermediate step of a cycle repaints the
+ * document and writes storage, so picking "system" from "light" would flash
+ * dark on the way through.
+ */
+export async function setTheme(preference: ThemePreference): Promise<void> {
+  if (currentTheme === preference) return;
+  currentTheme = preference;
   applyTheme(currentTheme);
   await chrome.storage.local.set({ [STORAGE_KEYS.THEME_PREFERENCE]: currentTheme });
   for (const listener of listeners) {
     listener(currentTheme);
   }
+}
+
+export async function toggleTheme(): Promise<void> {
+  const cycle: ThemePreference[] = ['light', 'dark', 'system'];
+  const nextIndex = (cycle.indexOf(currentTheme) + 1) % cycle.length;
+  await setTheme(cycle[nextIndex]);
 }
 
 export async function initTheme(): Promise<void> {

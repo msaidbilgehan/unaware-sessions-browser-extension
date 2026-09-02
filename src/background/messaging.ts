@@ -13,6 +13,8 @@ const log = createLogger('messaging');
 import {
   createSession,
   deleteSession,
+  deleteAllSessions,
+  getSession,
   listSessions,
   updateSession,
   duplicateSession,
@@ -38,11 +40,13 @@ import {
   getRestoreFailures,
   getCookieStoreIdForTab,
   captureTabIntoSession,
+  restorePreviousSnapshot,
 } from './cookie-engine';
 import { rebuildContextMenu } from './context-menu';
 import { updateBadge } from './badge-manager';
 import { cookieStore } from './cookie-store';
 import { storageStore } from './storage-store';
+import { snapshotUndo } from './snapshot-undo';
 import { STORAGE_KEYS } from '@shared/constants';
 import { setLocal } from '@shared/storage';
 import {
@@ -58,8 +62,10 @@ import type {
   CookieDiffResult,
   CookieDiffStatus,
   LiveCookieInfo,
+  PreviousSnapshotInfo,
 } from '@shared/types';
 import { refreshAllActiveSessions } from './auto-refresh';
+import { getStorageHealth } from './storage-health';
 import { getLogs, clearLogs } from '@shared/logger';
 import { getToken, revokeAccess, getGoogleUserId } from '@shared/sync/drive-client';
 import { getSyncConfigHydrated, setSyncConfig } from '@shared/sync/sync-store';
@@ -74,6 +80,33 @@ type MessageHandler = (
 // runtime message at 64 MiB; this leaves ample headroom for serialization and
 // the base64 marker inflation of binary IndexedDB values.
 const EXPORT_CHUNK_BUDGET_BYTES = 24 * 1024 * 1024;
+
+/**
+ * Drop tab→session mappings whose session no longer exists.
+ *
+ * A tracked tab outlives the session it points at, and every auto-save path
+ * (the refresh alarm, tab close, same-origin load complete) writes a snapshot
+ * keyed by `entry.sessionId` without checking that the session is still there
+ * — so a deleted session's data reappears in IndexedDB minutes later as an
+ * orphan no UI can show or remove. Unassigning also clears the tab's DNR rule
+ * and badge, which would otherwise keep advertising the deleted session.
+ *
+ * Done here rather than in session-manager: it would have to import
+ * tab-tracker, closing a session-manager → tab-tracker → cookie-engine →
+ * storage-health → session-manager import cycle.
+ */
+async function releaseTabs(tabIds: readonly number[]): Promise<void> {
+  await Promise.all(
+    tabIds.map(async (tabId) => {
+      const entry = await getTabEntry(tabId);
+      if (!entry) return;
+      // Still a live session (Clear All aside, this only sees the deleted one).
+      if (await getSession(entry.sessionId)) return;
+      await unassignTab(tabId);
+      await updateBadge(tabId);
+    }),
+  );
+}
 
 const handlers: Partial<Record<MessageType, MessageHandler>> = {
   [MessageType.CREATE_SESSION]: async (msg) => {
@@ -93,9 +126,24 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
 
   [MessageType.DELETE_SESSION]: async (msg) => {
     if (msg.type !== MessageType.DELETE_SESSION) return { success: false };
+    // Collect the tabs before the profile is gone — see releaseTabs.
+    const tabs = await getTabsForSession(msg.sessionId);
     await deleteSession(msg.sessionId);
+    await releaseTabs(tabs);
     await rebuildContextMenu();
     return { success: true };
+  },
+
+  [MessageType.CLEAR_ALL_SESSIONS]: async () => {
+    // One pass instead of the options page looping DELETE_SESSION: that did N
+    // message round trips, N profile writes, N read-modify-write tombstone
+    // updates and N context menu rebuilds for a single user action.
+    const entries = await getAllTabEntries();
+    const deleted = (await listSessions()).length;
+    await deleteAllSessions();
+    await releaseTabs([...entries.keys()]);
+    await rebuildContextMenu();
+    return { success: true, data: { deleted } };
   },
 
   [MessageType.LIST_SESSIONS]: async () => {
@@ -274,10 +322,15 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
 
   [MessageType.GET_SESSION_DETAILS]: async (msg) => {
     if (msg.type !== MessageType.GET_SESSION_DETAILS) return { success: false };
-    const [cookieSnapshots, storageSnapshots] = await Promise.all([
+    const [cookieSnapshots, storageSnapshots, undoCookies, undoStorage] = await Promise.all([
       cookieStore.getAllSnapshotsForSession(msg.sessionId),
       storageStore.getAllSnapshotsForSession(msg.sessionId),
+      snapshotUndo.getAllForSession<CookieSnapshot>('cookies', msg.sessionId),
+      snapshotUndo.getAllForSession<StorageSnapshot>('storage', msg.sessionId),
     ]);
+
+    const undoCookieMap = new Map(undoCookies.map((snap) => [snap.origin, snap]));
+    const undoStorageMap = new Map(undoStorage.map((snap) => [snap.origin, snap]));
 
     const originMap = new Map<
       string,
@@ -294,6 +347,13 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
     for (const snap of storageSnapshots) {
       const existing = originMap.get(snap.origin);
       originMap.set(snap.origin, { cookieSnap: existing?.cookieSnap ?? null, storageSnap: snap });
+    }
+    // An origin whose live snapshot was deleted but whose undo slot survives
+    // must still be listed, or the only way to recover it would be invisible.
+    for (const origin of [...undoCookieMap.keys(), ...undoStorageMap.keys()]) {
+      if (!originMap.has(origin)) {
+        originMap.set(origin, { cookieSnap: null, storageSnap: null });
+      }
     }
 
     let totalCookies = 0;
@@ -316,8 +376,25 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
       totalCookies += cookieCount;
       totalStorageBytes += cookieBytes + storageBytes;
 
+      const undoCookieSnap = undoCookieMap.get(origin) ?? null;
+      const undoStorageSnap = undoStorageMap.get(origin) ?? null;
+      const previous: PreviousSnapshotInfo | null =
+        undoCookieSnap || undoStorageSnap
+          ? {
+              cookieTimestamp: undoCookieSnap?.timestamp ?? null,
+              cookieCount: undoCookieSnap?.cookies.length ?? 0,
+              storageTimestamp: undoStorageSnap?.timestamp ?? null,
+              storageEntries: undoStorageSnap
+                ? Object.keys(undoStorageSnap.localStorage).length +
+                  Object.keys(undoStorageSnap.sessionStorage).length
+                : 0,
+              idbDatabases: undoStorageSnap?.indexedDB?.length ?? 0,
+            }
+          : null;
+
       origins.push({
         origin,
+        previous,
         cookieCount,
         cookieBytes,
         storageEntries,
@@ -349,7 +426,16 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
     if (msg.type !== MessageType.DELETE_SESSION_ORIGIN_DATA) return { success: false };
     await cookieStore.deleteForOrigin(msg.sessionId, msg.origin);
     await storageStore.deleteForOrigin(msg.sessionId, msg.origin);
+    // An explicit delete means all of it, including what could be undone —
+    // leaving the slot behind would keep a credential the user just removed.
+    await snapshotUndo.deleteForOrigin(msg.sessionId, msg.origin);
     return { success: true };
+  },
+
+  [MessageType.RESTORE_PREVIOUS_SNAPSHOT]: async (msg) => {
+    if (msg.type !== MessageType.RESTORE_PREVIOUS_SNAPSHOT) return { success: false };
+    const result = await restorePreviousSnapshot(msg.sessionId, msg.origin);
+    return { success: true, data: result };
   },
 
   [MessageType.UPDATE_SESSION_COOKIE]: async (msg) => {
@@ -696,6 +782,10 @@ const handlers: Partial<Record<MessageType, MessageHandler>> = {
 
   [MessageType.GET_RESTORE_FAILURES]: async () => {
     return { success: true, data: getRestoreFailures() };
+  },
+
+  [MessageType.GET_STORAGE_HEALTH]: async () => {
+    return { success: true, data: await getStorageHealth() };
   },
 
   [MessageType.GET_LOGS]: async () => {

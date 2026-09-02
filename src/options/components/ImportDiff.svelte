@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import type { SessionProfile } from '@shared/types';
 
   interface DiffEntry {
@@ -32,17 +33,15 @@
     });
   }
 
-  let entries = $state<DiffEntry[]>(buildEntries(imported, existing));
+  // Diffed once against the file that was just dropped; the preview must stay
+  // stable while the user picks rows, even if sessions change underneath.
+  let entries = $state<DiffEntry[]>(untrack(() => buildEntries(imported, existing)));
 
   const selectedCount = $derived(entries.filter((e) => e.selected).length);
 
   function toggleAll() {
     const allSelected = entries.every((e) => e.selected);
     entries = entries.map((e) => ({ ...e, selected: !allSelected }));
-  }
-
-  function _toggleEntry(index: number) {
-    entries[index].selected = !entries[index].selected;
   }
 
   function handleConfirm() {
@@ -62,7 +61,7 @@
       <span>Name</span>
       <span>Status</span>
     </div>
-    {#each entries as entry, _i}
+    {#each entries as entry (entry.imported.id ?? entry.imported.name)}
       <div class="diff-row" class:dimmed={!entry.selected}>
         <label class="checkbox-cell">
           <input type="checkbox" bind:checked={entry.selected} />

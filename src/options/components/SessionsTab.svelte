@@ -1,8 +1,9 @@
 <script lang="ts">
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
-  import type { SessionProfile, SessionDetails } from '@shared/types';
+  import type { SessionProfile, SessionDetails, PreviousSnapshotInfo } from '@shared/types';
   import { formatRelativeTime } from '@shared/utils';
   import {
+    createSession,
     updateSession,
     deleteSession as deleteSessionApi,
     getSessionDetails,
@@ -11,6 +12,7 @@
     deleteSessionCookie,
     updateSessionStorageEntry,
     deleteSessionStorageEntry,
+    restorePreviousSnapshot,
   } from '@shared/api';
   import {
     isDomainAutoRefreshEnabled,
@@ -23,7 +25,10 @@
   import Icon from '@shared/components/Icon.svelte';
   import InlineEdit from '@shared/components/InlineEdit.svelte';
   import ColorPicker from '@shared/components/ColorPicker.svelte';
+  import EmojiPicker from '@shared/components/EmojiPicker.svelte';
   import ConfirmDialog from '@shared/components/ConfirmDialog.svelte';
+  import Toast from '@shared/components/Toast.svelte';
+  import SessionForm from '@shared/components/SessionForm.svelte';
 
   interface Props {
     sessions: SessionProfile[];
@@ -39,8 +44,24 @@
   let colorEditId = $state<string | null>(null);
   let confirmData = $state<{ session: SessionProfile } | null>(null);
   let originConfirm = $state<{ sessionId: string; origin: string } | null>(null);
+  let showCreate = $state(false);
+  let creating = $state(false);
+  let toastData = $state<{ message: string; type: 'error' | 'success' | 'info' } | null>(null);
 
-  // Global auto-refresh interval — used to dim per-domain toggles when global is off
+  /**
+   * Every mutation on this page used to end in `console.error`, so a failed
+   * rename or delete looked exactly like nothing happening. Failures are the
+   * one thing the user must never have to open DevTools to discover.
+   */
+  function reportError(action: string, err: unknown) {
+    console.error(`[Unaware Sessions] ${action} failed:`, err);
+    toastData = {
+      message: `${action} failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
+      type: 'error',
+    };
+  }
+
+  // Global auto-save interval — used to dim per-site toggles when it is off
   let globalInterval = $state<AutoRefreshInterval>(getAutoRefreshInterval());
   const globalAutoRefreshOn = $derived(globalInterval > 0);
 
@@ -108,29 +129,29 @@
       : sessions,
   );
 
+  /** Bucket label for sessions that have not saved anything yet. */
+  const NO_DATA_GROUP = 'No saved data';
+
   // Build domain groups from loaded details
-  const domainGroups = $derived(() => {
+  const domainGroups = $derived.by(() => {
     const groups: Record<string, DomainGroup> = {};
     const ungrouped: Array<{ session: SessionProfile; details: SessionDetails | null }> = [];
 
     for (const session of filteredSessions) {
       const details = detailsMap.get(session.id) ?? null;
       if (details && details.origins.length > 0) {
-        const primaryOrigin = details.origins[0].origin;
-        const domain = primaryOrigin.replace(/^https?:\/\//, '');
-        if (groups[domain]) {
-          groups[domain].sessions.push({ session, details });
-        } else {
-          groups[domain] = { domain, sessions: [{ session, details }] };
-        }
+        const domain = details.origins[0].origin.replace(/^https?:\/\//, '');
+        if (groups[domain]) groups[domain].sessions.push({ session, details });
+        else groups[domain] = { domain, sessions: [{ session, details }] };
       } else {
         ungrouped.push({ session, details });
       }
     }
 
-    const result: DomainGroup[] = Object.values(groups);
+    // Alphabetical, so folders do not reshuffle every time details reload.
+    const result = Object.values(groups).sort((a, b) => a.domain.localeCompare(b.domain));
     if (ungrouped.length > 0) {
-      result.push({ domain: 'Ungrouped', sessions: ungrouped });
+      result.push({ domain: NO_DATA_GROUP, sessions: ungrouped });
     }
     return result;
   });
@@ -144,9 +165,7 @@
     const version = ++detailsLoadVersion;
     detailsLoading = true;
     detailsMap.clear();
-    const results = await Promise.allSettled(
-      sessions.map((s) => getSessionDetails(s.id)),
-    );
+    const results = await Promise.allSettled(sessions.map((s) => getSessionDetails(s.id)));
     if (detailsLoadVersion !== version) return;
     for (let i = 0; i < results.length; i++) {
       const r = results[i];
@@ -171,6 +190,30 @@
   // When sessions update via the storage listener in App.svelte, the $effect above
   // only reloads details if session IDs actually changed (added/removed/reordered).
 
+  async function handleCreate(name: string, color: string, emoji?: string) {
+    if (creating) return;
+    creating = true;
+    try {
+      await createSession(name, color, emoji);
+      showCreate = false;
+      toastData = { message: `“${name}” created`, type: 'success' };
+      onupdate();
+    } catch (err) {
+      reportError('Create', err);
+    } finally {
+      creating = false;
+    }
+  }
+
+  async function handleEmojiChange(sessionId: string, emoji: string) {
+    try {
+      await updateSession(sessionId, { emoji: emoji || undefined });
+      onupdate();
+    } catch (err) {
+      reportError('Emoji change', err);
+    }
+  }
+
   async function handleToggleDomainRefresh(sessionId: string, origin: string) {
     const current = isDomainRefreshOn(sessionId, origin);
     await setDomainAutoRefresh(sessionId, origin, !current);
@@ -182,7 +225,7 @@
       await updateSession(sessionId, { name: newName });
       onupdate();
     } catch (err) {
-      console.error('Failed to rename session:', err);
+      reportError('Rename', err);
     }
   }
 
@@ -191,8 +234,24 @@
       await updateSession(sessionId, { color });
       onupdate();
     } catch (err) {
-      console.error('Failed to update color:', err);
+      reportError('Colour change', err);
     }
+  }
+
+  /**
+   * Expanding a different session must abandon any half-finished inline edit.
+   *
+   * This extension exists so several sessions can hold data for the SAME site,
+   * so an unsaved edit of cookie `sid` in session A matches the identically
+   * named row in session B. The save handler dispatches against the session id
+   * captured when editing began, so the write would land in A while the user is
+   * looking at B. The row guards also compare the session id now; this keeps
+   * the two from ever being asked to disagree.
+   */
+  function toggleExpanded(sessionId: string) {
+    expandedSessionId = expandedSessionId === sessionId ? null : sessionId;
+    editingCookie = null;
+    editingStorage = null;
   }
 
   async function executeDelete(sessionId: string) {
@@ -203,7 +262,7 @@
       if (expandedSessionId === sessionId) expandedSessionId = null;
       onupdate();
     } catch (err) {
-      console.error('Failed to delete:', err);
+      reportError('Delete', err);
     }
   }
 
@@ -214,7 +273,37 @@
       const d = await getSessionDetails(sessionId);
       detailsMap.set(sessionId, d);
     } catch (err) {
-      console.error('Failed to delete origin data:', err);
+      reportError('Deleting site data', err);
+    }
+  }
+
+  // ── Snapshot undo ────────────────────────────────────────────
+  //
+  // The live snapshot mirrors the browser, so a cookie clear the extension
+  // cannot distinguish from a logout still empties it — but the previous
+  // non-empty state is held in a local one-slot buffer until real data
+  // replaces it. This is where it comes back from.
+  let restoringOrigin = $state<string | null>(null);
+
+  function describePrevious(previous: PreviousSnapshotInfo): string {
+    const parts: string[] = [];
+    if (previous.cookieCount > 0) parts.push(`${previous.cookieCount} cookies`);
+    if (previous.storageEntries > 0) parts.push(`${previous.storageEntries} storage entries`);
+    if (previous.idbDatabases > 0) parts.push(`${previous.idbDatabases} IDB databases`);
+    return parts.length > 0 ? parts.join(', ') : 'no data';
+  }
+
+  async function handleRestorePrevious(sessionId: string, origin: string) {
+    restoringOrigin = sessionId + origin;
+    try {
+      await restorePreviousSnapshot(sessionId, origin);
+      const d = await getSessionDetails(sessionId);
+      detailsMap.set(sessionId, d);
+      onupdate();
+    } catch (err) {
+      reportError('Restore', err);
+    } finally {
+      restoringOrigin = null;
     }
   }
 
@@ -226,7 +315,7 @@
       const d = await getSessionDetails(sessionId);
       detailsMap.set(sessionId, d);
     } catch (err) {
-      console.error('Failed to update cookie:', err);
+      reportError('Cookie update', err);
     }
     editingCookie = null;
   }
@@ -242,7 +331,7 @@
       const d = await getSessionDetails(sessionId);
       detailsMap.set(sessionId, d);
     } catch (err) {
-      console.error('Failed to delete cookie:', err);
+      reportError('Cookie delete', err);
     }
   }
 
@@ -254,7 +343,7 @@
       const d = await getSessionDetails(sessionId);
       detailsMap.set(sessionId, d);
     } catch (err) {
-      console.error('Failed to update storage:', err);
+      reportError('Storage update', err);
     }
     editingStorage = null;
   }
@@ -270,9 +359,31 @@
       const d = await getSessionDetails(sessionId);
       detailsMap.set(sessionId, d);
     } catch (err) {
-      console.error('Failed to delete storage entry:', err);
+      reportError('Storage delete', err);
     }
   }
+
+  // The appearance popover had no dismissal but its own Done button: clicking
+  // elsewhere left it open, swallowing the next click on the page.
+  $effect(() => {
+    if (!colorEditId) return;
+
+    function handlePointerDown(e: MouseEvent) {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('.color-popover') || target?.closest('.color-dot')) return;
+      colorEditId = null;
+    }
+    function handleKeydown(e: KeyboardEvent) {
+      if (e.key === 'Escape') colorEditId = null;
+    }
+
+    document.addEventListener('mousedown', handlePointerDown, true);
+    document.addEventListener('keydown', handleKeydown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown, true);
+      document.removeEventListener('keydown', handleKeydown);
+    };
+  });
 
   function toggleDomain(domain: string) {
     if (collapsedDomains.has(domain)) {
@@ -304,16 +415,25 @@
       <Icon name="search" size={13} />
       <input
         type="text"
-        placeholder="Search sessions or domains..."
+        placeholder="Search sessions or sites…"
         bind:value={searchQuery}
-        aria-label="Search sessions"
+        onkeydown={(e) => e.key === 'Escape' && (searchQuery = '')}
+        aria-label="Search sessions and sites"
+        autocomplete="off"
       />
       {#if searchQuery}
+        <span class="search-count" aria-live="polite">
+          {filteredSessions.length}/{sessions.length}
+        </span>
         <button class="clear-search" onclick={() => (searchQuery = '')} aria-label="Clear search">
           <Icon name="x" size={11} />
         </button>
       {/if}
     </div>
+    <button class="new-session-btn" onclick={() => (showCreate = true)}>
+      <Icon name="plus" size={14} />
+      New session
+    </button>
   </div>
 
   <!-- Content -->
@@ -327,12 +447,19 @@
       <div class="empty-icon">
         <Icon name="layers" size={20} />
       </div>
-      <p>
-        {searchQuery ? `No results for "${searchQuery}"` : 'No sessions created yet.'}
-      </p>
+      {#if searchQuery}
+        <p>No sessions or sites match “{searchQuery}”.</p>
+        <button class="empty-action" onclick={() => (searchQuery = '')}>Clear search</button>
+      {:else}
+        <p>No sessions yet. Create one to keep a set of logins separate.</p>
+        <button class="empty-action" onclick={() => (showCreate = true)}>
+          <Icon name="plus" size={13} />
+          New session
+        </button>
+      {/if}
     </div>
   {:else}
-    {#each domainGroups() as group (group.domain)}
+    {#each domainGroups as group (group.domain)}
       <div class="domain-folder">
         <button class="domain-header" onclick={() => toggleDomain(group.domain)}>
           <span class="domain-chevron">
@@ -341,7 +468,7 @@
               size={13}
             />
           </span>
-          <Icon name={group.domain === 'Ungrouped' ? 'folder-open' : 'globe'} size={14} />
+          <Icon name={group.domain === NO_DATA_GROUP ? 'folder-open' : 'globe'} size={14} />
           <span class="domain-name">{group.domain}</span>
           <span class="domain-count">{group.sessions.length}</span>
         </button>
@@ -351,21 +478,31 @@
             {#each group.sessions as { session, details } (session.id)}
               <div class="session-card" style="--card-color: {session.color}">
                 <div class="session-row">
-                  <!-- Color dot / picker -->
+                  <!-- Appearance: colour + emoji -->
                   <span class="color-cell">
                     {#if colorEditId === session.id}
                       <div
                         class="color-popover"
                         onclick={(e) => e.stopPropagation()}
-                        onkeydown={(e) => e.stopPropagation()}
                         role="presentation"
                       >
-                        <ColorPicker
-                          selected={session.color}
-                          onchange={(c) => handleColorChange(session.id, c)}
-                        />
-                        <button class="color-done" onclick={() => (colorEditId = null)} aria-label="Done">
+                        <div class="popover-field">
+                          <span class="popover-label">Colour</span>
+                          <ColorPicker
+                            selected={session.color}
+                            onchange={(c) => handleColorChange(session.id, c)}
+                          />
+                        </div>
+                        <div class="popover-field">
+                          <span class="popover-label">Emoji</span>
+                          <EmojiPicker
+                            selected={session.emoji ?? ''}
+                            onchange={(e) => handleEmojiChange(session.id, e)}
+                          />
+                        </div>
+                        <button class="popover-done" onclick={() => (colorEditId = null)}>
                           <Icon name="check" size={12} />
+                          Done
                         </button>
                       </div>
                     {:else}
@@ -373,7 +510,8 @@
                         class="color-dot"
                         style="background-color: {session.color}"
                         onclick={() => (colorEditId = session.id)}
-                        aria-label="Change color"
+                        title="Change colour and emoji"
+                        aria-label="Change colour and emoji for {session.name}"
                       ></button>
                     {/if}
                   </span>
@@ -387,21 +525,35 @@
                         oncancel={() => (editingId = null)}
                       />
                     {:else}
-                      <!-- svelte-ignore a11y_no_static_element_interactions -->
-                      <span
-                        class="session-name"
-                        ondblclick={() => (editingId = session.id)}
-                        title="Double-click to rename"
-                      >{session.emoji ?? ''} {session.name}</span>
+                      <span class="name-display">
+                        <!-- svelte-ignore a11y_no_static_element_interactions -->
+                        <span class="session-name" ondblclick={() => (editingId = session.id)}>
+                          {session.emoji ?? ''}
+                          {session.name}
+                        </span>
+                        <button
+                          class="icon-btn rename-btn"
+                          onclick={() => (editingId = session.id)}
+                          title="Rename"
+                          aria-label="Rename {session.name}"
+                        >
+                          <Icon name="edit-2" size={11} />
+                        </button>
+                      </span>
                     {/if}
                   </span>
 
                   <!-- Last refreshed / Created -->
-                  <span class="meta-cell" title={session.lastRefreshedAt ? new Date(session.lastRefreshedAt).toLocaleString() : new Date(session.createdAt).toLocaleString()}>
+                  <span
+                    class="meta-cell"
+                    title={session.lastRefreshedAt
+                      ? new Date(session.lastRefreshedAt).toLocaleString()
+                      : new Date(session.createdAt).toLocaleString()}
+                  >
                     {#if session.lastRefreshedAt}
-                      {formatRelativeTime(session.lastRefreshedAt)}
+                      Saved {formatRelativeTime(session.lastRefreshedAt)}
                     {:else}
-                      {new Date(session.createdAt).toLocaleDateString()}
+                      Created {new Date(session.createdAt).toLocaleDateString()}
                     {/if}
                   </span>
 
@@ -409,10 +561,14 @@
                   <span class="actions-cell">
                     <button
                       class="icon-btn"
-                      onclick={() =>
-                        (expandedSessionId = expandedSessionId === session.id ? null : session.id)}
-                      title="View details"
-                      aria-label="Toggle session details"
+                      onclick={() => toggleExpanded(session.id)}
+                      title={expandedSessionId === session.id
+                        ? 'Hide saved data'
+                        : 'Show saved data'}
+                      aria-expanded={expandedSessionId === session.id}
+                      aria-label="{expandedSessionId === session.id
+                        ? 'Hide'
+                        : 'Show'} saved data for {session.name}"
                     >
                       <Icon
                         name={expandedSessionId === session.id ? 'chevron-down' : 'chevron-right'}
@@ -422,7 +578,8 @@
                     <button
                       class="icon-btn danger"
                       onclick={() => (confirmData = { session })}
-                      aria-label="Delete session"
+                      title="Delete session"
+                      aria-label="Delete session {session.name}"
                     >
                       <Icon name="trash-2" size={13} />
                     </button>
@@ -457,19 +614,26 @@
                               {detail.origin.replace(/^https?:\/\//, '')}
                             </span>
                             <span class="origin-stats">
-                              {detail.cookieCount} cookies &middot; {formatBytes(detail.cookieBytes + detail.storageBytes)}
+                              {detail.cookieCount} cookies &middot; {formatBytes(
+                                detail.cookieBytes + detail.storageBytes,
+                              )}
                             </span>
                             <button
                               class="auto-refresh-btn"
-                              class:active={globalAutoRefreshOn && isDomainRefreshOn(session.id, detail.origin)}
-                              class:dormant={!globalAutoRefreshOn && isDomainRefreshOn(session.id, detail.origin)}
+                              class:active={globalAutoRefreshOn &&
+                                isDomainRefreshOn(session.id, detail.origin)}
+                              class:dormant={!globalAutoRefreshOn &&
+                                isDomainRefreshOn(session.id, detail.origin)}
                               disabled={!globalAutoRefreshOn}
                               onclick={() => handleToggleDomainRefresh(session.id, detail.origin)}
                               title={!globalAutoRefreshOn
-                                ? 'Auto-refresh off globally (enable in Settings)'
+                                ? 'Auto-save is off for every site — turn it on in Settings'
                                 : isDomainRefreshOn(session.id, detail.origin)
-                                  ? 'Disable auto-refresh'
-                                  : 'Enable auto-refresh'}
+                                  ? `Turn off auto-save for ${detail.origin}`
+                                  : `Turn on auto-save for ${detail.origin}`}
+                              aria-pressed={globalAutoRefreshOn &&
+                                isDomainRefreshOn(session.id, detail.origin)}
+                              aria-label="Auto-save for {detail.origin}"
                             >
                               <Icon name="refresh-cw" size={11} />
                             </button>
@@ -485,31 +649,72 @@
                           </div>
 
                           <div class="origin-meta">
-                            {#if detail.cookieTimestamp}<span>Cookies: {formatDate(detail.cookieTimestamp)}</span>{/if}
-                            {#if detail.storageTimestamp}<span>Storage: {formatDate(detail.storageTimestamp)}</span>{/if}
+                            {#if detail.cookieTimestamp}<span
+                                >Cookies: {formatDate(detail.cookieTimestamp)}</span
+                              >{/if}
+                            {#if detail.storageTimestamp}<span
+                                >Storage: {formatDate(detail.storageTimestamp)}</span
+                              >{/if}
                           </div>
+
+                          <!-- Undo slot: this origin's snapshot went empty (a logout, or a
+                               cookie clear the extension cannot tell apart from one) and the
+                               previous state is still recoverable. -->
+                          {#if detail.previous}
+                            <div class="undo-row">
+                              <Icon name="info" size={12} />
+                              <span class="undo-text">
+                                Previous snapshot kept from {formatDate(
+                                  detail.previous.cookieTimestamp ??
+                                    detail.previous.storageTimestamp ??
+                                    0,
+                                )} ({describePrevious(detail.previous)})
+                              </span>
+                              <button
+                                class="undo-btn"
+                                disabled={restoringOrigin === session.id + detail.origin}
+                                onclick={() => handleRestorePrevious(session.id, detail.origin)}
+                              >
+                                Restore
+                              </button>
+                            </div>
+                          {/if}
 
                           <!-- Cookies -->
                           {#if detail.cookies.length > 0}
                             <details class="data-section">
                               <summary>Cookies ({detail.cookies.length})</summary>
                               <table class="data-table">
-                                <thead><tr><th>Name</th><th>Value</th><th>Domain</th><th></th></tr></thead>
+                                <thead
+                                  ><tr><th>Name</th><th>Value</th><th>Domain</th><th></th></tr
+                                  ></thead
+                                >
                                 <tbody>
                                   {#each detail.cookies as cookie}
                                     <tr>
                                       <td class="cell-name" title={cookie.name}>{cookie.name}</td>
                                       <td class="cell-value">
-                                        {#if editingCookie?.name === cookie.name && editingCookie?.domain === cookie.domain && editingCookie?.origin === detail.origin}
+                                        {#if editingCookie?.sessionId === session.id && editingCookie?.name === cookie.name && editingCookie?.domain === cookie.domain && editingCookie?.origin === detail.origin}
                                           <div class="edit-row">
                                             <input
                                               class="edit-input"
                                               type="text"
                                               bind:value={editingCookie.value}
-                                              onkeydown={(e) => e.key === 'Enter' && handleSaveCookie()}
+                                              onkeydown={(e) =>
+                                                e.key === 'Enter' && handleSaveCookie()}
                                             />
-                                            <button class="save-btn" onclick={handleSaveCookie} aria-label="Save"><Icon name="check" size={10} /></button>
-                                            <button class="cancel-btn" onclick={() => (editingCookie = null)} aria-label="Cancel"><Icon name="x" size={10} /></button>
+                                            <button
+                                              class="save-btn"
+                                              onclick={handleSaveCookie}
+                                              aria-label="Save"
+                                              ><Icon name="check" size={10} /></button
+                                            >
+                                            <button
+                                              class="cancel-btn"
+                                              onclick={() => (editingCookie = null)}
+                                              aria-label="Cancel"
+                                              ><Icon name="x" size={10} /></button
+                                            >
                                           </div>
                                         {:else}
                                           <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -523,7 +728,7 @@
                                                 domain: cookie.domain,
                                                 value: cookie.value,
                                               })}
-                                            title="Double-click to edit"
+                                            title="Double-click, or use the pencil, to edit"
                                           >
                                             {cookie.value.length > 40
                                               ? cookie.value.slice(0, 40) + '...'
@@ -534,11 +739,31 @@
                                       <td class="cell-domain">{cookie.domain}</td>
                                       <td class="cell-action">
                                         <button
+                                          class="icon-btn xs"
+                                          onclick={() =>
+                                            (editingCookie = {
+                                              sessionId: session.id,
+                                              origin: detail.origin,
+                                              name: cookie.name,
+                                              domain: cookie.domain,
+                                              value: cookie.value,
+                                            })}
+                                          title="Edit value"
+                                          aria-label="Edit cookie {cookie.name}"
+                                        >
+                                          <Icon name="edit-2" size={10} />
+                                        </button>
+                                        <button
                                           class="icon-btn danger xs"
                                           onclick={() =>
-                                            handleDeleteCookie(session.id, detail.origin, cookie.name, cookie.domain)}
+                                            handleDeleteCookie(
+                                              session.id,
+                                              detail.origin,
+                                              cookie.name,
+                                              cookie.domain,
+                                            )}
                                           title="Delete cookie"
-                                          aria-label="Delete cookie"
+                                          aria-label="Delete cookie {cookie.name}"
                                         >
                                           <Icon name="x" size={10} />
                                         </button>
@@ -553,7 +778,9 @@
                           <!-- localStorage -->
                           {#if Object.keys(detail.localStorage).length > 0}
                             <details class="data-section">
-                              <summary>localStorage ({Object.keys(detail.localStorage).length})</summary>
+                              <summary
+                                >localStorage ({Object.keys(detail.localStorage).length})</summary
+                              >
                               <table class="data-table">
                                 <thead><tr><th>Key</th><th>Value</th><th></th></tr></thead>
                                 <tbody>
@@ -561,24 +788,41 @@
                                     <tr>
                                       <td class="cell-name" title={key}>{key}</td>
                                       <td class="cell-value">
-                                        {#if editingStorage?.key === key && editingStorage?.type === 'localStorage' && editingStorage?.origin === detail.origin}
+                                        {#if editingStorage?.sessionId === session.id && editingStorage?.key === key && editingStorage?.type === 'localStorage' && editingStorage?.origin === detail.origin}
                                           <div class="edit-row">
                                             <input
                                               class="edit-input"
                                               type="text"
                                               bind:value={editingStorage.value}
-                                              onkeydown={(e) => e.key === 'Enter' && handleSaveStorage()}
+                                              onkeydown={(e) =>
+                                                e.key === 'Enter' && handleSaveStorage()}
                                             />
-                                            <button class="save-btn" onclick={handleSaveStorage} aria-label="Save"><Icon name="check" size={10} /></button>
-                                            <button class="cancel-btn" onclick={() => (editingStorage = null)} aria-label="Cancel"><Icon name="x" size={10} /></button>
+                                            <button
+                                              class="save-btn"
+                                              onclick={handleSaveStorage}
+                                              aria-label="Save"
+                                              ><Icon name="check" size={10} /></button
+                                            >
+                                            <button
+                                              class="cancel-btn"
+                                              onclick={() => (editingStorage = null)}
+                                              aria-label="Cancel"
+                                              ><Icon name="x" size={10} /></button
+                                            >
                                           </div>
                                         {:else}
                                           <!-- svelte-ignore a11y_no_static_element_interactions -->
                                           <span
                                             class="editable"
                                             ondblclick={() =>
-                                              (editingStorage = { sessionId: session.id, origin: detail.origin, type: 'localStorage', key, value })}
-                                            title="Double-click to edit"
+                                              (editingStorage = {
+                                                sessionId: session.id,
+                                                origin: detail.origin,
+                                                type: 'localStorage',
+                                                key,
+                                                value,
+                                              })}
+                                            title="Double-click, or use the pencil, to edit"
                                           >
                                             {value.length > 40 ? value.slice(0, 40) + '...' : value}
                                           </span>
@@ -586,10 +830,31 @@
                                       </td>
                                       <td class="cell-action">
                                         <button
+                                          class="icon-btn xs"
+                                          onclick={() =>
+                                            (editingStorage = {
+                                              sessionId: session.id,
+                                              origin: detail.origin,
+                                              type: 'localStorage',
+                                              key,
+                                              value,
+                                            })}
+                                          title="Edit value"
+                                          aria-label="Edit {key}"
+                                        >
+                                          <Icon name="edit-2" size={10} />
+                                        </button>
+                                        <button
                                           class="icon-btn danger xs"
-                                          onclick={() => handleDeleteStorage(session.id, detail.origin, 'localStorage', key)}
+                                          onclick={() =>
+                                            handleDeleteStorage(
+                                              session.id,
+                                              detail.origin,
+                                              'localStorage',
+                                              key,
+                                            )}
                                           title="Delete entry"
-                                          aria-label="Delete entry"
+                                          aria-label="Delete {key}"
                                         >
                                           <Icon name="x" size={10} />
                                         </button>
@@ -604,7 +869,10 @@
                           <!-- sessionStorage -->
                           {#if Object.keys(detail.sessionStorage).length > 0}
                             <details class="data-section">
-                              <summary>sessionStorage ({Object.keys(detail.sessionStorage).length})</summary>
+                              <summary
+                                >sessionStorage ({Object.keys(detail.sessionStorage)
+                                  .length})</summary
+                              >
                               <table class="data-table">
                                 <thead><tr><th>Key</th><th>Value</th><th></th></tr></thead>
                                 <tbody>
@@ -612,24 +880,41 @@
                                     <tr>
                                       <td class="cell-name" title={key}>{key}</td>
                                       <td class="cell-value">
-                                        {#if editingStorage?.key === key && editingStorage?.type === 'sessionStorage' && editingStorage?.origin === detail.origin}
+                                        {#if editingStorage?.sessionId === session.id && editingStorage?.key === key && editingStorage?.type === 'sessionStorage' && editingStorage?.origin === detail.origin}
                                           <div class="edit-row">
                                             <input
                                               class="edit-input"
                                               type="text"
                                               bind:value={editingStorage.value}
-                                              onkeydown={(e) => e.key === 'Enter' && handleSaveStorage()}
+                                              onkeydown={(e) =>
+                                                e.key === 'Enter' && handleSaveStorage()}
                                             />
-                                            <button class="save-btn" onclick={handleSaveStorage} aria-label="Save"><Icon name="check" size={10} /></button>
-                                            <button class="cancel-btn" onclick={() => (editingStorage = null)} aria-label="Cancel"><Icon name="x" size={10} /></button>
+                                            <button
+                                              class="save-btn"
+                                              onclick={handleSaveStorage}
+                                              aria-label="Save"
+                                              ><Icon name="check" size={10} /></button
+                                            >
+                                            <button
+                                              class="cancel-btn"
+                                              onclick={() => (editingStorage = null)}
+                                              aria-label="Cancel"
+                                              ><Icon name="x" size={10} /></button
+                                            >
                                           </div>
                                         {:else}
                                           <!-- svelte-ignore a11y_no_static_element_interactions -->
                                           <span
                                             class="editable"
                                             ondblclick={() =>
-                                              (editingStorage = { sessionId: session.id, origin: detail.origin, type: 'sessionStorage', key, value })}
-                                            title="Double-click to edit"
+                                              (editingStorage = {
+                                                sessionId: session.id,
+                                                origin: detail.origin,
+                                                type: 'sessionStorage',
+                                                key,
+                                                value,
+                                              })}
+                                            title="Double-click, or use the pencil, to edit"
                                           >
                                             {value.length > 40 ? value.slice(0, 40) + '...' : value}
                                           </span>
@@ -637,10 +922,31 @@
                                       </td>
                                       <td class="cell-action">
                                         <button
+                                          class="icon-btn xs"
+                                          onclick={() =>
+                                            (editingStorage = {
+                                              sessionId: session.id,
+                                              origin: detail.origin,
+                                              type: 'sessionStorage',
+                                              key,
+                                              value,
+                                            })}
+                                          title="Edit value"
+                                          aria-label="Edit {key}"
+                                        >
+                                          <Icon name="edit-2" size={10} />
+                                        </button>
+                                        <button
                                           class="icon-btn danger xs"
-                                          onclick={() => handleDeleteStorage(session.id, detail.origin, 'sessionStorage', key)}
+                                          onclick={() =>
+                                            handleDeleteStorage(
+                                              session.id,
+                                              detail.origin,
+                                              'sessionStorage',
+                                              key,
+                                            )}
                                           title="Delete entry"
-                                          aria-label="Delete entry"
+                                          aria-label="Delete {key}"
                                         >
                                           <Icon name="x" size={10} />
                                         </button>
@@ -665,10 +971,36 @@
   {/if}
 </div>
 
+{#if showCreate}
+  <div class="modal-backdrop" onclick={() => !creating && (showCreate = false)} role="presentation">
+    <div
+      class="modal"
+      role="dialog"
+      tabindex="-1"
+      aria-modal="true"
+      aria-label="New session"
+      onclick={(e) => e.stopPropagation()}
+      onkeydown={(e) => e.key === 'Escape' && !creating && (showCreate = false)}
+    >
+      <SessionForm
+        oncreate={handleCreate}
+        oncancel={() => (showCreate = false)}
+        existingNames={sessions.map((session) => session.name)}
+        dismissStyle="close"
+      />
+    </div>
+  </div>
+{/if}
+
+{#if toastData}
+  <Toast message={toastData.message} type={toastData.type} ondismiss={() => (toastData = null)} />
+{/if}
+
 {#if confirmData}
   <ConfirmDialog
-    title="Delete Session"
-    message={'Delete "' + confirmData.session.name + '"? All data will be permanently removed.'}
+    title="Delete session"
+    message={'Delete “' + confirmData.session.name + '”?'}
+    detail="Its saved cookies and storage for every site are removed permanently. This cannot be undone from here."
     confirmLabel="Delete"
     danger={true}
     onconfirm={() => confirmData && executeDelete(confirmData.session.id)}
@@ -677,8 +1009,9 @@
 {/if}
 {#if originConfirm}
   <ConfirmDialog
-    title="Delete Origin Data"
-    message={'Delete all saved data for ' + originConfirm.origin + '?'}
+    title="Delete site data"
+    message={'Delete this session’s saved data for ' + originConfirm.origin + '?'}
+    detail="The session itself and its data for other sites are kept."
     confirmLabel="Delete"
     danger={true}
     onconfirm={() =>
@@ -700,6 +1033,7 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--space-4);
+    flex-wrap: wrap;
   }
 
   .header-left {
@@ -910,7 +1244,7 @@
 
   .session-row {
     display: grid;
-    grid-template-columns: 36px 1fr 85px 70px;
+    grid-template-columns: 36px 1fr 112px 70px;
     align-items: center;
     padding: var(--space-4) var(--space-5);
     gap: var(--space-3);
@@ -947,24 +1281,55 @@
     position: absolute;
     top: -8px;
     left: 28px;
-    z-index: 10;
+    z-index: var(--z-popover);
     background: var(--color-bg-elevated);
     border: 1px solid var(--color-border-primary);
     border-radius: var(--radius-xl);
-    padding: var(--space-4);
+    padding: var(--space-5);
     box-shadow: var(--shadow-lg);
     display: flex;
-    align-items: center;
-    gap: var(--space-3);
+    flex-direction: column;
+    gap: var(--space-4);
+    width: max-content;
   }
 
-  .color-done {
-    background: none;
-    border: none;
-    color: var(--color-success);
-    cursor: pointer;
-    padding: var(--space-1);
+  .popover-field {
     display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .popover-label {
+    font-size: var(--text-2xs);
+    font-weight: var(--font-semibold);
+    color: var(--color-text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+
+  .popover-done {
+    align-self: flex-end;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-4);
+    background: var(--color-bg-tertiary);
+    border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-md);
+    color: var(--color-text-secondary);
+    font-family: var(--font-sans);
+    font-size: var(--text-xs);
+    font-weight: var(--font-medium);
+    cursor: pointer;
+  }
+
+  .popover-done:hover {
+    background: var(--color-interactive-hover);
+  }
+
+  .popover-done:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
   }
 
   .name-cell {
@@ -985,6 +1350,9 @@
   .meta-cell {
     font-size: var(--text-xs);
     color: var(--color-text-tertiary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .actions-cell {
@@ -1020,6 +1388,7 @@
 
   .icon-btn.xs {
     padding: 0;
+    display: inline-flex;
   }
 
   .auto-refresh-btn {
@@ -1109,6 +1478,46 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
+  }
+
+  .undo-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--color-border-secondary);
+    border-radius: var(--radius-md);
+    background: var(--color-bg-secondary);
+    font-size: var(--text-xs);
+    color: var(--color-text-secondary);
+  }
+
+  .undo-text {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .undo-btn {
+    flex-shrink: 0;
+    padding: var(--space-1) var(--space-3);
+    border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-md);
+    background: var(--color-bg-primary);
+    color: var(--color-text-primary);
+    font-size: var(--text-xs);
+    font-weight: var(--font-medium);
+    cursor: pointer;
+  }
+
+  .undo-btn:hover:not(:disabled) {
+    border-color: var(--color-accent);
+    color: var(--color-accent);
+  }
+
+  .undo-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
   }
 
   .origin-header {
@@ -1217,8 +1626,9 @@
   }
 
   .cell-action {
-    width: 28px;
-    text-align: center;
+    width: 52px;
+    white-space: nowrap;
+    text-align: right;
   }
 
   /* Inline editing */
@@ -1275,5 +1685,113 @@
 
   .cancel-btn:hover {
     background: var(--color-interactive-hover);
+  }
+
+  .new-session-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-5);
+    background: var(--color-accent);
+    border: 1px solid var(--color-accent);
+    border-radius: var(--radius-lg);
+    font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    font-weight: var(--font-semibold);
+    color: var(--color-on-accent);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .new-session-btn:hover {
+    background: var(--color-accent-hover);
+    border-color: var(--color-accent-hover);
+  }
+
+  .new-session-btn:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
+  }
+
+  .search-count {
+    font-size: var(--text-2xs);
+    color: var(--color-text-tertiary);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .empty-action {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-5);
+    background: var(--color-bg-primary);
+    border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-lg);
+    font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+    color: var(--color-text-primary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .empty-action:hover {
+    background: var(--color-interactive-hover);
+    border-color: var(--color-accent-muted);
+  }
+
+  .empty-action:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
+  }
+
+  .name-display {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+
+  /* Revealed on hover or keyboard focus — never hidden from keyboard users. */
+  .rename-btn {
+    opacity: 0;
+    transition: opacity var(--transition-fast);
+  }
+
+  .session-row:hover .rename-btn,
+  .rename-btn:focus-visible {
+    opacity: 1;
+  }
+
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: var(--color-bg-overlay);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-6);
+    z-index: var(--z-modal);
+    backdrop-filter: blur(2px);
+    animation: fadeIn var(--transition-fast) ease;
+    overflow-y: auto;
+  }
+
+  .modal {
+    background: var(--color-bg-elevated);
+    border: 1px solid var(--color-border-primary);
+    border-radius: var(--radius-2xl);
+    padding: var(--space-7);
+    width: 100%;
+    max-width: 420px;
+    box-shadow: var(--shadow-xl);
+    animation: scaleIn var(--transition-fast) ease;
+  }
+
+  .modal:focus {
+    outline: none;
   }
 </style>

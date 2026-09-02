@@ -4,6 +4,7 @@ import { getLocal, setLocal } from '@shared/storage';
 import { generateId, now } from '@shared/utils';
 import { cookieStore } from './cookie-store';
 import { storageStore } from './storage-store';
+import { snapshotUndo } from './snapshot-undo';
 
 let sessions: Map<string, SessionProfile> = new Map();
 let hydratePromise: Promise<void> | null = null;
@@ -81,6 +82,8 @@ export async function deleteSession(sessionId: string): Promise<void> {
   await removeSessionFromOrder(sessionId);
   await cookieStore.deleteForSession(sessionId);
   await storageStore.deleteForSession(sessionId);
+  // The undo slot is scoped to a session that no longer exists.
+  await snapshotUndo.deleteForSession(sessionId);
 }
 
 export async function listSessions(): Promise<SessionProfile[]> {
@@ -202,6 +205,7 @@ export async function deleteAllSessions(
     ids.map(async (id) => {
       await cookieStore.deleteForSession(id);
       await storageStore.deleteForSession(id);
+      await snapshotUndo.deleteForSession(id);
     }),
   );
 

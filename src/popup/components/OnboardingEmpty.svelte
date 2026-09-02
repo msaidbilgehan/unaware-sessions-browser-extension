@@ -13,23 +13,23 @@
     <Icon name="shield" size={28} />
   </div>
 
-  <h3>Private Browsing Sessions</h3>
-  <p class="subtitle">Keep your accounts separate in one browser.</p>
+  <h3>Keep your accounts apart</h3>
+  <p class="subtitle">Several signed-in identities on the same site, in one browser window.</p>
 
   <div class="steps">
     <div class="step">
       <span class="step-number">1</span>
-      <span class="step-text">Create a session</span>
+      <span class="step-text">Create a session for one account</span>
     </div>
     <div class="step-connector"></div>
     <div class="step">
       <span class="step-number">2</span>
-      <span class="step-text">Visit a website</span>
+      <span class="step-text">Sign in as usual — it saves automatically</span>
     </div>
     <div class="step-connector"></div>
     <div class="step">
       <span class="step-number">3</span>
-      <span class="step-text">Switch to keep data separate</span>
+      <span class="step-text">Switch sessions to swap accounts instantly</span>
     </div>
   </div>
 

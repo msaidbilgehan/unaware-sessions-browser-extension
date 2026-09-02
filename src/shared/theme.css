@@ -12,7 +12,7 @@
   /* Colors — Text */
   --color-text-primary: #0f172a;
   --color-text-secondary: #475569;
-  --color-text-tertiary: #94a3b8;
+  --color-text-tertiary: #5f6b7a;
   --color-text-inverse: #ffffff;
   --color-text-accent: #2563eb;
 
@@ -36,7 +36,16 @@
   --color-success: #10b981;
   --color-success-soft: #ecfdf5;
   --color-warning: #f59e0b;
+  --color-warning-hover: #d97706;
   --color-warning-soft: #fffbeb;
+  --color-warning-border: #fcd34d;
+
+  /* Colors — Foreground on solid fills.
+     Amber is too light for white text in either theme (≈2:1), so warning
+     surfaces get a dark foreground in both. */
+  --color-on-accent: #ffffff;
+  --color-on-error: #ffffff;
+  --color-on-warning: #422006;
 
   /* Colors — Interactive */
   --color-interactive-hover: #f1f5f9;
@@ -109,6 +118,20 @@
   --transition-normal: 0.2s ease;
   --transition-smooth: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   --transition-spring: 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* Layering — every fixed/absolute overlay picks a name from this scale so
+     stacking order is decided in one place instead of per component. */
+  --z-sticky: 100;
+  --z-popover: 400;
+  --z-menu: 500;
+  --z-modal: 700;
+  --z-toast: 800;
+
+  /* Minimum comfortable hit area for icon-only controls. */
+  --tap-target: 28px;
+
+  /* Popup surface */
+  --popup-width: 380px;
 }
 
 /* ── Dark Theme ──────────────────────────────────────────────────── */
@@ -123,7 +146,7 @@
 
   --color-text-primary: #f0f0f3;
   --color-text-secondary: #a1a1aa;
-  --color-text-tertiary: #63636e;
+  --color-text-tertiary: #8e8e99;
   --color-text-inverse: #0f0f12;
   --color-text-accent: #93c5fd;
 
@@ -144,7 +167,13 @@
   --color-success: #34d399;
   --color-success-soft: rgba(16, 185, 129, 0.18);
   --color-warning: #fbbf24;
+  --color-warning-hover: #f59e0b;
   --color-warning-soft: rgba(251, 191, 36, 0.18);
+  --color-warning-border: rgba(251, 191, 36, 0.35);
+
+  --color-on-accent: #0b1220;
+  --color-on-error: #2a0a0a;
+  --color-on-warning: #422006;
 
   --color-interactive-hover: #25252b;
   --color-interactive-active: #2e2e36;
@@ -175,7 +204,7 @@
 
     --color-text-primary: #f0f0f3;
     --color-text-secondary: #a1a1aa;
-    --color-text-tertiary: #63636e;
+    --color-text-tertiary: #8e8e99;
     --color-text-inverse: #0f0f12;
     --color-text-accent: #93c5fd;
 
@@ -196,7 +225,13 @@
     --color-success: #34d399;
     --color-success-soft: rgba(16, 185, 129, 0.18);
     --color-warning: #fbbf24;
+    --color-warning-hover: #f59e0b;
     --color-warning-soft: rgba(251, 191, 36, 0.18);
+    --color-warning-border: rgba(251, 191, 36, 0.35);
+
+    --color-on-accent: #0b1220;
+    --color-on-error: #2a0a0a;
+    --color-on-warning: #422006;
 
     --color-interactive-hover: #25252b;
     --color-interactive-active: #2e2e36;
@@ -221,6 +256,8 @@
   :root {
     --transition-fast: 0s;
     --transition-normal: 0s;
+    --transition-smooth: 0s;
+    --transition-spring: 0s;
   }
 
   *,
@@ -265,28 +302,62 @@
 /* ── Animations ─────────────────────────────────────────────────── */
 
 @keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 @keyframes slideUp {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
 }
 
 @keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 /* ── Global Reset ────────────────────────────────────────────────── */
@@ -365,4 +436,18 @@ body {
 
 .slide-up {
   animation: slideUp var(--transition-smooth) ease forwards;
+}
+
+/* Text that only assistive technology should reach (status announcements,
+   labels for icon-only controls that already carry a visible glyph). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }

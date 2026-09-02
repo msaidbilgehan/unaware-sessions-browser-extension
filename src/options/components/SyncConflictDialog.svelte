@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import type { ConflictEntry } from '@shared/sync/sync-types';
   import Icon from '@shared/components/Icon.svelte';
 
@@ -10,7 +11,9 @@
 
   let { conflicts, onresolve, oncancel }: Props = $props();
 
-  let entries = $state<ConflictEntry[]>(conflicts.map((c) => ({ ...c })));
+  // Snapshot on open: the dialog is remounted per conflict set, and a remote
+  // change arriving mid-review must not silently rewrite the choices on screen.
+  let entries = $state<ConflictEntry[]>(untrack(() => conflicts.map((c) => ({ ...c }))));
 
   function setResolution(index: number, resolution: 'local' | 'cloud') {
     entries[index] = { ...entries[index], resolution };
@@ -24,7 +27,16 @@
     entries = entries.map((e) => ({ ...e, resolution: 'cloud' }));
   }
 
-  const allResolved = $derived(entries.every((e) => e.resolution !== null));
+  const resolvedCount = $derived(entries.filter((e) => e.resolution !== null).length);
+  const allResolved = $derived(resolvedCount === entries.length);
+
+  let dialogRef = $state<HTMLDivElement | undefined>(undefined);
+
+  $effect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    dialogRef?.focus();
+    return () => opener?.focus?.();
+  });
 
   function handleApply() {
     if (allResolved) {
@@ -36,6 +48,13 @@
     if (!ts) return 'unknown';
     return new Date(ts).toLocaleString();
   }
+
+  /** Which side changed more recently — the single most useful cue for choosing. */
+  function newerSide(entry: ConflictEntry): 'local' | 'cloud' | null {
+    if (!entry.localTimestamp || !entry.cloudTimestamp) return null;
+    if (entry.localTimestamp === entry.cloudTimestamp) return null;
+    return entry.localTimestamp > entry.cloudTimestamp ? 'local' : 'cloud';
+  }
 </script>
 
 <div class="backdrop" role="presentation" onclick={oncancel}>
@@ -44,33 +63,41 @@
     role="dialog"
     aria-modal="true"
     aria-labelledby="conflict-title"
+    bind:this={dialogRef}
     tabindex="-1"
     onclick={(e) => e.stopPropagation()}
-    onkeydown={(e) => { if (e.key === 'Escape') oncancel(); }}
+    onkeydown={(e) => {
+      if (e.key === 'Escape') oncancel();
+    }}
   >
-    <h2 id="conflict-title">Resolve Sync Conflicts</h2>
+    <h2 id="conflict-title">Resolve sync conflicts</h2>
     <p class="description">
-      These items differ between local and cloud. Choose which version to keep.
+      These sites changed both on this device and in the cloud since the last sync. Pick the copy to
+      keep for each — the other is discarded. Auto-sync stays paused until all are resolved.
     </p>
 
     <div class="bulk-actions">
-      <button class="bulk-btn" onclick={setAllLocal}>
-        All Local
-      </button>
-      <button class="bulk-btn" onclick={setAllCloud}>
-        All Cloud
-      </button>
+      <button class="bulk-btn" onclick={setAllLocal}>Keep all local</button>
+      <button class="bulk-btn" onclick={setAllCloud}>Keep all cloud</button>
+      <span class="progress" aria-live="polite">{resolvedCount} of {entries.length} chosen</span>
     </div>
 
     <div class="conflict-list">
       {#each entries as entry, i (entry.sessionId + entry.origin)}
+        {@const newer = newerSide(entry)}
         <div class="conflict-row">
           <div class="conflict-info">
             <span class="conflict-session">{entry.sessionName}</span>
             <span class="conflict-origin">{entry.origin}</span>
             <div class="conflict-timestamps">
-              <span class="ts-label">Local: {formatTime(entry.localTimestamp)}</span>
-              <span class="ts-label">Cloud: {formatTime(entry.cloudTimestamp)}</span>
+              <span class="ts-label" class:newer={newer === 'local'}>
+                Local: {formatTime(entry.localTimestamp)}
+                {#if newer === 'local'}<span class="newer-tag">newer</span>{/if}
+              </span>
+              <span class="ts-label" class:newer={newer === 'cloud'}>
+                Cloud: {formatTime(entry.cloudTimestamp)}
+                {#if newer === 'cloud'}<span class="newer-tag">newer</span>{/if}
+              </span>
             </div>
           </div>
           <div class="resolution-toggle">
@@ -97,9 +124,16 @@
 
     <div class="dialog-actions">
       <button class="btn cancel" onclick={oncancel}>Cancel</button>
-      <button class="btn primary" onclick={handleApply} disabled={!allResolved}>
+      <button
+        class="btn primary"
+        onclick={handleApply}
+        disabled={!allResolved}
+        title={allResolved
+          ? 'Apply these choices and resume syncing'
+          : `Choose a copy for all ${entries.length} sites first`}
+      >
         <Icon name="check" size={14} />
-        Apply
+        Apply and resume sync
       </button>
     </div>
   </div>
@@ -109,11 +143,12 @@
   .backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.5);
+    background: var(--color-bg-overlay);
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 100;
+    z-index: var(--z-modal);
+    backdrop-filter: blur(2px);
   }
 
   .dialog {
@@ -300,5 +335,33 @@
   .btn:focus-visible {
     outline: none;
     box-shadow: var(--shadow-focus);
+  }
+
+  .progress {
+    margin-left: auto;
+    align-self: center;
+    font-size: var(--text-xs);
+    color: var(--color-text-tertiary);
+  }
+
+  .ts-label.newer {
+    color: var(--color-text-secondary);
+    font-weight: var(--font-medium);
+  }
+
+  .newer-tag {
+    margin-left: var(--space-2);
+    font-size: var(--text-2xs);
+    font-weight: var(--font-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    color: var(--color-accent);
+    background: var(--color-accent-soft);
+    border-radius: var(--radius-full);
+    padding: 0 var(--space-2);
+  }
+
+  .dialog:focus {
+    outline: none;
   }
 </style>

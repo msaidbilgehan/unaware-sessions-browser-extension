@@ -3,20 +3,23 @@
     SessionProfile,
     CookieDiffResult,
     RestoreFailureEntry,
+    StorageHealth,
     LogEntry,
   } from '@shared/types';
   import type { LogLevel } from '@shared/types';
   import {
     getCookieDiff,
     getRestoreFailures,
+    getStorageHealth,
     getExtensionLogs,
     clearExtensionLogs,
   } from '@shared/api';
   import {
-    getLogLevel,
-    setLogLevel,
-    onSettingsChange,
-  } from '@shared/settings-store';
+    getPersistenceState,
+    requestPersistentStorage,
+    type PersistenceState,
+  } from '@shared/persistent-storage';
+  import { getLogLevel, setLogLevel, onSettingsChange } from '@shared/settings-store';
   import Icon from '@shared/components/Icon.svelte';
   import Toast from '@shared/components/Toast.svelte';
 
@@ -86,6 +89,66 @@
   // Load failures on mount
   $effect(() => {
     loadFailures();
+  });
+
+  // ── Storage Health ────────────────────────────────────────────
+  //
+  // Snapshots live in extension IndexedDB (a quota-managed bucket Chrome can
+  // evict wholesale); session profiles live in chrome.storage.local (which it
+  // cannot). Profiles present with zero snapshot records is therefore not an
+  // empty extension — it is a wipe, and this card is where that is visible.
+  let health = $state<StorageHealth | null>(null);
+  let healthLoading = $state(false);
+  let persistence = $state<PersistenceState>('unsupported');
+  let requestingPersistence = $state(false);
+
+  async function loadHealth() {
+    healthLoading = true;
+    try {
+      const [next, state] = await Promise.all([getStorageHealth(), getPersistenceState()]);
+      health = next;
+      persistence = state;
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to read storage health', 'error');
+    } finally {
+      healthLoading = false;
+    }
+  }
+
+  async function handleRequestPersistence() {
+    requestingPersistence = true;
+    try {
+      persistence = await requestPersistentStorage();
+      showToast(
+        persistence === 'persisted'
+          ? 'Storage marked persistent — snapshots are exempt from eviction'
+          : 'Browser declined persistent storage',
+        persistence === 'persisted' ? 'success' : 'error',
+      );
+    } finally {
+      requestingPersistence = false;
+    }
+  }
+
+  const snapshotsMissing = $derived(
+    health != null && health.sessionProfiles > 0 && health.cookieRecords === 0,
+  );
+
+  function formatBytes(bytes: number | null): string {
+    if (bytes == null) return 'n/a';
+    if (bytes < 1024) return `${bytes} B`;
+    const units = ['KB', 'MB', 'GB'];
+    let value = bytes / 1024;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+      value /= 1024;
+      unit++;
+    }
+    return `${value.toFixed(1)} ${units[unit]}`;
+  }
+
+  $effect(() => {
+    loadHealth();
   });
 
   const filteredEntries = $derived(
@@ -213,6 +276,125 @@
 </script>
 
 <div class="debug-layout">
+  <!-- Storage Health -->
+  <section class="card">
+    <div class="card-header">
+      <div class="card-icon" class:card-icon-error={snapshotsMissing}>
+        <Icon name={snapshotsMissing ? 'alert-triangle' : 'database'} size={16} />
+      </div>
+      <div>
+        <h2>Storage Health</h2>
+        <p class="description">
+          Snapshots are stored in extension IndexedDB, which the browser can evict under storage
+          pressure; session profiles are stored separately and survive that. Zero snapshot records
+          with existing profiles means the snapshot databases were wiped, not that they were never
+          written.
+        </p>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick={loadHealth} disabled={healthLoading}>
+        <Icon name="refresh-cw" size={14} />
+        Refresh
+      </button>
+    </div>
+
+    {#if healthLoading && !health}
+      <div class="loading-inline">
+        <span class="spinner"></span>
+        Loading...
+      </div>
+    {:else if health}
+      {#if snapshotsMissing}
+        <div class="health-alert">
+          <Icon name="alert-triangle" size={16} />
+          <span>
+            {health.sessionProfiles} session profile(s) exist but no cookie snapshots are stored. Switching
+            sessions on a domain will silently adopt whatever cookies are live instead of restoring saved
+            ones. Restore from Cloud Sync (merge strategy "Trust cloud") or a Full Export file before
+            switching sessions.
+          </span>
+        </div>
+      {/if}
+
+      <div class="summary-bar">
+        <div class="summary-meta">
+          <span class="meta-item">
+            Cookie snapshots: <strong>{health.cookieRecords}</strong>
+          </span>
+          <span class="meta-item">
+            Storage snapshots: <strong>{health.storageRecords}</strong>
+          </span>
+          <span class="meta-item">
+            Session profiles: <strong>{health.sessionProfiles}</strong>
+          </span>
+          <span class="meta-item" title="Recoverable snapshots whose live copy went empty">
+            Undo slots: <strong>{health.undoRecords}</strong>
+          </span>
+          <span class="meta-item">
+            Used: <strong>{formatBytes(health.usageBytes)}</strong>
+            {#if health.quotaBytes != null}
+              of <strong>{formatBytes(health.quotaBytes)}</strong>
+            {/if}
+          </span>
+          <span class="meta-item" class:meta-warning={persistence === 'not-persisted'}>
+            Eviction protection:
+            <strong>
+              {persistence === 'persisted'
+                ? 'on'
+                : persistence === 'not-persisted'
+                  ? 'off'
+                  : 'unknown'}
+            </strong>
+          </span>
+          {#if persistence === 'not-persisted'}
+            <button
+              class="btn btn-ghost btn-sm"
+              onclick={handleRequestPersistence}
+              disabled={requestingPersistence}
+            >
+              Enable
+            </button>
+          {/if}
+        </div>
+      </div>
+
+      {#if health.writeErrors.length > 0}
+        <div class="table-wrapper">
+          <table class="diff-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Operation</th>
+                <th>Session</th>
+                <th>Origin</th>
+                <th>Reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each [...health.writeErrors].reverse() as writeError}
+                <tr>
+                  <td class="cell-time">{formatTimestamp(writeError.timestamp)}</td>
+                  <td class="cell-name">
+                    {writeError.operation}
+                    {#if writeError.quotaExceeded}
+                      <span class="chip chip-error">quota</span>
+                    {/if}
+                  </td>
+                  <td class="cell-name" title={writeError.sessionId}>
+                    {getSessionName(writeError.sessionId)}
+                  </td>
+                  <td class="cell-domain" title={writeError.origin}>
+                    {truncate(writeError.origin, 30)}
+                  </td>
+                  <td class="cell-reason" title={writeError.reason}>{writeError.reason}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {/if}
+    {/if}
+  </section>
+
   <!-- Cookie Diff Tool -->
   <section class="card">
     <div class="card-header">
@@ -424,7 +606,9 @@
       <div>
         <h2>Extension Logs</h2>
         <p class="description">
-          Internal extension events recorded by the logger. Logs are kept in memory and cleared on extension restart.
+          Internal extension events recorded by the logger. The most recent entries are persisted,
+          so they survive a service worker restart. Errors are always recorded, even when the log
+          level is Off.
         </p>
       </div>
       <div class="header-actions">
@@ -747,6 +931,21 @@
     margin-left: auto;
   }
 
+  /* Storage health */
+  .health-alert {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-3);
+    padding: var(--space-4) var(--space-5);
+    margin-bottom: var(--space-4);
+    border: 1px solid var(--color-error);
+    border-radius: var(--radius-lg);
+    background: var(--color-error-soft);
+    color: var(--color-error);
+    font-size: var(--text-sm);
+    line-height: 1.5;
+  }
+
   /* Summary */
   .summary-bar {
     display: flex;
@@ -975,12 +1174,6 @@
     border-top-color: var(--color-accent);
     border-radius: var(--radius-full);
     animation: spin 0.7s linear infinite;
-  }
-
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
   }
 
   /* ── Extension Logs ─────────────────────────────────────────── */

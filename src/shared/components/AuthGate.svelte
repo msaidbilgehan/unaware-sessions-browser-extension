@@ -68,7 +68,9 @@
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
       e.preventDefault();
+      e.stopPropagation();
       oncancel();
+      return;
     }
     if (e.key === 'Tab' && dialogRef) {
       const focusable = dialogRef.querySelectorAll<HTMLElement>(
@@ -219,7 +221,7 @@
   }
 </script>
 
-<div class="backdrop" onkeydown={handleKeydown} onclick={oncancel} role="presentation">
+<div class="backdrop" onclick={oncancel} role="presentation">
   <div
     class="dialog"
     role="alertdialog"
@@ -229,14 +231,14 @@
     bind:this={dialogRef}
     tabindex="-1"
     onclick={(e) => e.stopPropagation()}
-    onkeydown={(e) => e.stopPropagation()}
+    onkeydown={handleKeydown}
   >
     <div class="header">
       <div class="lock-icon">
         <Icon name="lock" size={20} />
       </div>
-      <h3 id="auth-title">Authentication Required</h3>
-      <p id="auth-desc">Verify your identity to continue</p>
+      <h3 id="auth-title">Unlock Unaware Sessions</h3>
+      <p id="auth-desc">Confirm it is you before continuing.</p>
     </div>
 
     {#if showPasscode}
@@ -245,13 +247,14 @@
           {#each digits as _, i}
             <input
               bind:this={inputRefs[i]}
-              type="tel"
+              type="password"
               inputmode="numeric"
               maxlength="1"
               autocomplete="off"
               class="pin-digit"
               class:filled={digits[i].length > 0}
               class:error={!!error}
+              aria-invalid={!!error}
               disabled={verifying || isCoolingDown()}
               oninput={(e) => handleDigitInput(i, e)}
               onkeydown={(e) => handleDigitKeydown(i, e)}
@@ -278,13 +281,9 @@
     {/if}
 
     {#if showBiometric}
-      <button
-        class="biometric-btn"
-        onclick={handleBiometric}
-        disabled={verifying}
-      >
+      <button class="biometric-btn" onclick={handleBiometric} disabled={verifying}>
         <Icon name="fingerprint" size={18} />
-        Use Biometric
+        Use biometric
       </button>
     {/if}
 
@@ -292,7 +291,7 @@
       <button class="cancel-btn" onclick={oncancel}>Cancel</button>
       {#if showPasscode}
         <button class="forgot-btn" onclick={() => (showResetConfirm = true)}>
-          Forgot Passcode?
+          Forgot passcode?
         </button>
       {/if}
     </div>
@@ -301,8 +300,9 @@
 
 {#if showResetConfirm}
   <ConfirmDialog
-    title="Reset Security"
-    message="This will disable passcode and biometric authentication. Your session data will not be affected."
+    title="Reset security"
+    message="Turn off the passcode and biometric unlock?"
+    detail="Your sessions, cookies and storage are untouched — only the lock is removed. Set a new passcode from Settings whenever you like."
     confirmLabel="Reset"
     danger={true}
     onconfirm={handleResetConfirm}
@@ -318,7 +318,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 1000;
+    z-index: var(--z-modal);
     backdrop-filter: blur(2px);
   }
 
@@ -387,7 +387,6 @@
     color: var(--color-text-primary);
     outline: none;
     transition: all var(--transition-fast);
-    -webkit-text-security: disc;
   }
 
   .pin-digit:focus {
@@ -413,11 +412,22 @@
   }
 
   @keyframes shake {
-    0%, 100% { transform: translateX(0); }
-    20% { transform: translateX(-6px); }
-    40% { transform: translateX(6px); }
-    60% { transform: translateX(-4px); }
-    80% { transform: translateX(4px); }
+    0%,
+    100% {
+      transform: translateX(0);
+    }
+    20% {
+      transform: translateX(-6px);
+    }
+    40% {
+      transform: translateX(6px);
+    }
+    60% {
+      transform: translateX(-4px);
+    }
+    80% {
+      transform: translateX(4px);
+    }
   }
 
   .error-text {

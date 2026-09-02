@@ -8,6 +8,7 @@ import type {
   CookieDiffResult,
   LiveCookieInfo,
   RestoreFailureEntry,
+  StorageHealth,
   FullExportData,
   CookieSnapshot,
   StorageSnapshot,
@@ -77,6 +78,16 @@ export function createSession(
 
 export function deleteSession(sessionId: string): Promise<void> {
   return sendMessage({ type: MessageType.DELETE_SESSION, sessionId });
+}
+
+/**
+ * Delete every session and its data in one round trip.
+ *
+ * Idempotent, so the connection-error retry in sendMessage is safe: a second
+ * run finds nothing left to delete.
+ */
+export function clearAllSessions(): Promise<{ deleted: number }> {
+  return sendMessage({ type: MessageType.CLEAR_ALL_SESSIONS });
 }
 
 export function listSessions(): Promise<SessionProfile[]> {
@@ -310,14 +321,22 @@ export async function importFull(data: FullExportData): Promise<{ imported: numb
     .filter((s) => created[s.sessionId] !== undefined)
     .map((s) => ({ ...s, sessionId: created[s.sessionId] }));
 
-  for (const batch of batchByBytes(cookies, estimateCookieSnapshotBytes, IMPORT_CHUNK_BUDGET_BYTES)) {
+  for (const batch of batchByBytes(
+    cookies,
+    estimateCookieSnapshotBytes,
+    IMPORT_CHUNK_BUDGET_BYTES,
+  )) {
     await sendMessage({
       type: MessageType.IMPORT_FULL_CHUNK,
       cookieSnapshots: batch,
       storageSnapshots: [],
     });
   }
-  for (const batch of batchByBytes(storage, estimateStorageSnapshotBytes, IMPORT_CHUNK_BUDGET_BYTES)) {
+  for (const batch of batchByBytes(
+    storage,
+    estimateStorageSnapshotBytes,
+    IMPORT_CHUNK_BUDGET_BYTES,
+  )) {
     await sendMessage({
       type: MessageType.IMPORT_FULL_CHUNK,
       cookieSnapshots: [],
@@ -341,6 +360,18 @@ export function getCookieDiff(sessionId: string, origin: string): Promise<Cookie
 
 export function getRestoreFailures(): Promise<RestoreFailureEntry[]> {
   return sendMessage({ type: MessageType.GET_RESTORE_FAILURES });
+}
+
+/** Move an origin's undo slot back into its live snapshot (see snapshot-undo). */
+export function restorePreviousSnapshot(
+  sessionId: string,
+  origin: string,
+): Promise<{ cookiesRestored: number; storageRestored: boolean }> {
+  return sendMessage({ type: MessageType.RESTORE_PREVIOUS_SNAPSHOT, sessionId, origin });
+}
+
+export function getStorageHealth(): Promise<StorageHealth> {
+  return sendMessage({ type: MessageType.GET_STORAGE_HEALTH });
 }
 
 // ── Logging API ─────────────────────────────────────────────────

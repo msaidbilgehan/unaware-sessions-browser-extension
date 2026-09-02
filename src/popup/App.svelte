@@ -17,11 +17,7 @@
     onDomainIsolationChange,
   } from '@shared/settings-store';
   import { STORAGE_KEYS } from '@shared/constants';
-  import {
-    initSyncStore,
-    getSyncConfig,
-    onSyncConfigChange,
-  } from '@shared/sync/sync-store';
+  import { initSyncStore, getSyncConfig, onSyncConfigChange } from '@shared/sync/sync-store';
   import {
     listSessions,
     createSession,
@@ -40,7 +36,9 @@
     clearOriginData,
     detectSession,
   } from '@shared/api';
+  import { tick } from 'svelte';
   import { fly } from 'svelte/transition';
+  import { SvelteSet } from 'svelte/reactivity';
   import Icon from '@shared/components/Icon.svelte';
   import ThemeToggle from '@shared/components/ThemeToggle.svelte';
   import AppLogo from '@shared/components/AppLogo.svelte';
@@ -49,12 +47,18 @@
   import { checkAuth } from '@shared/auth-check';
   import Toast from '@shared/components/Toast.svelte';
   import SessionList from './components/SessionList.svelte';
-  import NewSessionForm from './components/NewSessionForm.svelte';
+  import SessionForm from '@shared/components/SessionForm.svelte';
   import CurrentTabPanel from './components/CurrentTabPanel.svelte';
   import SearchBar from './components/SearchBar.svelte';
   import ContextMenu from './components/ContextMenu.svelte';
   import type { ContextMenuItem } from './components/ContextMenu.svelte';
-  import KeyboardOverlay from './components/KeyboardOverlay.svelte';
+  import ShortcutsOverlay from './components/ShortcutsOverlay.svelte';
+  import { groupSessions } from './session-grouping';
+
+  /** How long "Undo" stays available before a delete is committed. */
+  const UNDO_WINDOW_MS = 7000;
+  /** Below this, a search field is more clutter than help. */
+  const SEARCH_THRESHOLD = 6;
 
   // Primary data
   let sessions = $state<SessionProfile[]>([]);
@@ -70,21 +74,38 @@
   // UI state
   let loading = $state(true);
   let searchQuery = $state('');
-  let showKeyboardOverlay = $state(false);
+  let searchRevealed = $state(false);
+  let showShortcuts = $state(false);
   let editingSessionId = $state<string | null>(null);
   let switchingSessionId = $state<string | null>(null);
+  let searchBar = $state<ReturnType<typeof SearchBar> | undefined>(undefined);
 
   // Toast state
+  // Every toast needs a distinct identity. Toast owns its auto-dismiss deadline
+  // in an $effect that tracks only `held`, `ondismiss` and `duration` — all
+  // three are identical between two delete toasts (same stable dismissToast,
+  // same UNDO_WINDOW_MS), so replacing one with another would NOT re-arm the
+  // timer and the second toast would inherit the first's remaining time. Two
+  // deletes 6.5 s apart would leave the second 0.5 s of undo before it was
+  // committed. Keying the render on this counter remounts the component, which
+  // gives a fresh timer (and a fresh fly-in) even for an identical message.
+  let toastSeq = 0;
+
   let toastData = $state<{
+    id: number;
     message: string;
     type: 'error' | 'success' | 'info';
     action?: { label: string; onclick: () => void };
+    duration?: number;
+    /** Runs when the toast goes away by any route: timeout, close, or replacement. */
+    ondismiss?: () => void;
   } | null>(null);
 
   // Confirm dialog state
   let confirmData = $state<{
     title: string;
     message: string;
+    detail?: string;
     confirmLabel: string;
     danger: boolean;
     onconfirm: () => void;
@@ -114,13 +135,34 @@
     items: ContextMenuItem[];
   } | null>(null);
 
-  // Undo state
-  let deletedSession = $state<SessionProfile | null>(null);
-
   // Derived
   const currentOrigin = $derived(currentTab?.url ? extractOrigin(currentTab.url) : '');
+  const currentDomain = $derived(currentOrigin ? extractDomain(currentOrigin) : '');
   const currentSession = $derived(
     currentTabEntry ? sessions.find((s) => s.id === currentTabEntry!.sessionId) : undefined,
+  );
+  // chrome://, about: and extension pages have no cookie jar to isolate, so the
+  // panel says so rather than offering controls that quietly do nothing.
+  const tabSupported = $derived(isValidUrl(currentTab?.url ?? ''));
+
+  // Sessions awaiting an undoable delete are hidden from every view but still
+  // exist in the background until the window closes.
+  let pendingDeleteIds = new SvelteSet<string>();
+  const visibleSessions = $derived(sessions.filter((s) => !pendingDeleteIds.has(s.id)));
+
+  const grouping = $derived(
+    groupSessions({
+      sessions: visibleSessions,
+      sessionsWithOriginData,
+      sessionOriginMap,
+      currentOrigin,
+      activeSessionId: currentTabEntry?.sessionId,
+      searchQuery,
+    }),
+  );
+
+  const showSearch = $derived(
+    visibleSessions.length > SEARCH_THRESHOLD || searchRevealed || !!searchQuery,
   );
 
   // Full initial load with loading skeleton — called once on mount
@@ -157,6 +199,7 @@
       sessionOriginMap = allOrigins;
     } catch (err) {
       console.error('[Unaware Sessions] Failed to load state:', err);
+      showToast('Could not load sessions. Try reopening the popup.', 'error');
     } finally {
       loading = false;
     }
@@ -191,8 +234,25 @@
     message: string,
     type: 'error' | 'success' | 'info' = 'info',
     action?: { label: string; onclick: () => void },
+    duration?: number,
   ) {
-    toastData = { message, type, action };
+    // Replacing a toast retires it, so its deferred work has to run — otherwise
+    // an unrelated message appearing mid-countdown would strand a pending
+    // delete with no visible way left to undo or complete it.
+    const retired = toastData?.ondismiss;
+    toastData = { id: ++toastSeq, message, type, action, duration };
+    retired?.();
+  }
+
+  /** Clear the current toast, running whatever it deferred. */
+  function dismissToast() {
+    const pending = toastData?.ondismiss;
+    toastData = null;
+    pending?.();
+  }
+
+  function errorMessage(err: unknown, fallback: string): string {
+    return err instanceof Error && err.message ? err.message : fallback;
   }
 
   let creatingSession = false;
@@ -220,8 +280,9 @@
       }
 
       view = 'list';
+      showToast(`“${name}” created`, 'success');
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Failed to create session', 'error');
+      showToast(errorMessage(err, 'Failed to create session'), 'error');
     } finally {
       creatingSession = false;
     }
@@ -237,56 +298,113 @@
         currentTabEntry = { sessionId, origin: currentOrigin };
         sessions = await listSessions();
       } catch (err) {
-        showToast(err instanceof Error ? err.message : 'Failed to switch session', 'error');
+        showToast(errorMessage(err, 'Failed to switch session'), 'error');
       } finally {
         switchingSessionId = null;
       }
     });
   }
 
-  function handleDeleteRequest(sessionId: string) {
+  // ── Undoable delete ─────────────────────────────────────────────────
+  //
+  // Nothing is deleted while the toast is up: the session is only hidden, and
+  // its id is journalled so a popup that closes mid-countdown does not leave a
+  // session the user believes is gone. Undo therefore restores the real
+  // session — cookies, storage and id intact — rather than minting a lookalike.
+  let pendingDelete: { session: SessionProfile } | null = null;
+
+  async function readDeleteJournal(): Promise<string[]> {
+    try {
+      const stored = await chrome.storage.session.get(STORAGE_KEYS.PENDING_SESSION_DELETES);
+      const ids = stored[STORAGE_KEYS.PENDING_SESSION_DELETES];
+      return Array.isArray(ids) ? (ids as string[]) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async function writeDeleteJournal(ids: string[]): Promise<void> {
+    try {
+      await chrome.storage.session.set({ [STORAGE_KEYS.PENDING_SESSION_DELETES]: ids });
+    } catch {
+      // Journalling is a safety net; a failure here must not block the delete.
+    }
+  }
+
+  /** Finish any delete a previous popup started but never committed. */
+  async function flushOrphanedDeletes() {
+    const ids = await readDeleteJournal();
+    if (ids.length === 0) return;
+    await Promise.allSettled(ids.map((id) => deleteSessionApi(id)));
+    await writeDeleteJournal([]);
+    await updateSessionsQuietly();
+  }
+
+  function requestDelete(sessionId: string) {
     const session = sessions.find((s) => s.id === sessionId);
     if (!session) return;
     confirmData = {
-      title: 'Delete Session',
-      message: `Delete "${session.name}"? Cookie and storage data will be permanently removed.`,
+      title: 'Delete session',
+      message: `Delete “${session.name}”?`,
+      detail: 'Its saved cookies and storage go with it. You can undo for a few seconds.',
       confirmLabel: 'Delete',
       danger: true,
-      onconfirm: () => executeDelete(session),
+      onconfirm: () => {
+        confirmData = null;
+        void startDelete(session);
+      },
     };
   }
 
-  async function executeDelete(session: SessionProfile) {
+  async function startDelete(session: SessionProfile) {
     await withAuth(async () => {
-      confirmData = null;
-      try {
-        await deleteSessionApi(session.id);
-        sessions = sessions.filter((s) => s.id !== session.id);
-        if (currentTabEntry?.sessionId === session.id) {
-          currentTabEntry = undefined;
-        }
-        deletedSession = session;
-        showToast(`"${session.name}" deleted`, 'info', {
-          label: 'Undo',
-          onclick: handleUndoDelete,
-        });
-      } catch (err) {
-        showToast(err instanceof Error ? err.message : 'Failed to delete session', 'error');
-      }
+      await commitPendingDelete();
+
+      pendingDeleteIds.add(session.id);
+      if (currentTabEntry?.sessionId === session.id) currentTabEntry = undefined;
+      await writeDeleteJournal([...pendingDeleteIds]);
+      pendingDelete = { session };
+
+      // The toast owns the deadline. A separate timer would keep running while
+      // the toast is held open under the pointer, and the Undo button the user
+      // is reaching for would quietly stop working before they reached it.
+      toastData = {
+        id: ++toastSeq,
+        message: `“${session.name}” deleted`,
+        type: 'info',
+        duration: UNDO_WINDOW_MS,
+        action: { label: 'Undo', onclick: () => void undoDelete() },
+        ondismiss: () => void commitPendingDelete(),
+      };
     });
   }
 
-  async function handleUndoDelete() {
-    if (!deletedSession) return;
+  async function commitPendingDelete() {
+    const entry = pendingDelete;
+    if (!entry) return;
+    pendingDelete = null;
     try {
-      await createSession(deletedSession.name, deletedSession.color, deletedSession.emoji);
-      sessions = await listSessions();
-      deletedSession = null;
-      toastData = null;
-      showToast('Session restored', 'success');
-    } catch {
-      showToast('Failed to restore session', 'error');
+      await deleteSessionApi(entry.session.id);
+      sessions = sessions.filter((s) => s.id !== entry.session.id);
+    } catch (err) {
+      showToast(errorMessage(err, 'Failed to delete session'), 'error');
+    } finally {
+      // Either the session is gone or the delete failed and it must come back
+      // into view; both cases stop hiding it.
+      pendingDeleteIds.delete(entry.session.id);
+      await writeDeleteJournal([...pendingDeleteIds]);
     }
+  }
+
+  async function undoDelete() {
+    const entry = pendingDelete;
+    if (!entry) return;
+    pendingDelete = null;
+    pendingDeleteIds.delete(entry.session.id);
+    await writeDeleteJournal([...pendingDeleteIds]);
+    // pendingDelete is already cleared, so the outgoing toast's commit hook is
+    // a no-op — replacing it directly keeps the restore message immediate.
+    showToast(`“${entry.session.name}” restored`, 'success');
   }
 
   async function handleRename(sessionId: string, newName: string) {
@@ -295,17 +413,36 @@
       const updated = await updateSession(sessionId, { name: newName });
       sessions = sessions.map((s) => (s.id === sessionId ? updated : s));
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Failed to rename session', 'error');
+      showToast(errorMessage(err, 'Failed to rename session'), 'error');
     }
   }
 
-  async function handleUnassign() {
+  function handleDetach() {
+    if (!currentTab?.id || !currentTabEntry) {
+      // Already detached — nothing to clear, and reloading would be surprising.
+      return;
+    }
+    confirmData = {
+      title: 'Browse without a session',
+      message: `Detach this tab from “${currentSession?.name ?? 'the current session'}”?`,
+      detail:
+        'The session keeps its saved data. This site’s cookies are cleared here and the page reloads, so you will be signed out in this tab.',
+      confirmLabel: 'Detach',
+      danger: false,
+      onconfirm: () => {
+        confirmData = null;
+        void executeDetach();
+      },
+    };
+  }
+
+  async function executeDetach() {
     if (!currentTab?.id) return;
     try {
       await clearOriginData(currentTab.id);
       currentTabEntry = undefined;
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Failed to clear session', 'error');
+      showToast(errorMessage(err, 'Failed to detach this tab'), 'error');
     }
   }
 
@@ -318,38 +455,52 @@
         await saveSessionData(currentTab.id);
       }
 
-      // Refresh UI quietly — no loading skeleton
       await updateSessionsQuietly();
 
       // Auto-detect session if no mapping exists
+      let detected = false;
       if (!currentTabEntry && currentOrigin && currentTab?.id) {
         const detectedId = await detectSession(currentOrigin, currentTab.id);
         if (detectedId) {
           await assignTab(currentTab.id, detectedId, currentOrigin);
           currentTabEntry = { sessionId: detectedId, origin: currentOrigin };
+          detected = true;
         }
       }
 
-      showToast(currentTabEntry ? 'Session data updated' : 'Session detected', 'success');
+      if (currentTabEntry && !detected) showToast('Session data saved', 'success');
+      else if (detected) showToast(`Matched “${currentSession?.name ?? 'a session'}”`, 'success');
+      else showToast('No saved session matches this site yet', 'info');
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Failed to update', 'error');
+      showToast(errorMessage(err, 'Failed to save session data'), 'error');
     } finally {
       refreshing = false;
     }
   }
 
-  async function handleReorder(orderedIds: string[]) {
+  async function handleReorder(visibleOrder: string[]) {
+    const previous = sessions;
+    // The list only knows about visible rows, so anything hidden behind an undo
+    // toast has to be carried over — dropping it here would delete it from the
+    // local list and from the stored order, and Undo would restore nothing.
+    const seen = new Set(visibleOrder);
+    const orderedIds = [
+      ...visibleOrder,
+      ...sessions.filter((s) => !seen.has(s.id)).map((s) => s.id),
+    ];
+
+    sessions = orderedIds
+      .map((id) => previous.find((s) => s.id === id))
+      .filter((s): s is SessionProfile => s !== undefined);
     try {
       await reorderSessions(orderedIds);
-      sessions = orderedIds
-        .map((id) => sessions.find((s) => s.id === id))
-        .filter((s): s is SessionProfile => s !== undefined);
     } catch {
+      sessions = previous;
       showToast('Failed to reorder sessions', 'error');
     }
   }
 
-  function handleContextMenu(e: MouseEvent, sessionId: string) {
+  function openMenu(position: { x: number; y: number }, sessionId: string) {
     const session = sessions.find((s) => s.id === sessionId);
     if (!session) return;
 
@@ -357,6 +508,7 @@
       {
         label: 'Rename',
         icon: 'edit-2',
+        shortcut: 'F2',
         onclick: () => {
           editingSessionId = sessionId;
         },
@@ -366,71 +518,114 @@
         icon: 'copy',
         onclick: async () => {
           try {
-            await duplicateSessionApi(sessionId);
+            const copy = await duplicateSessionApi(sessionId);
             sessions = await listSessions();
-          } catch {
-            showToast('Failed to duplicate session', 'error');
+            showToast(`“${copy.name}” created`, 'success');
+          } catch (err) {
+            showToast(errorMessage(err, 'Failed to duplicate session'), 'error');
           }
         },
       },
       {
-        label: session.pinned ? 'Unpin' : 'Pin',
+        label: session.pinned ? 'Unpin' : 'Pin to top',
         icon: 'pin',
         onclick: async () => {
           try {
             const updated = await updateSession(sessionId, { pinned: !session.pinned });
             sessions = sessions.map((s) => (s.id === sessionId ? updated : s));
-          } catch {
-            showToast('Failed to update session', 'error');
+          } catch (err) {
+            showToast(errorMessage(err, 'Failed to update session'), 'error');
           }
         },
       },
       {
         label: 'Delete',
         icon: 'trash-2',
+        shortcut: 'Del',
         danger: true,
-        onclick: () => handleDeleteRequest(sessionId),
+        separatorBefore: true,
+        onclick: () => requestDelete(sessionId),
       },
     ];
 
-    contextMenuData = { x: e.clientX, y: e.clientY, items };
+    contextMenuData = { ...position, items };
   }
 
+  // Shortcuts are bound to the window, not to <main>: a freshly opened popup
+  // leaves focus on <body>, whose keydown events never reach a handler on a
+  // descendant element — so every shortcut used to be dead until the user
+  // clicked inside.
   function handleKeydown(e: KeyboardEvent) {
-    const target = e.target as HTMLElement;
-    const isInput =
-      target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA';
+    if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
+
+    const target = e.target as HTMLElement | null;
+    const isTextEntry =
+      !!target &&
+      (target.tagName === 'INPUT' ||
+        target.tagName === 'SELECT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable);
 
     if (e.key === 'Escape') {
       if (contextMenuData) {
         contextMenuData = null;
-        return;
-      }
-      if (view === 'new') {
+      } else if (showShortcuts) {
+        showShortcuts = false;
+      } else if (view === 'new') {
         view = 'list';
-        return;
+      } else if (searchQuery || searchRevealed) {
+        searchQuery = '';
+        searchRevealed = false;
       }
+      return;
     }
 
-    if (isInput) return;
+    if (isTextEntry || view !== 'list' || confirmData || authGateData || showShortcuts) return;
 
-    if (e.key === 'n' && view === 'list') {
+    if (e.key === 'n' || e.key === 'N') {
       e.preventDefault();
       view = 'new';
-    } else if (e.key === '/' && view === 'list') {
+    } else if (e.key === '/') {
       e.preventDefault();
-      searchQuery = '';
-    } else if (e.key === '?' && view === 'list') {
+      void revealSearch();
+    } else if (e.key === '?') {
       e.preventDefault();
-      showKeyboardOverlay = true;
+      showShortcuts = true;
+    } else if (e.key >= '1' && e.key <= '9') {
+      const session = grouping.visibleOrder[Number(e.key) - 1];
+      if (session) {
+        e.preventDefault();
+        void handleSwitch(session.id);
+      }
     }
   }
 
+  async function revealSearch() {
+    searchRevealed = true;
+    // The field may not be mounted yet when search was below the threshold.
+    await tick();
+    searchBar?.focus();
+  }
+
   $effect(() => {
-    loadState();
+    window.addEventListener('keydown', handleKeydown);
+    return () => window.removeEventListener('keydown', handleKeydown);
   });
 
-  // Silently update when storage changes externally (e.g., auto-refresh, settings page, context menu).
+  // A popup that closes mid-countdown must not strand a half-deleted session.
+  $effect(() => {
+    function flush() {
+      void commitPendingDelete();
+    }
+    window.addEventListener('pagehide', flush);
+    return () => window.removeEventListener('pagehide', flush);
+  });
+
+  $effect(() => {
+    loadState().then(flushOrphanedDeletes);
+  });
+
+  // Silently update when storage changes externally (e.g., auto-save, settings page, context menu).
   // Debounce with setTimeout: a single operation can fire multiple storage changes across
   // separate async ticks (e.g., touchSessionRefresh writes SESSIONS twice sequentially).
   // A short timer coalesces them into one LIST_SESSIONS call.
@@ -456,16 +651,13 @@
     };
   });
 
-  // Auto-refresh — hierarchical toggle: global interval is the master switch,
+  // Auto-save — hierarchical toggle: global interval is the master switch,
   // per-domain toggles control individual session:origin pairs.
   let autoRefreshInterval = $state<AutoRefreshInterval>(getAutoRefreshInterval());
   const globalAutoRefreshOn = $derived(autoRefreshInterval > 0);
 
-  // Per-domain auto-refresh state for the current tab's session:origin
+  // Per-domain auto-save state for the current tab's session:origin
   let domainAutoRefreshOn = $state(false);
-
-  // Effective state: global is on AND this domain is on
-  const autoRefreshEffective = $derived(globalAutoRefreshOn && domainAutoRefreshOn);
 
   $effect(() => {
     const unsub = onSettingsChange((s) => {
@@ -497,14 +689,15 @@
     return unsub;
   });
 
-  // Toggle per-domain auto-refresh for the current session:origin
   async function handleAutoRefreshToggle() {
-    if (!currentTabEntry || !currentOrigin) return;
+    if (!currentTabEntry || !currentOrigin) {
+      showToast('Attach this tab to a session first', 'info');
+      return;
+    }
     await setDomainAutoRefresh(currentTabEntry.sessionId, currentOrigin, !domainAutoRefreshOn);
   }
 
   // Isolation mode (per-domain: soft/strict)
-  const currentDomain = $derived(currentOrigin ? extractDomain(currentOrigin) : '');
   let isolationMode = $state<IsolationMode>('soft');
 
   $effect(() => {
@@ -526,10 +719,13 @@
     if (!currentDomain) return;
     const newMode: IsolationMode = isolationMode === 'soft' ? 'strict' : 'soft';
     await setDomainIsolationMode(currentDomain, newMode);
+    showToast(
+      newMode === 'strict'
+        ? `Strict isolation on for ${currentDomain} — switching always clears its cookies`
+        : `Soft isolation on for ${currentDomain} — unrelated logins are preserved`,
+      'info',
+    );
   }
-
-  // Auto-refresh is handled by the service worker alarm (background/auto-refresh.ts).
-  // The storage listener above picks up changes and updates the UI quietly.
 
   // Cloud-sync conflict warning. pendingConflicts is persisted, so a conflict
   // raised by a background auto-sync the user never saw still surfaces here.
@@ -548,22 +744,31 @@
     return unsub;
   });
 
-  function openSettings() {
-    chrome.runtime.openOptionsPage();
+  /**
+   * Open the options page, optionally on a specific card. openOptionsPage()
+   * cannot carry a hash, so a targeted jump goes through tabs.create — landing
+   * on the Sessions tab and leaving the user to find "Cloud Sync" is what made
+   * the conflict banner feel like a dead end.
+   */
+  function openSettings(hash?: string) {
+    if (!hash) {
+      chrome.runtime.openOptionsPage();
+      return;
+    }
+    chrome.tabs.create({ url: chrome.runtime.getURL(`src/options/index.html#${hash}`) });
   }
 </script>
 
-<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<main onkeydown={handleKeydown}>
+<main>
   {#if loading}
     <div class="popup-content">
-      <div class="header">
+      <header class="header">
         <div class="header-title">
           <AppLogo size={20} />
           <h1>Sessions</h1>
         </div>
-      </div>
-      <div class="loading-skeleton">
+      </header>
+      <div class="loading-skeleton" aria-busy="true" aria-label="Loading sessions">
         <div class="skel skel-panel"></div>
         <div class="skel skel-item"></div>
         <div class="skel skel-item short"></div>
@@ -575,7 +780,12 @@
       in:fly={{ x: 200, duration: 200 }}
       out:fly={{ x: -200, duration: 150 }}
     >
-      <NewSessionForm oncreate={handleCreate} oncancel={() => (view = 'list')} />
+      <SessionForm
+        oncreate={handleCreate}
+        oncancel={() => (view = 'list')}
+        captureDomain={currentDomain}
+        existingNames={sessions.map((s) => s.name)}
+      />
     </div>
   {:else}
     <div
@@ -583,93 +793,129 @@
       in:fly={{ x: -200, duration: 200 }}
       out:fly={{ x: 200, duration: 150 }}
     >
-      <div class="header">
+      <header class="header">
         <div class="header-title">
           <AppLogo size={20} />
           <h1>Sessions</h1>
         </div>
         <div class="header-actions">
+          {#if visibleSessions.length > 0 && !showSearch}
+            <button
+              class="icon-btn"
+              onclick={revealSearch}
+              aria-label="Search sessions"
+              title="Search sessions (/)"
+            >
+              <Icon name="search" size={15} />
+            </button>
+          {/if}
           <ThemeToggle />
           <button
             class="icon-btn"
-            onclick={() => chrome.runtime.openOptionsPage()}
-            aria-label="Settings"
+            onclick={() => openSettings()}
+            aria-label="Open settings"
             title="Settings"
           >
             <Icon name="settings" size={15} />
           </button>
         </div>
+      </header>
+
+      <div class="scroll-body">
+        {#if syncConflictCount > 0}
+          <button class="sync-conflict-banner" onclick={() => openSettings('sync')}>
+            <Icon name="alert-triangle" size={14} />
+            <span class="conflict-banner-label">
+              {syncConflictCount} sync {syncConflictCount === 1 ? 'conflict' : 'conflicts'} — auto-sync
+              paused
+            </span>
+            <Icon name="chevron-right" size={14} />
+          </button>
+        {/if}
+
+        <CurrentTabPanel
+          {currentOrigin}
+          supported={tabSupported}
+          currentSessionColor={currentSession?.color}
+          currentSessionEmoji={currentSession?.emoji}
+          currentSessionName={currentSession?.name}
+          onrefresh={handleUpdateSessionData}
+          {refreshing}
+          {globalAutoRefreshOn}
+          {domainAutoRefreshOn}
+          onautorefreshToggle={handleAutoRefreshToggle}
+          {isolationMode}
+          onisolationToggle={handleIsolationToggle}
+          onopensettings={() => openSettings('auto-save')}
+        />
+
+        {#if showSearch}
+          <SearchBar
+            bind:this={searchBar}
+            query={searchQuery}
+            onchange={(q) => (searchQuery = q)}
+            ondismiss={() => (searchRevealed = false)}
+            resultCount={grouping.filtered.length}
+            totalCount={visibleSessions.length}
+          />
+        {/if}
+
+        <SessionList
+          {grouping}
+          sessions={visibleSessions}
+          activeSessionId={currentTabEntry?.sessionId}
+          {switchingSessionId}
+          {tabCounts}
+          {sessionsWithOriginData}
+          {searchQuery}
+          onswitch={handleSwitch}
+          ondetach={handleDetach}
+          ondelete={requestDelete}
+          onrename={handleRename}
+          {editingSessionId}
+          onmenu={openMenu}
+          oncreate={() => (view = 'new')}
+          onclearsearch={() => (searchQuery = '')}
+          onreorder={handleReorder}
+        />
       </div>
 
-      {#if syncConflictCount > 0}
-        <button class="sync-conflict-banner" onclick={openSettings}>
-          <Icon name="alert-triangle" size={14} />
-          <span class="conflict-banner-label">
-            {syncConflictCount} sync {syncConflictCount === 1 ? 'conflict' : 'conflicts'} — auto-sync
-            paused
-          </span>
-          <Icon name="chevron-right" size={14} />
-        </button>
+      {#if visibleSessions.length > 0}
+        <footer class="footer">
+          <button class="new-btn" onclick={() => (view = 'new')}>
+            <Icon name="plus" size={14} />
+            New session
+          </button>
+          <button
+            class="hint-btn"
+            onclick={() => (showShortcuts = true)}
+            title="Keyboard shortcuts"
+          >
+            <kbd>?</kbd>
+            Shortcuts
+          </button>
+        </footer>
       {/if}
-
-      <CurrentTabPanel
-        {currentOrigin}
-        currentSessionColor={currentSession?.color}
-        currentSessionEmoji={currentSession?.emoji}
-        currentSessionName={currentSession?.name}
-        onrefresh={handleUpdateSessionData}
-        {refreshing}
-        {globalAutoRefreshOn}
-        {domainAutoRefreshOn}
-        {autoRefreshEffective}
-        onautorefreshToggle={handleAutoRefreshToggle}
-        {isolationMode}
-        onisolationToggle={handleIsolationToggle}
-      />
-
-      {#if sessions.length > 5}
-        <SearchBar query={searchQuery} onchange={(q) => (searchQuery = q)} />
-      {/if}
-
-      <SessionList
-        {sessions}
-        activeSessionId={currentTabEntry?.sessionId}
-        {switchingSessionId}
-        {tabCounts}
-        {sessionsWithOriginData}
-        {sessionOriginMap}
-        {currentOrigin}
-        {searchQuery}
-        onswitch={handleSwitch}
-        onunassign={handleUnassign}
-        ondelete={handleDeleteRequest}
-        onrename={handleRename}
-        {editingSessionId}
-        oncontextmenu={handleContextMenu}
-        oncreate={() => (view = 'new')}
-        ondragend={handleReorder}
-      />
-
-      <button class="new-btn" onclick={() => (view = 'new')}>
-        <Icon name="plus" size={14} />
-        New Session
-      </button>
     </div>
   {/if}
 
   {#if toastData}
-    <Toast
-      message={toastData.message}
-      type={toastData.type}
-      action={toastData.action}
-      ondismiss={() => (toastData = null)}
-    />
+    {#key toastData.id}
+      <Toast
+        message={toastData.message}
+        type={toastData.type}
+        action={toastData.action}
+        duration={toastData.duration}
+        ondismiss={dismissToast}
+      />
+    {/key}
   {/if}
 
   {#if confirmData}
     <ConfirmDialog
       title={confirmData.title}
       message={confirmData.message}
+      detail={confirmData.detail}
       confirmLabel={confirmData.confirmLabel}
       danger={confirmData.danger}
       onconfirm={confirmData.onconfirm}
@@ -686,12 +932,8 @@
     />
   {/if}
 
-  {#if showKeyboardOverlay}
-    <KeyboardOverlay
-      {sessions}
-      onswitch={handleSwitch}
-      onclose={() => (showKeyboardOverlay = false)}
-    />
+  {#if showShortcuts}
+    <ShortcutsOverlay onclose={() => (showShortcuts = false)} />
   {/if}
 
   {#if authGateData}
@@ -701,23 +943,50 @@
 
 <style>
   main {
-    width: 380px;
-    min-height: 200px;
+    width: var(--popup-width);
+    min-height: 220px;
     background: var(--color-bg-primary);
   }
 
   .popup-content {
     display: flex;
     flex-direction: column;
-    gap: var(--space-4);
     padding: var(--space-6);
+    gap: var(--space-4);
   }
 
+  /* The header and the primary action stay put while the list scrolls, so
+     "New session" is never a scroll away in a tall list. */
   .header {
+    position: sticky;
+    top: 0;
+    z-index: var(--z-sticky);
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding-bottom: var(--space-2);
+    gap: var(--space-3);
+    padding: var(--space-6) var(--space-6) var(--space-4);
+    margin: calc(-1 * var(--space-6)) calc(-1 * var(--space-6)) 0;
+    background: var(--color-bg-primary);
+  }
+
+  .scroll-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+  }
+
+  .footer {
+    position: sticky;
+    bottom: 0;
+    z-index: var(--z-sticky);
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-4) var(--space-6) var(--space-6);
+    margin: 0 calc(-1 * var(--space-6)) calc(-1 * var(--space-6));
+    background: var(--color-bg-primary);
+    border-top: 1px solid var(--color-border-secondary);
   }
 
   .header-title {
@@ -755,8 +1024,13 @@
   }
 
   .icon-btn:hover {
-    color: var(--color-text-secondary);
+    color: var(--color-text-primary);
     background: var(--color-interactive-hover);
+  }
+
+  .icon-btn:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
   }
 
   .new-btn {
@@ -764,23 +1038,65 @@
     align-items: center;
     justify-content: center;
     gap: var(--space-3);
+    flex: 1;
     padding: var(--space-4) var(--space-5);
-    background: var(--color-bg-secondary);
-    border: 1px dashed var(--color-border-primary);
+    background: var(--color-accent);
+    border: 1px solid var(--color-accent);
     border-radius: var(--radius-lg);
     font-size: var(--text-sm);
     font-family: var(--font-sans);
-    color: var(--color-text-tertiary);
+    font-weight: var(--font-semibold);
+    color: var(--color-on-accent);
     cursor: pointer;
     transition: all var(--transition-smooth);
-    flex-shrink: 0;
   }
 
   .new-btn:hover {
-    background: var(--color-accent-soft);
-    border-color: var(--color-accent-muted);
-    border-style: solid;
-    color: var(--color-accent);
+    background: var(--color-accent-hover);
+    border-color: var(--color-accent-hover);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .new-btn:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
+  }
+
+  .hint-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-4) var(--space-4);
+    background: none;
+    border: 1px solid transparent;
+    border-radius: var(--radius-lg);
+    font-family: var(--font-sans);
+    font-size: var(--text-2xs);
+    color: var(--color-text-tertiary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    flex-shrink: 0;
+  }
+
+  .hint-btn:hover {
+    color: var(--color-text-secondary);
+    background: var(--color-interactive-hover);
+  }
+
+  .hint-btn:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
+  }
+
+  .hint-btn kbd {
+    font-family: var(--font-sans);
+    font-size: var(--text-2xs);
+    font-weight: var(--font-semibold);
+    background: var(--color-bg-tertiary);
+    border: 1px solid var(--color-border-secondary);
+    border-radius: var(--radius-sm);
+    padding: 0 var(--space-2);
+    line-height: 15px;
   }
 
   /* Sync conflict banner */
@@ -842,7 +1158,7 @@
   }
 
   .skel-panel {
-    height: 56px;
+    height: 72px;
   }
 
   .skel-item {

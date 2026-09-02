@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   interface Props {
     value: string;
     onsave: (newValue: string) => void;
@@ -6,7 +7,9 @@
   }
 
   const { value, onsave, oncancel }: Props = $props();
-  let inputValue = $state(value);
+  // Seeded once on purpose: a background rename landing mid-edit must not
+  // overwrite what the user is typing.
+  let inputValue = $state(untrack(() => value));
   let inputRef = $state<HTMLInputElement | undefined>(undefined);
 
   $effect(() => {

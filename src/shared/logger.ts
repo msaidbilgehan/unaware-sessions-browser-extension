@@ -1,5 +1,10 @@
 import type { LogEntry, LogLevel } from '@shared/types';
-import { LOG_BUFFER_MAX_SIZE } from '@shared/constants';
+import {
+  LOG_BUFFER_MAX_SIZE,
+  LOG_PERSIST_DEBOUNCE_MS,
+  LOG_PERSIST_MAX_SIZE,
+  STORAGE_KEYS,
+} from '@shared/constants';
 
 const LOG_PREFIX = '[Unaware Sessions]';
 
@@ -31,7 +36,20 @@ export function getLogLevel(): LogLevel {
   return currentLevel;
 }
 
+/**
+ * Errors are recorded regardless of the configured level.
+ *
+ * The level exists to control log *volume*, but the events worth keeping —
+ * a failed snapshot write, an evicted database, a destructive replace — are
+ * exactly the ones that happen while nobody is watching. With the default
+ * 'off' level, dropping them left no trace of how a data loss occurred.
+ * Console mirroring still respects the level, so 'off' stays quiet.
+ */
 function shouldLog(level: LogEntry['level']): boolean {
+  return level === 'error' || LEVEL_PRIORITY[level] <= LEVEL_PRIORITY[currentLevel];
+}
+
+function shouldMirrorToConsole(level: LogEntry['level']): boolean {
   return LEVEL_PRIORITY[level] <= LEVEL_PRIORITY[currentLevel];
 }
 
@@ -55,6 +73,74 @@ function serializeData(data: unknown): unknown {
   return data;
 }
 
+// ── Persistence ──────────────────────────────────────────────────
+//
+// Only the service worker enables persistence: it is the single writer, so a
+// content script or page cannot clobber the shared buffer with its own view.
+
+let persistenceEnabled = false;
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Load the persisted tail into the in-memory buffer and mirror future writes
+ * back to it. Called once per service worker start.
+ */
+export async function enableLogPersistence(): Promise<void> {
+  persistenceEnabled = true;
+  try {
+    const result = await chrome.storage.local.get(STORAGE_KEYS.LOG_BUFFER);
+    const stored = result[STORAGE_KEYS.LOG_BUFFER] as LogEntry[] | undefined;
+    if (stored?.length) {
+      // Prepend: entries written while this load was in flight are newer.
+      buffer.unshift(...stored);
+      trimBuffer();
+    }
+  } catch (err) {
+    // Never route this through write() — a failing storage area would recurse.
+    console.warn(`${LOG_PREFIX}[logger] Failed to load persisted logs`, err);
+  }
+}
+
+function trimBuffer(): void {
+  if (buffer.length > LOG_BUFFER_MAX_SIZE) {
+    buffer.splice(0, buffer.length - LOG_BUFFER_MAX_SIZE);
+  }
+}
+
+async function flush(): Promise<void> {
+  flushTimer = null;
+  try {
+    await chrome.storage.local.set({
+      [STORAGE_KEYS.LOG_BUFFER]: buffer.slice(-LOG_PERSIST_MAX_SIZE),
+    });
+  } catch (err) {
+    console.warn(`${LOG_PREFIX}[logger] Failed to persist logs`, err);
+  }
+}
+
+/**
+ * Errors flush immediately — the service worker may be seconds from being
+ * torn down, and an error is precisely what must survive that. Everything
+ * else is debounced so ordinary debug traffic costs one write per burst.
+ */
+function schedulePersist(level: LogEntry['level']): void {
+  if (!persistenceEnabled) return;
+
+  if (level === 'error') {
+    if (flushTimer) {
+      clearTimeout(flushTimer);
+      flushTimer = null;
+    }
+    void flush();
+    return;
+  }
+
+  if (flushTimer) return;
+  flushTimer = setTimeout(() => {
+    void flush();
+  }, LOG_PERSIST_DEBOUNCE_MS);
+}
+
 // ── Core write ───────────────────────────────────────────────────
 
 function write(level: LogEntry['level'], source: string, message: string, data?: unknown): void {
@@ -69,9 +155,10 @@ function write(level: LogEntry['level'], source: string, message: string, data?:
   };
 
   buffer.push(entry);
-  if (buffer.length > LOG_BUFFER_MAX_SIZE) {
-    buffer.splice(0, buffer.length - LOG_BUFFER_MAX_SIZE);
-  }
+  trimBuffer();
+  schedulePersist(level);
+
+  if (!shouldMirrorToConsole(level)) return;
 
   // Mirror to devtools console for live debugging
   const tag = `${LOG_PREFIX}[${source}]`;
@@ -118,4 +205,20 @@ export function getLogs(): LogEntry[] {
 
 export function clearLogs(): void {
   buffer.length = 0;
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  if (persistenceEnabled) {
+    void flush();
+  }
+}
+
+/** Reset persistence state — for tests only. */
+export function resetLogPersistence(): void {
+  persistenceEnabled = false;
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
 }

@@ -1,15 +1,19 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { resetChromeMocks, mockChrome } from '../setup';
 import { initMessaging } from '@background/messaging';
-import { hydrateSessions } from '@background/session-manager';
-import { hydrateTabMap } from '@background/tab-tracker';
+import { hydrateSessions, getSessionTombstones } from '@background/session-manager';
+import { hydrateTabMap, assignTab, getTabEntry } from '@background/tab-tracker';
 import { cookieStore } from '@background/cookie-store';
 import { storageStore } from '@background/storage-store';
+import { snapshotUndo } from '@background/snapshot-undo';
 import { MessageType } from '@shared/types';
 import type { MessageResponse, CookieSnapshot, StorageSnapshot } from '@shared/types';
 
 beforeEach(async () => {
   resetChromeMocks();
+  await cookieStore.deleteAll();
+  await storageStore.deleteAll();
+  await snapshotUndo.deleteAll();
   await hydrateSessions();
   await hydrateTabMap();
   initMessaging();
@@ -1174,5 +1178,219 @@ describe('messaging', () => {
     expect(details.origins[0].origin).toBe('https://example.com');
     expect(details.origins[0].cookieCount).toBe(1);
     expect(details.totalCookies).toBe(1);
+  });
+});
+
+describe('snapshot undo messages', () => {
+  const ORIGIN = 'https://undo.test';
+
+  function cookieSnap(sessionId: string, count: number, timestamp = 500): CookieSnapshot {
+    return {
+      sessionId,
+      origin: ORIGIN,
+      timestamp,
+      cookies: Array.from({ length: count }, (_, i) => ({
+        name: `c${i}`,
+        value: 'v',
+        domain: 'undo.test',
+        path: '/',
+        secure: true,
+        httpOnly: true,
+        sameSite: 'lax' as chrome.cookies.SameSiteStatus,
+        storeId: '0',
+        hostOnly: false,
+        session: false,
+      })),
+    };
+  }
+
+  it('GET_SESSION_DETAILS reports the recoverable slot', async () => {
+    await cookieStore.save(cookieSnap('s1', 0));
+    await snapshotUndo.put('cookies', cookieSnap('s1', 3, 900));
+
+    const response = await sendTestMessage({
+      type: MessageType.GET_SESSION_DETAILS,
+      sessionId: 's1',
+    });
+
+    const details = response.data as { origins: Array<{ origin: string; previous: unknown }> };
+    const origin = details.origins.find((o) => o.origin === ORIGIN);
+    expect(origin?.previous).toMatchObject({ cookieCount: 3, cookieTimestamp: 900 });
+  });
+
+  it('GET_SESSION_DETAILS reports null when there is nothing to undo', async () => {
+    await cookieStore.save(cookieSnap('s1', 2));
+
+    const response = await sendTestMessage({
+      type: MessageType.GET_SESSION_DETAILS,
+      sessionId: 's1',
+    });
+
+    const details = response.data as { origins: Array<{ previous: unknown }> };
+    expect(details.origins[0].previous).toBeNull();
+  });
+
+  // Without this the only route back to the data would be invisible in the UI.
+  it('GET_SESSION_DETAILS lists an origin that exists only as an undo slot', async () => {
+    await snapshotUndo.put('cookies', cookieSnap('s1', 4, 700));
+
+    const response = await sendTestMessage({
+      type: MessageType.GET_SESSION_DETAILS,
+      sessionId: 's1',
+    });
+
+    const details = response.data as {
+      origins: Array<{ origin: string; cookieCount: number; previous: unknown }>;
+    };
+    expect(details.origins).toHaveLength(1);
+    expect(details.origins[0].cookieCount).toBe(0);
+    expect(details.origins[0].previous).toMatchObject({ cookieCount: 4 });
+  });
+
+  it('RESTORE_PREVIOUS_SNAPSHOT moves the slot back into the live snapshot', async () => {
+    await cookieStore.save(cookieSnap('s1', 0));
+    await snapshotUndo.put('cookies', cookieSnap('s1', 3, 900));
+
+    const response = await sendTestMessage({
+      type: MessageType.RESTORE_PREVIOUS_SNAPSHOT,
+      sessionId: 's1',
+      origin: ORIGIN,
+    });
+
+    expect(response.success).toBe(true);
+    expect(response.data).toMatchObject({ cookiesRestored: 3 });
+    expect((await cookieStore.load('s1', ORIGIN))?.cookies).toHaveLength(3);
+  });
+
+  it('DELETE_SESSION_ORIGIN_DATA also drops the slot', async () => {
+    await cookieStore.save(cookieSnap('s1', 0));
+    await snapshotUndo.put('cookies', cookieSnap('s1', 3, 900));
+
+    await sendTestMessage({
+      type: MessageType.DELETE_SESSION_ORIGIN_DATA,
+      sessionId: 's1',
+      origin: ORIGIN,
+    });
+
+    expect(await snapshotUndo.getCookies('s1', ORIGIN)).toBeUndefined();
+  });
+
+  it('DELETE_SESSION drops every slot of the session', async () => {
+    const created = await sendTestMessage({
+      type: MessageType.CREATE_SESSION,
+      name: 'undo-owner',
+      color: '#3B82F6',
+    });
+    const sessionId = (created.data as { id: string }).id;
+    await snapshotUndo.put('cookies', cookieSnap(sessionId, 3, 900));
+
+    await sendTestMessage({ type: MessageType.DELETE_SESSION, sessionId });
+
+    expect(await snapshotUndo.getCookies(sessionId, ORIGIN)).toBeUndefined();
+  });
+});
+
+describe('bulk deletion', () => {
+  async function createNamed(name: string): Promise<string> {
+    const created = await sendTestMessage({
+      type: MessageType.CREATE_SESSION,
+      name,
+      color: '#3B82F6',
+    });
+    return (created.data as { id: string }).id;
+  }
+
+  function cookieSnap(sessionId: string, origin: string): CookieSnapshot {
+    return { sessionId, origin, timestamp: 1, cookies: [] };
+  }
+
+  it('CLEAR_ALL_SESSIONS removes every profile, snapshot and undo slot at once', async () => {
+    const a = await createNamed('a');
+    const b = await createNamed('b');
+    await cookieStore.save(cookieSnap(a, 'https://a.test'));
+    await storageStore.save({
+      sessionId: b,
+      origin: 'https://b.test',
+      timestamp: 1,
+      localStorage: { k: 'v' },
+      sessionStorage: {},
+    });
+    await snapshotUndo.put('cookies', cookieSnap(a, 'https://a.test'));
+
+    const response = await sendTestMessage({ type: MessageType.CLEAR_ALL_SESSIONS });
+
+    expect(response.success).toBe(true);
+    expect(response.data).toEqual({ deleted: 2 });
+
+    const list = await sendTestMessage({ type: MessageType.LIST_SESSIONS });
+    expect(list.data).toEqual([]);
+    expect(await cookieStore.countAll()).toBe(0);
+    expect(await storageStore.countAll()).toBe(0);
+    expect(await snapshotUndo.countAll()).toBe(0);
+  });
+
+  // Tombstones are what stop the other device from resurrecting the sessions
+  // on the next sync — a user-initiated wipe must record them.
+  it('CLEAR_ALL_SESSIONS records a tombstone per deleted session', async () => {
+    const a = await createNamed('a');
+    const b = await createNamed('b');
+
+    await sendTestMessage({ type: MessageType.CLEAR_ALL_SESSIONS });
+
+    const tombstones = await getSessionTombstones();
+    expect(Object.keys(tombstones).sort()).toEqual([a, b].sort());
+  });
+
+  it('CLEAR_ALL_SESSIONS rebuilds the context menu once, not once per session', async () => {
+    await createNamed('a');
+    await createNamed('b');
+    await createNamed('c');
+    (chrome.contextMenus.removeAll as ReturnType<typeof vi.fn>).mockClear();
+
+    await sendTestMessage({ type: MessageType.CLEAR_ALL_SESSIONS });
+
+    expect(chrome.contextMenus.removeAll).toHaveBeenCalledTimes(1);
+  });
+
+  it('CLEAR_ALL_SESSIONS succeeds with nothing to delete (retry-safe)', async () => {
+    const response = await sendTestMessage({ type: MessageType.CLEAR_ALL_SESSIONS });
+    expect(response.success).toBe(true);
+    expect(response.data).toEqual({ deleted: 0 });
+  });
+
+  // A tracked tab outlives the session it points at, and every auto-save path
+  // writes a snapshot keyed by entry.sessionId — so without releasing the tab
+  // the deleted session's data reappears as an unreachable orphan.
+  it('releases tabs mapped to a deleted session', async () => {
+    const a = await createNamed('a');
+    await assignTab(1, a, 'https://a.test');
+
+    await sendTestMessage({ type: MessageType.DELETE_SESSION, sessionId: a });
+
+    expect(await getTabEntry(1)).toBeUndefined();
+  });
+
+  it('releases tabs of every session on CLEAR_ALL_SESSIONS', async () => {
+    const a = await createNamed('a');
+    const b = await createNamed('b');
+    await assignTab(1, a, 'https://a.test');
+    await assignTab(2, b, 'https://b.test');
+
+    await sendTestMessage({ type: MessageType.CLEAR_ALL_SESSIONS });
+
+    expect(await getTabEntry(1)).toBeUndefined();
+    expect(await getTabEntry(2)).toBeUndefined();
+  });
+
+  it('leaves tabs of surviving sessions assigned', async () => {
+    const a = await createNamed('a');
+    const b = await createNamed('b');
+    await assignTab(1, a, 'https://a.test');
+    await assignTab(2, b, 'https://b.test');
+
+    await sendTestMessage({ type: MessageType.DELETE_SESSION, sessionId: a });
+
+    expect(await getTabEntry(1)).toBeUndefined();
+    expect(await getTabEntry(2)).toMatchObject({ sessionId: b });
   });
 });

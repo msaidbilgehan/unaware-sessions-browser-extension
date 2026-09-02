@@ -4,24 +4,26 @@
 
   interface Props {
     currentOrigin: string;
+    /** False on chrome://, extension and other non-http(s) pages. */
+    supported?: boolean;
     currentSessionColor: string | undefined;
     currentSessionEmoji: string | undefined;
     currentSessionName: string | undefined;
     onrefresh: () => void;
     refreshing?: boolean;
-    /** Global auto-refresh interval is active (> 0) */
+    /** Global auto-save interval is active (> 0) */
     globalAutoRefreshOn?: boolean;
-    /** Per-domain auto-refresh is enabled for this session:origin */
+    /** Per-domain auto-save is enabled for this session:origin */
     domainAutoRefreshOn?: boolean;
-    /** Effective state: global ON and domain ON */
-    autoRefreshEffective?: boolean;
     onautorefreshToggle?: () => void;
     isolationMode?: IsolationMode;
     onisolationToggle?: () => void;
+    onopensettings?: () => void;
   }
 
   let {
     currentOrigin,
+    supported = true,
     currentSessionColor,
     currentSessionEmoji,
     currentSessionName,
@@ -29,13 +31,14 @@
     refreshing = false,
     globalAutoRefreshOn = false,
     domainAutoRefreshOn = false,
-    autoRefreshEffective = false,
     onautorefreshToggle,
     isolationMode = 'soft',
     onisolationToggle,
+    onopensettings,
   }: Props = $props();
 
   const isStrict = $derived(isolationMode === 'strict');
+  const hasSession = $derived(!!currentSessionName);
 
   const faviconUrl = $derived(
     currentOrigin
@@ -49,112 +52,156 @@
     faviconFailed = false;
   });
 
-  function handleFaviconError() {
-    faviconFailed = true;
-  }
+  const displayOrigin = $derived(currentOrigin ? currentOrigin.replace(/^https?:\/\//, '') : '');
 
-  const displayOrigin = $derived(
-    currentOrigin ? currentOrigin.replace(/^https?:\/\//, '') : '',
+  // The same button covers both jobs the panel can do, so its label has to say
+  // which one it is about to do rather than naming the mechanism.
+  const primaryLabel = $derived(hasSession ? 'Save now' : 'Detect');
+  const primaryTitle = $derived(
+    hasSession
+      ? `Save this site's current cookies and storage into “${currentSessionName}”`
+      : 'Check whether this site matches a saved session and attach it',
+  );
+
+  const autoSaveState = $derived(
+    !globalAutoRefreshOn ? 'paused' : domainAutoRefreshOn ? 'on' : 'off',
+  );
+  const autoSaveTitle = $derived(
+    autoSaveState === 'paused'
+      ? 'Auto-save is switched off for every site in Settings'
+      : autoSaveState === 'on'
+        ? `Auto-save is on for ${displayOrigin} — click to turn off`
+        : `Auto-save is off for ${displayOrigin} — click to turn on`,
   );
 </script>
 
-<div
-  class="panel"
-  style={currentSessionColor ? `--panel-accent: ${currentSessionColor}` : ''}
-  class:has-session={!!currentSessionColor}
->
-  {#if currentSessionColor}
-    <div class="accent-strip"></div>
-  {/if}
-
-  <div class="panel-body">
-    <div class="site-info">
-      <div class="favicon-wrapper">
-        {#if faviconUrl && !faviconFailed}
-          <img
-            class="favicon"
-            src={faviconUrl}
-            alt=""
-            width="20"
-            height="20"
-            onerror={handleFaviconError}
-          />
-        {:else if currentOrigin}
+{#if !supported}
+  <div class="panel unsupported">
+    <div class="panel-body">
+      <div class="site-info">
+        <div class="favicon-wrapper">
           <div class="favicon-fallback">
-            <Icon name="globe" size={14} />
+            <Icon name="info" size={14} />
           </div>
-        {:else}
-          <div class="favicon-fallback empty">
-            <Icon name="globe" size={14} />
-          </div>
-        {/if}
-      </div>
-
-      <div class="site-text">
-        <span class="origin-text">{displayOrigin || 'No active tab'}</span>
-        {#if currentSessionName}
-          <span class="session-label">
-            {#if currentSessionEmoji}
-              <span class="session-emoji">{currentSessionEmoji}</span>
-            {:else if currentSessionColor}
-              <span class="dot" style="background-color: {currentSessionColor}"></span>
-            {/if}
-            {currentSessionName}
+        </div>
+        <div class="site-text">
+          <span class="origin-text">Sessions don’t apply here</span>
+          <span class="session-label muted">
+            Browser and extension pages have no cookies to separate. Open a website to use sessions.
           </span>
-        {:else if currentOrigin}
-          <span class="session-label muted">No active session</span>
-        {/if}
+        </div>
       </div>
     </div>
+  </div>
+{:else}
+  <div
+    class="panel"
+    style={currentSessionColor ? `--panel-accent: ${currentSessionColor}` : ''}
+    class:has-session={hasSession}
+  >
+    {#if currentSessionColor}
+      <div class="accent-strip"></div>
+    {/if}
 
-    {#if currentOrigin}
-      <div class="actions">
-        {#if onisolationToggle}
-          <button
-            class="action-btn"
-            class:active={isStrict}
-            onclick={onisolationToggle}
-            aria-label={isStrict ? 'Switch to soft isolation' : 'Switch to strict isolation'}
-            title={isStrict ? 'Strict isolation (clears all cookies)' : 'Soft isolation (preserves unmanaged cookies)'}
-          >
-            <Icon name={isStrict ? 'lock' : 'shield'} size={12} />
-          </button>
-        {/if}
-        {#if onautorefreshToggle}
-          <button
-            class="action-btn auto-refresh-toggle"
-            class:active={autoRefreshEffective}
-            class:domain-on={domainAutoRefreshOn && !globalAutoRefreshOn}
-            onclick={onautorefreshToggle}
-            disabled={!globalAutoRefreshOn}
-            aria-label={!globalAutoRefreshOn
-              ? 'Auto-refresh disabled globally (enable in Settings)'
-              : domainAutoRefreshOn
-                ? 'Disable auto-refresh for this domain'
-                : 'Enable auto-refresh for this domain'}
-            title={!globalAutoRefreshOn
-              ? 'Auto-refresh off globally'
-              : domainAutoRefreshOn
-                ? 'Auto-refresh active for this domain'
-                : 'Auto-refresh off for this domain'}
-          >
-            <Icon name="refresh-cw" size={12} />
-          </button>
-        {/if}
+    <div class="panel-body">
+      <div class="site-info">
+        <div class="favicon-wrapper">
+          {#if faviconUrl && !faviconFailed}
+            <img
+              class="favicon"
+              src={faviconUrl}
+              alt=""
+              width="20"
+              height="20"
+              onerror={() => (faviconFailed = true)}
+            />
+          {:else}
+            <div class="favicon-fallback" class:empty={!currentOrigin}>
+              <Icon name="globe" size={14} />
+            </div>
+          {/if}
+        </div>
+
+        <div class="site-text">
+          <span class="origin-text">{displayOrigin || 'No active tab'}</span>
+          {#if currentSessionName}
+            <span class="session-label">
+              {#if currentSessionEmoji}
+                <span class="session-emoji">{currentSessionEmoji}</span>
+              {:else if currentSessionColor}
+                <span class="dot" style="background-color: {currentSessionColor}"></span>
+              {/if}
+              {currentSessionName}
+            </span>
+          {:else if currentOrigin}
+            <span class="session-label muted">No session — using browser cookies</span>
+          {/if}
+        </div>
+      </div>
+
+      {#if currentOrigin}
         <button
-          class="action-btn primary"
+          class="primary-btn"
           onclick={onrefresh}
           disabled={refreshing}
-          class:spinning={refreshing}
-          aria-label="Session Load"
-          title="Save & detect session data"
+          title={primaryTitle}
+          aria-label={primaryTitle}
         >
-          <Icon name="download" size={12} />
+          <span class="primary-icon" class:spinning={refreshing}>
+            <Icon name={refreshing ? 'refresh-cw' : hasSession ? 'save' : 'search'} size={12} />
+          </span>
+          {refreshing ? 'Saving…' : primaryLabel}
         </button>
+      {/if}
+    </div>
+
+    {#if currentOrigin && (onisolationToggle || onautorefreshToggle)}
+      <div class="controls">
+        {#if onisolationToggle}
+          <button
+            class="control-chip"
+            class:strict={isStrict}
+            onclick={onisolationToggle}
+            aria-pressed={isStrict}
+            title={isStrict
+              ? 'Strict: every switch clears this site’s cookies first, even when the target session has nothing saved. Click for Soft.'
+              : 'Soft: switching leaves cookies alone on sites where the target session has nothing saved, so unrelated logins survive. Click for Strict.'}
+          >
+            <Icon name={isStrict ? 'lock' : 'shield'} size={12} />
+            <span class="chip-label">{isStrict ? 'Strict' : 'Soft'} isolation</span>
+          </button>
+        {/if}
+
+        {#if onautorefreshToggle}
+          <button
+            class="control-chip"
+            class:on={autoSaveState === 'on'}
+            class:paused={autoSaveState === 'paused'}
+            onclick={autoSaveState === 'paused' ? onopensettings : onautorefreshToggle}
+            aria-pressed={autoSaveState === 'on'}
+            title={autoSaveTitle}
+          >
+            <Icon name="refresh-cw" size={12} />
+            <span class="chip-label">
+              {#if autoSaveState === 'paused'}
+                Auto-save paused
+              {:else if autoSaveState === 'on'}
+                Auto-save on
+              {:else}
+                Auto-save off
+              {/if}
+            </span>
+            {#if autoSaveState === 'on'}
+              <span class="live-dot" aria-hidden="true"></span>
+            {:else if autoSaveState === 'paused'}
+              <Icon name="external-link" size={10} />
+            {/if}
+          </button>
+        {/if}
       </div>
     {/if}
   </div>
-</div>
+{/if}
 
 <style>
   .panel {
@@ -163,12 +210,22 @@
     border-radius: var(--radius-xl);
     border: 1px solid var(--color-border-primary);
     overflow: hidden;
-    transition: all var(--transition-smooth);
+    transition: box-shadow var(--transition-smooth);
     box-shadow: var(--shadow-xs);
   }
 
   .panel:hover {
     box-shadow: var(--shadow-sm);
+  }
+
+  .panel.unsupported {
+    background: var(--color-bg-secondary);
+    border-style: dashed;
+  }
+
+  .panel.unsupported .session-label {
+    white-space: normal;
+    line-height: var(--leading-snug);
   }
 
   .accent-strip {
@@ -182,7 +239,7 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--space-4);
-    padding: var(--space-5) var(--space-5);
+    padding: var(--space-5);
   }
 
   .site-info {
@@ -239,6 +296,9 @@
     font-size: var(--text-xs);
     color: var(--color-text-secondary);
     line-height: var(--leading-tight);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .session-label.muted {
@@ -258,79 +318,118 @@
     flex-shrink: 0;
   }
 
-  .actions {
-    display: flex;
+  /* A named button instead of a bare download glyph: the action saves the live
+     site state into the session, which no icon communicates on its own. */
+  .primary-btn {
+    display: inline-flex;
     align-items: center;
     gap: var(--space-2);
     flex-shrink: 0;
-  }
-
-  .action-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
+    height: var(--tap-target);
+    padding: 0 var(--space-4);
     background: var(--color-bg-secondary);
     border: 1px solid var(--color-border-primary);
     border-radius: var(--radius-md);
+    font-family: var(--font-sans);
+    font-size: var(--text-xs);
+    font-weight: var(--font-medium);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .primary-btn:hover:not(:disabled) {
+    color: var(--color-accent);
+    border-color: var(--color-accent);
+    background: var(--color-accent-soft);
+  }
+
+  .primary-btn:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
+  }
+
+  .primary-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+
+  .primary-icon {
+    display: flex;
+  }
+
+  .primary-icon.spinning :global(svg) {
+    animation: spin 1s linear infinite;
+  }
+
+  .controls {
+    display: flex;
+    gap: var(--space-2);
+    padding: 0 var(--space-5) var(--space-5);
+  }
+
+  .control-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex: 1;
+    min-width: 0;
+    padding: var(--space-2) var(--space-3);
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border-secondary);
+    border-radius: var(--radius-md);
+    font-family: var(--font-sans);
+    font-size: var(--text-2xs);
+    font-weight: var(--font-medium);
     color: var(--color-text-tertiary);
     cursor: pointer;
     transition: all var(--transition-fast);
   }
 
-  .action-btn:hover:not(:disabled) {
+  .chip-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .control-chip :global(svg) {
+    flex-shrink: 0;
+  }
+
+  .control-chip:hover {
     color: var(--color-text-secondary);
     background: var(--color-interactive-hover);
     border-color: var(--color-border-primary);
   }
 
-  .action-btn.active {
+  .control-chip:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
+  }
+
+  .control-chip.strict {
     color: var(--color-accent);
     border-color: var(--color-accent);
     background: var(--color-accent-soft);
   }
 
-  /* Effective: global ON + domain ON — green pulse */
-  .action-btn.auto-refresh-toggle.active {
+  .control-chip.on {
     color: var(--color-success);
     border-color: var(--color-success);
     background: var(--color-success-soft);
-    position: relative;
   }
 
-  .action-btn.auto-refresh-toggle.active::after {
-    content: '';
-    position: absolute;
-    top: 3px;
-    right: 3px;
+  .control-chip.paused {
+    opacity: 0.75;
+  }
+
+  .live-dot {
     width: 5px;
     height: 5px;
     border-radius: var(--radius-full);
     background: var(--color-success);
     animation: pulse 2s ease-in-out infinite;
-  }
-
-  /* Domain ON but global OFF — dimmed, shows state is preserved but dormant */
-  .action-btn.auto-refresh-toggle.domain-on {
-    color: var(--color-text-tertiary);
-    border-color: var(--color-border-primary);
-    background: var(--color-bg-tertiary);
-    opacity: 0.55;
-  }
-
-  .action-btn.primary:hover:not(:disabled) {
-    color: var(--color-accent);
-    border-color: var(--color-accent);
-    background: var(--color-accent-soft);
-  }
-
-  .action-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
-
-  .action-btn.spinning :global(svg) {
-    animation: spin 1s linear infinite;
+    flex-shrink: 0;
+    margin-left: auto;
   }
 </style>
