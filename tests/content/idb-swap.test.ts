@@ -513,6 +513,48 @@ describe('out-of-line key stores (keyPath === null)', () => {
 });
 
 describe('encode/decode binary values (JSON round-trip safety)', () => {
+  // Every typed array used to decode back as a bare ArrayBuffer, so a page that
+  // stored a Uint8Array got something with no .length and no indexed access.
+  it('preserves the concrete view type of typed arrays through save-restore', async () => {
+    await createTestDB('binary-db', [
+      {
+        name: 'blobs',
+        keyPath: 'id',
+        records: [
+          {
+            id: 1,
+            u8: new Uint8Array([1, 2, 3]),
+            i32: new Int32Array([-5, 7]),
+            f64: new Float64Array([1.5, -2.25]),
+            raw: new Uint8Array([9, 9]).buffer,
+          },
+        ],
+      },
+    ]);
+
+    const snapshots = await saveIndexedDB();
+    const jsonRoundTripped = JSON.parse(JSON.stringify(snapshots)) as IndexedDBSnapshot[];
+
+    await deleteDB('binary-db');
+    await restoreIndexedDB(jsonRoundTripped);
+
+    const records = (await readAllRecords('binary-db', 'blobs')) as Array<Record<string, unknown>>;
+    expect(records).toHaveLength(1);
+    const rec = records[0];
+
+    expect(rec.u8).toBeInstanceOf(Uint8Array);
+    expect(Array.from(rec.u8 as Uint8Array)).toEqual([1, 2, 3]);
+
+    expect(rec.i32).toBeInstanceOf(Int32Array);
+    expect(Array.from(rec.i32 as Int32Array)).toEqual([-5, 7]);
+
+    expect(rec.f64).toBeInstanceOf(Float64Array);
+    expect(Array.from(rec.f64 as Float64Array)).toEqual([1.5, -2.25]);
+
+    // A genuine ArrayBuffer must still come back as an ArrayBuffer.
+    expect(rec.raw).toBeInstanceOf(ArrayBuffer);
+  });
+
   it('encodes and decodes records with Date values through save-restore', async () => {
     const timestamp = Date.now();
     await createTestDB('date-db', [

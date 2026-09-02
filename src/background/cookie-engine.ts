@@ -10,6 +10,13 @@ import { getDomainIsolationMode } from '@shared/settings-store';
 import { createLogger } from '@shared/logger';
 import { cookieStore } from './cookie-store';
 import { storageStore } from './storage-store';
+import { recordStorageWriteError } from './storage-health';
+import {
+  snapshotUndo,
+  isEmptyCookieSnapshot,
+  isEmptyStorageSnapshot,
+  type SnapshotKind,
+} from './snapshot-undo';
 import { getTabEntry, assignTab } from './tab-tracker';
 import { updateRulesForTab, removeRulesForTab } from './dnr-manager';
 
@@ -148,7 +155,6 @@ export async function saveCookies(
   if (!domain) return;
 
   const cookies = await getCookiesForOrigin(origin, storeId);
-  log.debug(`Saved ${cookies.length} cookies for session ${sessionId} on ${origin}`, { storeId });
 
   const snapshot: CookieSnapshot = {
     sessionId,
@@ -157,7 +163,66 @@ export async function saveCookies(
     cookies,
   };
 
-  await cookieStore.save(snapshot);
+  // An empty read is a logout as far as this code can tell, so the snapshot
+  // still becomes empty — but the outgoing data is preserved first. If the
+  // undo slot cannot be written we keep the existing snapshot instead:
+  // never destroy the only copy.
+  if (cookies.length === 0 && !(await preserveCookiesForUndo(sessionId, origin))) {
+    return;
+  }
+
+  // Log after the write, not before: the previous "Saved N cookies" line was
+  // emitted ahead of cookieStore.save(), so a rejected write (quota, aborted
+  // transaction) left logs claiming a save that never happened.
+  try {
+    await cookieStore.save(snapshot);
+  } catch (err) {
+    await recordStorageWriteError('cookieStore.save', sessionId, origin, err);
+    throw err;
+  }
+
+  if (cookies.length > 0) {
+    // Real data again — a stale pre-logout slot would only be a credential
+    // kept around for no reason.
+    await dropUndo('cookies', sessionId, origin);
+  }
+
+  log.debug(`Saved ${cookies.length} cookies for session ${sessionId} on ${origin}`, { storeId });
+}
+
+/**
+ * Move the current non-empty cookie snapshot into the undo slot.
+ * Returns false when the caller must abort rather than overwrite.
+ */
+async function preserveCookiesForUndo(sessionId: string, origin: string): Promise<boolean> {
+  const existing = await cookieStore.load(sessionId, origin);
+  if (!existing || isEmptyCookieSnapshot(existing)) return true;
+
+  try {
+    await snapshotUndo.put('cookies', existing);
+  } catch (err) {
+    await recordStorageWriteError('snapshotUndo.put', sessionId, origin, err);
+    log.error(
+      `Keeping existing cookie snapshot for ${origin}: the undo slot could not be written, ` +
+        'so replacing it with an empty capture would destroy the only copy',
+    );
+    return false;
+  }
+
+  log.info(
+    `Cookie snapshot for ${origin} went empty — previous ${existing.cookies.length} cookie(s) ` +
+      'kept as a recoverable undo slot',
+  );
+  return true;
+}
+
+/** Undo bookkeeping is best-effort once the primary data is safe. */
+async function dropUndo(kind: SnapshotKind, sessionId: string, origin: string): Promise<void> {
+  try {
+    await snapshotUndo.delete(kind, sessionId, origin);
+  } catch (err) {
+    log.warn(`Failed to drop ${kind} undo slot for ${origin}`, err);
+  }
 }
 
 export async function clearCookies(origin: string, storeId?: string): Promise<void> {
@@ -207,6 +272,14 @@ export async function restoreCookies(
       const url = buildCookieUrl(cookie);
       const isHostCookie = cookie.name.startsWith('__Host-');
       const isSecureCookie = cookie.name.startsWith('__Secure-');
+      // chrome.cookies.set makes a cookie host-only by OMITTING `domain`;
+      // passing it back always produces a domain cookie. Restoring a captured
+      // host-only cookie with its `domain` therefore silently widens it to
+      // every subdomain — a scope the site deliberately refused. The widening
+      // is also sticky: the broadened cookie starts matching the domain
+      // hierarchy walk in getCookiesForOrigin, so sibling subdomains sweep it
+      // into their own snapshots on the next switch.
+      const isHostOnly = isHostCookie || cookie.hostOnly === true;
 
       let secure = cookie.secure;
       if (cookie.sameSite === 'no_restriction' || isHostCookie || isSecureCookie) {
@@ -217,7 +290,7 @@ export async function restoreCookies(
         url,
         name: cookie.name,
         value: cookie.value,
-        ...(isHostCookie ? {} : { domain: cookie.domain }),
+        ...(isHostOnly ? {} : { domain: cookie.domain }),
         path: isHostCookie ? '/' : cookie.path,
         secure,
         httpOnly: cookie.httpOnly,
@@ -279,11 +352,101 @@ export async function saveTabStorage(
         sessionStorage: response.data.sessionStorage,
         indexedDB: response.data.indexedDB,
       };
-      await storageStore.save(snapshot);
+      // Same undo rule as cookies: a "Clear browsing data" wipes localStorage
+      // and the cookie jar in one go, so protecting only cookies would still
+      // lose the half of the login that lives in DOM storage.
+      if (isEmptyStorageSnapshot(snapshot) && !(await preserveStorageForUndo(sessionId, origin))) {
+        return;
+      }
+
+      // A failed *write* is data loss and is recorded as such; a failed
+      // *read* (no content script on this page, tab already gone) is
+      // routine and stays a warning.
+      try {
+        await storageStore.save(snapshot);
+      } catch (err) {
+        await recordStorageWriteError('storageStore.save', sessionId, origin, err);
+        return;
+      }
+
+      if (!isEmptyStorageSnapshot(snapshot)) {
+        await dropUndo('storage', sessionId, origin);
+      }
     }
   } catch (err) {
     log.warn('Failed to save tab storage', err);
   }
+}
+
+async function preserveStorageForUndo(sessionId: string, origin: string): Promise<boolean> {
+  const existing = await storageStore.load(sessionId, origin);
+  if (!existing || isEmptyStorageSnapshot(existing)) return true;
+
+  try {
+    await snapshotUndo.put('storage', existing);
+  } catch (err) {
+    await recordStorageWriteError('snapshotUndo.put', sessionId, origin, err);
+    log.error(
+      `Keeping existing storage snapshot for ${origin}: the undo slot could not be written, ` +
+        'so replacing it with an empty capture would destroy the only copy',
+    );
+    return false;
+  }
+
+  log.info(
+    `Storage snapshot for ${origin} went empty — previous state kept as a recoverable undo slot`,
+  );
+  return true;
+}
+
+/**
+ * Move the undo slot back into the live snapshot for one origin.
+ *
+ * Swaps rather than moves: if the current snapshot still holds data it takes
+ * the undo slot's place, so the action is itself reversible. The primary
+ * store is written before the slot is touched — an interrupted restore
+ * leaves the same data in both places, never in neither.
+ */
+export async function restorePreviousSnapshot(
+  sessionId: string,
+  origin: string,
+): Promise<{ cookiesRestored: number; storageRestored: boolean }> {
+  const [prevCookies, prevStorage] = await Promise.all([
+    snapshotUndo.getCookies(sessionId, origin),
+    snapshotUndo.getStorage(sessionId, origin),
+  ]);
+
+  let cookiesRestored = 0;
+  if (prevCookies) {
+    const current = await cookieStore.load(sessionId, origin);
+    await cookieStore.save({ ...prevCookies, timestamp: now() });
+    cookiesRestored = prevCookies.cookies.length;
+    if (current && !isEmptyCookieSnapshot(current)) {
+      await snapshotUndo.put('cookies', current);
+    } else {
+      await dropUndo('cookies', sessionId, origin);
+    }
+  }
+
+  let storageRestored = false;
+  if (prevStorage) {
+    const current = await storageStore.load(sessionId, origin);
+    await storageStore.save({ ...prevStorage, timestamp: now() });
+    storageRestored = true;
+    if (current && !isEmptyStorageSnapshot(current)) {
+      await snapshotUndo.put('storage', current);
+    } else {
+      await dropUndo('storage', sessionId, origin);
+    }
+  }
+
+  log.info(`Restored previous snapshot for ${origin}`, {
+    sessionId,
+    cookiesRestored,
+    storageRestored,
+  });
+
+  return { cookiesRestored, storageRestored };
 }
 
 async function restoreTabStorage(tabId: number, sessionId: string, origin: string): Promise<void> {
@@ -461,15 +624,41 @@ async function doSwitchSession(tabId: number, targetSessionId: string): Promise<
     ]);
   }
 
-  // 2. Check if the target session has cookie data for this origin.
-  //    In "soft" isolation mode, skip clear+restore when no snapshot exists
-  //    so unmanaged domains (e.g., Google when using Instagram sessions) pass through.
-  const targetSnapshot = await cookieStore.load(targetSessionId, origin);
+  // 2. Check whether the target session manages this origin at all.
+  //    In "soft" isolation mode, skip clear+restore when it does not, so
+  //    unmanaged domains (e.g., Google when using Instagram sessions) pass through.
+  //
+  //    "Manages" is deliberately wider than "has cookies right now". The
+  //    pass-through below *adopts* whatever is live into the target session, so
+  //    anything misclassified as unmanaged gets its saved login overwritten by
+  //    the outgoing session's state. Two shapes have real data but no live
+  //    cookies, and both must take the clear+restore path instead:
+  //      - storage-only logins (Firebase/Supabase/Auth0 SPAs keep their token in
+  //        localStorage and hold no cookie snapshot at all);
+  //      - a session logged out on this origin, whose cookie snapshot is empty
+  //        but whose undo slot holds the only surviving copy of its cookies —
+  //        adopting would overwrite the snapshot *and* drop that slot.
   const isolationMode = domain ? getDomainIsolationMode(domain) : 'strict';
-  const hasTargetData = targetSnapshot != null && targetSnapshot.cookies.length > 0;
+  const [targetCookies, targetStorage, undoCookies, undoStorage] = await Promise.all([
+    cookieStore.load(targetSessionId, origin),
+    storageStore.load(targetSessionId, origin),
+    snapshotUndo.getCookies(targetSessionId, origin),
+    snapshotUndo.getStorage(targetSessionId, origin),
+  ]);
+  const managesOrigin =
+    (targetCookies != null && !isEmptyCookieSnapshot(targetCookies)) ||
+    (targetStorage != null && !isEmptyStorageSnapshot(targetStorage)) ||
+    undoCookies != null ||
+    undoStorage != null;
 
-  if (!hasTargetData && isolationMode === 'soft') {
-    log.debug(`Soft mode pass-through for ${origin} — no target data, skipping cookies`);
+  if (!managesOrigin && isolationMode === 'soft') {
+    // Logged at info: to the user this switch is a no-op ("switching to my
+    // logged-in session does nothing"), and the reason — the session holds
+    // nothing for this origin — is only visible here.
+    log.info(
+      `Soft mode pass-through for ${origin}: session ${targetSessionId} has no saved cookies, ` +
+        `storage or undo slot, adopting the live state instead of restoring`,
+    );
     // Soft mode: no data for this domain → skip cookie operations, preserve current state.
     // Update tab mapping for badge/tracking, but REMOVE any DNR rule so the browser's
     // native Cookie header passes through (no header injection = no cookie override).

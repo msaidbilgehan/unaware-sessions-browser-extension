@@ -9,6 +9,27 @@ import { IDB_SNAPSHOT_TIMEOUT_MS, IDB_SNAPSHOT_MAX_SIZE_MB } from '@shared/const
 
 const MARKER = '__ua_t';
 
+/**
+ * Allow-list of ArrayBufferView constructors, keyed by `constructor.name`.
+ *
+ * A lookup table rather than a global reference so a crafted `c` value from a
+ * page's own IndexedDB can only ever name one of these.
+ */
+const VIEW_CONSTRUCTORS: Record<string, new (buffer: ArrayBuffer) => ArrayBufferView> = {
+  Int8Array,
+  Uint8Array,
+  Uint8ClampedArray,
+  Int16Array,
+  Uint16Array,
+  Int32Array,
+  Uint32Array,
+  Float32Array,
+  Float64Array,
+  BigInt64Array,
+  BigUint64Array,
+  DataView,
+};
+
 function encodeValue(value: unknown): unknown {
   if (value === null || value === undefined) return value;
   if (typeof value !== 'object') return value;
@@ -22,7 +43,11 @@ function encodeValue(value: unknown): unknown {
       (value as ArrayBufferView).byteOffset,
       (value as ArrayBufferView).byteLength,
     );
-    return { [MARKER]: 'TV', d: Array.from(bytes) };
+    // Record the concrete view type. Without it every view decodes back as a
+    // bare ArrayBuffer, so a page that stored a Uint8Array gets something with
+    // no .length and no indexed access — silent corruption for Yjs/y-indexeddb
+    // updates, idb-keyval blobs, wasm caches and WebCrypto key material.
+    return { [MARKER]: 'TV', c: value.constructor.name, d: Array.from(bytes) };
   }
   if (value instanceof Date) {
     return { [MARKER]: 'D', d: value.getTime() };
@@ -51,8 +76,17 @@ function decodeValue(value: unknown): unknown {
   const marker = obj[MARKER];
 
   if (typeof marker === 'string') {
-    if ((marker === 'AB' || marker === 'TV') && Array.isArray(obj.d)) {
+    if (marker === 'AB' && Array.isArray(obj.d)) {
       return new Uint8Array(obj.d as number[]).buffer;
+    }
+    if (marker === 'TV' && Array.isArray(obj.d)) {
+      const buffer = new Uint8Array(obj.d as number[]).buffer;
+      const ctor = typeof obj.c === 'string' ? VIEW_CONSTRUCTORS[obj.c] : undefined;
+      // Snapshots written before the view type was recorded carry no `c`. The
+      // marker still proves it WAS a view, so a byte view is closer to the
+      // original than a bare ArrayBuffer.
+      if (!ctor) return new Uint8Array(buffer);
+      return new ctor(buffer);
     }
     if (marker === 'D' && typeof obj.d === 'number') {
       return new Date(obj.d);

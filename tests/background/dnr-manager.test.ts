@@ -45,12 +45,38 @@ describe('dnr-manager', () => {
             id: DNR_RULE_ID_BASE + 42,
             condition: expect.objectContaining({
               tabIds: [42],
-              urlFilter: '||example.com',
+              requestDomains: ['example.com'],
             }),
           }),
         ]),
       }),
     );
+  });
+
+  // The rule *sets* the Cookie header, so a host predicate that slides past a
+  // label boundary manufactures an authenticated cross-origin request out of a
+  // cookieless one. `urlFilter: '||example.com'` does exactly that — Chrome
+  // documents `||a.example.com` as matching `a.example.company`.
+  it('scopes the rule so look-alike hosts cannot match', async () => {
+    await cookieStore.save({
+      sessionId: 'session-1',
+      origin: 'https://example.com',
+      timestamp: Date.now(),
+      cookies: [
+        { name: 'sid', value: '123', domain: 'example.com', path: '/' } as chrome.cookies.Cookie,
+      ],
+    });
+    await updateRulesForTab(42, 'session-1', 'https://example.com');
+
+    const call = (chrome.declarativeNetRequest.updateSessionRules as ReturnType<typeof vi.fn>).mock
+      .calls[0][0] as { addRules: chrome.declarativeNetRequest.Rule[] };
+    const { condition } = call.addRules[0];
+
+    // Exact host + subdomains only, expressed declaratively.
+    expect(condition.requestDomains).toEqual(['example.com']);
+    // No prefix-matching url filter may reintroduce the slide.
+    expect(condition.urlFilter).toBeUndefined();
+    expect(condition.regexFilter).toBeUndefined();
   });
 
   it('removes rules for a tab', async () => {

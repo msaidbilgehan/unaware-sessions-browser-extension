@@ -9,6 +9,7 @@ import {
   resetAutoRefreshInit,
 } from '@background/auto-refresh';
 import { initSettings } from '@shared/settings-store';
+import { cookieStore } from '@background/cookie-store';
 
 beforeEach(async () => {
   resetChromeMocks();
@@ -29,6 +30,30 @@ beforeEach(async () => {
 describe('refreshAllActiveSessions', () => {
   it('returns 0 when no tabs are tracked', async () => {
     const count = await refreshAllActiveSessions();
+    expect(count).toBe(0);
+  });
+
+  // MV3 evicts the worker after ~30 s idle, so a cross-origin navigation can
+  // complete with no listener running. The alarm then wakes to a tab map whose
+  // entry still names the old origin while tab.url is the new one.
+  it('skips a tab that navigated away, instead of snapshotting the new origin', async () => {
+    const s = await createSession('stale', '#F00');
+    await assignTab(1, s.id, 'https://tracked.example');
+
+    (chrome.tabs.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: 1,
+      url: 'https://unrelated.example/page',
+    });
+    (chrome.cookies.getAll as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { name: 'foreign', value: 'x', domain: 'unrelated.example', path: '/' },
+    ]);
+
+    const count = await refreshAllActiveSessions();
+
+    // No snapshot may be written under the foreign origin.
+    expect(await cookieStore.load(s.id, 'https://unrelated.example')).toBeUndefined();
+    // Nor may the tracked origin be filled with the foreign origin's cookies.
+    expect(await cookieStore.load(s.id, 'https://tracked.example')).toBeUndefined();
     expect(count).toBe(0);
   });
 

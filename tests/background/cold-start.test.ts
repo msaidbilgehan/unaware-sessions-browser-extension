@@ -48,6 +48,28 @@ describe('session-manager cold start', () => {
 });
 
 describe('tab-tracker cold start', () => {
+  // Must stay first in this block: it needs the module before anything hydrates
+  // it. The persist-state alarm fires every minute and MV3 tears the worker
+  // down after ~30 s idle, so the alarm routinely calls persistTabMap() on a
+  // cold worker whose in-memory map is still the empty initial Map. Writing
+  // that out would wipe every tab→session mapping in storage.
+  it('persistTabMap does not wipe storage when called before hydration', async () => {
+    await mockChrome.storage.session.set({
+      tabMap: { '7': { sessionId: 's1', origin: 'https://example.com' } },
+    });
+
+    const mod = await import('@background/tab-tracker');
+    await mod.persistTabMap();
+
+    expect(mockChrome.storage.session._store.get('tabMap')).toEqual({
+      7: { sessionId: 's1', origin: 'https://example.com' },
+    });
+    expect(await mod.getTabEntry(7)).toEqual({
+      sessionId: 's1',
+      origin: 'https://example.com',
+    });
+  });
+
   it('getTabEntry returns data after hydration completes', async () => {
     // Pre-populate session storage with tab map
     await mockChrome.storage.session.set({

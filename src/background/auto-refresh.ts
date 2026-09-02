@@ -28,7 +28,22 @@ export async function refreshAllActiveSessions(): Promise<number> {
       try {
         const tab = await chrome.tabs.get(tabId);
         if (!tab.url) return;
-        const origin = new URL(tab.url).origin;
+        // The tracked entry is the authority for which origin this session owns
+        // — never the live tab URL. A cross-origin navigation that completed
+        // while the service worker was dead (MV3 evicts it after ~30 s idle,
+        // and this runs from a periodic alarm) leaves the entry pointing at the
+        // old origin while tab.url is already the new one. Snapshotting under
+        // the live origin would write a foreign origin's cookies into this
+        // session, which is the cross-domain contamination the origin-scoped
+        // design forbids — and once that bogus snapshot exists soft mode stops
+        // passing the origin through, so a later switch clobbers the user's
+        // real login for it. Skip instead; tab-tracker's navigation handler
+        // reconciles the tab when the worker is alive to see it.
+        if (new URL(tab.url).origin !== entry.origin) {
+          log.debug(`Auto-refresh: skipping tab ${tabId} — navigated away from ${entry.origin}`);
+          return;
+        }
+        const origin = entry.origin;
         if (!isDomainAutoRefreshEnabled(entry.sessionId, origin)) return;
         if (isTabSwitching(tabId)) return;
         const storeId = await getCookieStoreIdForTab(tabId);

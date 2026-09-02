@@ -39,6 +39,14 @@ export function hydrateTabMap(): Promise<void> {
 }
 
 export async function persistTabMap(): Promise<void> {
+  // Hydrate first, exactly like every other entry point here. This is the only
+  // exported function that *writes*, and the periodic persist-state alarm calls
+  // it directly: the alarm period (1 min) is longer than MV3's idle teardown
+  // (~30 s), so the alarm routinely wakes a cold worker whose module-level
+  // tabMap is still the empty initial Map. Persisting that empty map would
+  // overwrite every tab→session mapping in storage before hydrateTabMap() has
+  // even read it back.
+  await ensureHydrated();
   const obj: TabSessionMap = {};
   for (const [tabId, entry] of tabMap) {
     obj[tabId] = entry;

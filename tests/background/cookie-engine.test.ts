@@ -9,7 +9,9 @@ import {
   detectSessionForOrigin,
   handleContentScriptReady,
   cleanupPendingRestore,
+  restorePreviousSnapshot,
 } from '@background/cookie-engine';
+import { snapshotUndo } from '@background/snapshot-undo';
 import { cookieStore } from '@background/cookie-store';
 import { storageStore } from '@background/storage-store';
 import { hydrateSessions, createSession } from '@background/session-manager';
@@ -43,10 +45,22 @@ const MOCK_COOKIES: chrome.cookies.Cookie[] = [
   } as chrome.cookies.Cookie,
 ];
 
+/** Two cookies scoped to `host`, so getCookiesForOrigin's origin filter keeps them. */
+function cookiesForHost(host: string): chrome.cookies.Cookie[] {
+  return MOCK_COOKIES.map(
+    (c) =>
+      ({
+        ...c,
+        domain: c.hostOnly ? host : `.${host}`,
+      }) as chrome.cookies.Cookie,
+  );
+}
+
 beforeEach(async () => {
   resetChromeMocks();
   await cookieStore.deleteAll();
-  // storageStore uses fake-indexeddb, cleaned implicitly between sessions
+  await snapshotUndo.deleteAll();
+  await storageStore.deleteAll();
   await hydrateSessions();
   await hydrateTabMap();
 });
@@ -361,6 +375,91 @@ describe('switchSession', () => {
     // Tab still reloads for a clean state
     expect(chrome.tabs.update).toHaveBeenCalledWith(6, { url: 'https://adopt.example/page' });
   });
+
+  // The pass-through *adopts* live state into the target session, so anything
+  // it misclassifies as unmanaged gets its saved login overwritten by the
+  // outgoing session's. A session can hold real data for an origin and still
+  // have no live cookies, in two shapes — both must take the clear+restore path.
+  it('restores instead of adopting when the target has storage-only data', async () => {
+    const ORIGIN = 'https://storage-only.example';
+    (chrome.tabs.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: 7,
+      url: `${ORIGIN}/app`,
+    });
+    (chrome.cookies.getAll as ReturnType<typeof vi.fn>).mockResolvedValue(
+      cookiesForHost('storage-only.example'),
+    );
+    // The live page reports the *outgoing* session's token.
+    (chrome.tabs.sendMessage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true,
+      data: { localStorage: { token: 'outgoing-token' }, sessionStorage: {}, indexedDB: [] },
+    });
+
+    // A Firebase/Supabase-style login: token in localStorage, no cookie snapshot.
+    const target = await createSession('storage-only-target', '#EF4444');
+    await storageStore.save({
+      sessionId: target.id,
+      origin: ORIGIN,
+      timestamp: Date.now(),
+      localStorage: { token: 'real-token' },
+      sessionStorage: {},
+      indexedDB: [],
+    });
+
+    await switchSession(7, target.id);
+
+    // The session's own token must survive the switch, not be replaced by the
+    // state that happened to be on screen.
+    const stored = await storageStore.load(target.id, ORIGIN);
+    expect(stored?.localStorage.token).toBe('real-token');
+    // And the switch must actually isolate rather than pass through.
+    expect(chrome.cookies.remove).toHaveBeenCalled();
+  });
+
+  it('restores instead of adopting when the target is logged out but has an undo slot', async () => {
+    const ORIGIN = 'https://logged-out.example';
+    const target = await createSession('logged-out-target', '#EF4444');
+
+    // Log in, then out: the empty capture moves the real cookies to the undo slot.
+    (chrome.cookies.getAll as ReturnType<typeof vi.fn>).mockResolvedValue(
+      cookiesForHost('logged-out.example'),
+    );
+    await saveCookies(target.id, ORIGIN);
+    (chrome.cookies.getAll as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    await saveCookies(target.id, ORIGIN);
+    expect((await snapshotUndo.getCookies(target.id, ORIGIN))?.cookies).toHaveLength(2);
+
+    // Now switch to it while another session's cookies are live in the jar.
+    (chrome.tabs.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: 8,
+      url: `${ORIGIN}/page`,
+    });
+    (chrome.cookies.getAll as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        name: 'other-session-sid',
+        value: 'not-mine',
+        domain: 'logged-out.example',
+        path: '/',
+        secure: false,
+        httpOnly: false,
+        sameSite: 'lax',
+        hostOnly: true,
+        session: false,
+        storeId: '0',
+      } as chrome.cookies.Cookie,
+    ]);
+    (chrome.tabs.sendMessage as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('No content script'),
+    );
+
+    await switchSession(8, target.id);
+
+    // The undo slot is the only surviving copy of this session's cookies —
+    // adopting would overwrite the snapshot and then drop the slot.
+    expect((await snapshotUndo.getCookies(target.id, ORIGIN))?.cookies).toHaveLength(2);
+    const snapshot = await cookieStore.load(target.id, ORIGIN);
+    expect(snapshot?.cookies.some((c) => c.name === 'other-session-sid')).toBe(false);
+  });
 });
 
 describe('saveTabStorage', () => {
@@ -647,6 +746,27 @@ describe('restoreCookies edge cases', () => {
     );
   });
 
+  // chrome.cookies.set makes a cookie host-only by omitting `domain`; passing
+  // it back always yields a domain cookie, silently widening the scope the site
+  // deliberately refused.
+  it('restores a host-only cookie without widening it to subdomains', async () => {
+    (chrome.cookies.getAll as ReturnType<typeof vi.fn>).mockResolvedValueOnce(MOCK_COOKIES);
+    await saveCookies('session-1', 'https://example.com');
+
+    (chrome.cookies.set as ReturnType<typeof vi.fn>).mockClear();
+    await restoreCookies('session-1', 'https://example.com');
+
+    const calls = (chrome.cookies.set as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
+    // 'theme' is hostOnly:true in MOCK_COOKIES — must be re-created host-only.
+    const hostOnly = calls.find((c) => c.name === 'theme');
+    expect(hostOnly).toBeDefined();
+    expect('domain' in hostOnly).toBe(false);
+
+    // 'sid' is a genuine domain cookie (.example.com) and must keep its domain.
+    const domainCookie = calls.find((c) => c.name === 'sid');
+    expect(domainCookie?.domain).toBe('.example.com');
+  });
+
   it('handles partial cookie set failures gracefully', async () => {
     (chrome.cookies.getAll as ReturnType<typeof vi.fn>).mockResolvedValueOnce(MOCK_COOKIES);
     await saveCookies('session-1', 'https://example.com');
@@ -658,5 +778,134 @@ describe('restoreCookies edge cases', () => {
 
     // Should not throw — failures are warned, not thrown
     await restoreCookies('session-1', 'https://example.com');
+  });
+});
+
+// A capture that reads zero cookies is indistinguishable from a real logout
+// (Chrome's "Clear browsing data", another extension, and a site clearing its
+// own cookie all look the same), so the snapshot still becomes empty — but the
+// outgoing data is preserved in a recoverable slot first.
+describe('snapshot undo buffer', () => {
+  const ORIGIN = 'https://example.com';
+
+  function mockLiveCookies(cookies: chrome.cookies.Cookie[]): void {
+    (chrome.cookies.getAll as ReturnType<typeof vi.fn>).mockResolvedValue(cookies);
+  }
+
+  it('preserves the previous snapshot when a capture comes back empty', async () => {
+    mockLiveCookies(MOCK_COOKIES);
+    await saveCookies('session-1', ORIGIN);
+
+    mockLiveCookies([]);
+    await saveCookies('session-1', ORIGIN);
+
+    // Live snapshot mirrors the browser...
+    expect((await cookieStore.load('session-1', ORIGIN))?.cookies).toHaveLength(0);
+    // ...and the previous state is recoverable.
+    expect((await snapshotUndo.getCookies('session-1', ORIGIN))?.cookies).toHaveLength(2);
+  });
+
+  it('does not create a slot when there was nothing to lose', async () => {
+    mockLiveCookies([]);
+    await saveCookies('session-1', ORIGIN);
+
+    expect(await snapshotUndo.getCookies('session-1', ORIGIN)).toBeUndefined();
+    expect(await cookieStore.load('session-1', ORIGIN)).toBeDefined();
+  });
+
+  it('does not overwrite an existing slot with a second empty capture', async () => {
+    mockLiveCookies(MOCK_COOKIES);
+    await saveCookies('session-1', ORIGIN);
+    mockLiveCookies([]);
+    await saveCookies('session-1', ORIGIN);
+    await saveCookies('session-1', ORIGIN);
+
+    expect((await snapshotUndo.getCookies('session-1', ORIGIN))?.cookies).toHaveLength(2);
+  });
+
+  it('drops the slot once real data is captured again', async () => {
+    mockLiveCookies(MOCK_COOKIES);
+    await saveCookies('session-1', ORIGIN);
+    mockLiveCookies([]);
+    await saveCookies('session-1', ORIGIN);
+    expect(await snapshotUndo.getCookies('session-1', ORIGIN)).toBeDefined();
+
+    mockLiveCookies(MOCK_COOKIES);
+    await saveCookies('session-1', ORIGIN);
+
+    expect(await snapshotUndo.getCookies('session-1', ORIGIN)).toBeUndefined();
+  });
+
+  // Fail closed: without a writable slot, replacing the snapshot with an empty
+  // capture would destroy the only copy.
+  it('keeps the existing snapshot when the undo slot cannot be written', async () => {
+    mockLiveCookies(MOCK_COOKIES);
+    await saveCookies('session-1', ORIGIN);
+
+    const putSpy = vi.spyOn(snapshotUndo, 'put').mockRejectedValue(new Error('quota'));
+    mockLiveCookies([]);
+    await saveCookies('session-1', ORIGIN);
+    putSpy.mockRestore();
+
+    expect((await cookieStore.load('session-1', ORIGIN))?.cookies).toHaveLength(2);
+  });
+
+  it('preserves DOM storage the same way', async () => {
+    (chrome.tabs.sendMessage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true,
+      data: { localStorage: { token: 'abc' }, sessionStorage: {}, indexedDB: [] },
+    });
+    await saveTabStorage(1, 'session-1', ORIGIN);
+
+    (chrome.tabs.sendMessage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true,
+      data: { localStorage: {}, sessionStorage: {}, indexedDB: [] },
+    });
+    await saveTabStorage(1, 'session-1', ORIGIN);
+
+    expect(await storageStore.load('session-1', ORIGIN)).toBeDefined();
+    expect((await snapshotUndo.getStorage('session-1', ORIGIN))?.localStorage).toEqual({
+      token: 'abc',
+    });
+  });
+
+  describe('restorePreviousSnapshot', () => {
+    it('moves the slot back into the live snapshot and clears it', async () => {
+      mockLiveCookies(MOCK_COOKIES);
+      await saveCookies('session-1', ORIGIN);
+      mockLiveCookies([]);
+      await saveCookies('session-1', ORIGIN);
+
+      const result = await restorePreviousSnapshot('session-1', ORIGIN);
+
+      expect(result.cookiesRestored).toBe(2);
+      expect((await cookieStore.load('session-1', ORIGIN))?.cookies).toHaveLength(2);
+      expect(await snapshotUndo.getCookies('session-1', ORIGIN)).toBeUndefined();
+    });
+
+    it('swaps when the live snapshot still has data, so the restore is reversible', async () => {
+      await cookieStore.save({
+        sessionId: 'session-1',
+        origin: ORIGIN,
+        timestamp: 1,
+        cookies: [MOCK_COOKIES[0]],
+      });
+      await snapshotUndo.put('cookies', {
+        sessionId: 'session-1',
+        origin: ORIGIN,
+        timestamp: 2,
+        cookies: MOCK_COOKIES,
+      });
+
+      await restorePreviousSnapshot('session-1', ORIGIN);
+
+      expect((await cookieStore.load('session-1', ORIGIN))?.cookies).toHaveLength(2);
+      expect((await snapshotUndo.getCookies('session-1', ORIGIN))?.cookies).toHaveLength(1);
+    });
+
+    it('is a no-op when there is no slot', async () => {
+      const result = await restorePreviousSnapshot('session-1', ORIGIN);
+      expect(result).toEqual({ cookiesRestored: 0, storageRestored: false });
+    });
   });
 });

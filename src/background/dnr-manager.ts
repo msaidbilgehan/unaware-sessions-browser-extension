@@ -70,7 +70,16 @@ export async function updateRulesForTab(
     },
     condition: {
       tabIds: [tabId],
-      urlFilter: `||${domain}`,
+      // Host scoping MUST NOT use `urlFilter: ||domain`. In Chrome's filter
+      // grammar `||` is a domain-anchored *prefix* match with no terminator,
+      // so `||example.com` also matches `example.com.attacker.tld` and
+      // `example.community`. This rule *sets* (not merges) the Cookie header,
+      // so a prefix-slide would manufacture a fully authenticated cross-origin
+      // request out of one that would natively carry no cookies at all —
+      // session-cookie exfiltration via any attacker-controlled subresource
+      // URL. `requestDomains` matches the domain and its subdomains only and
+      // cannot slide past a label boundary.
+      requestDomains: [domain],
       resourceTypes: [
         'main_frame',
         'sub_frame',
@@ -104,7 +113,6 @@ export async function removeRulesForTab(tabId: number): Promise<void> {
     removeRuleIds: [ruleId],
   });
 }
-
 
 export async function getRuleCount(): Promise<number> {
   const rules = await chrome.declarativeNetRequest.getSessionRules();
